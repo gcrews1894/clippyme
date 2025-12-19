@@ -22,12 +22,45 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 # Configuration
 # Default to 1 if not set, but user can set higher for powerful servers
 MAX_CONCURRENT_JOBS = int(os.environ.get("MAX_CONCURRENT_JOBS", "1"))
+MAX_FILE_SIZE_MB = 500  # 500 MB limit
+JOB_RETENTION_SECONDS = 3600  # 1 hour retention
 
 # Application State
 job_queue = asyncio.Queue()
 jobs: Dict[str, Dict] = {}
 # Semester to limit concurrency to MAX_CONCURRENT_JOBS
 concurrency_semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
+
+async def cleanup_jobs():
+    """Background task to remove old jobs and files."""
+    import time
+    print("🧹 Cleanup task started.")
+    while True:
+        try:
+            await asyncio.sleep(300) # Check every 5 minutes
+            now = time.time()
+            
+            # Simple directory cleanup based on modification time
+            # Check OUTPUT_DIR
+            for job_id in os.listdir(OUTPUT_DIR):
+                job_path = os.path.join(OUTPUT_DIR, job_id)
+                if os.path.isdir(job_path):
+                    if now - os.path.getmtime(job_path) > JOB_RETENTION_SECONDS:
+                        print(f"🧹 Purging old job: {job_id}")
+                        shutil.rmtree(job_path, ignore_errors=True)
+                        if job_id in jobs:
+                            del jobs[job_id]
+
+            # Cleanup Uploads
+            for filename in os.listdir(UPLOAD_DIR):
+                file_path = os.path.join(UPLOAD_DIR, filename)
+                try:
+                    if now - os.path.getmtime(file_path) > JOB_RETENTION_SECONDS:
+                         os.remove(file_path)
+                except Exception: pass
+
+        except Exception as e:
+            print(f"⚠️ Cleanup error: {e}")
 
 async def process_queue():
     """Background worker to process jobs from the queue with concurrency limit."""
@@ -64,8 +97,9 @@ async def run_job_wrapper(job_id):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Start worker
+    # Start worker and cleanup
     worker_task = asyncio.create_task(process_queue())
+    cleanup_task = asyncio.create_task(cleanup_jobs())
     yield
     # Cleanup (optional: cancel worker)
 
@@ -190,9 +224,22 @@ async def process_endpoint(
     if url:
         cmd.extend(["-u", url])
     else:
+        # Save uploaded file with size limit check
         input_path = os.path.join(UPLOAD_DIR, f"{job_id}_{file.filename}")
+        
+        # Read file in chunks to check size
+        size = 0
+        limit_bytes = MAX_FILE_SIZE_MB * 1024 * 1024
+        
         with open(input_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+            while content := await file.read(1024 * 1024): # Read 1MB chunks
+                size += len(content)
+                if size > limit_bytes:
+                    os.remove(input_path)
+                    shutil.rmtree(job_output_dir)
+                    raise HTTPException(status_code=413, detail=f"File too large. Max size {MAX_FILE_SIZE_MB}MB")
+                buffer.write(content)
+                
         cmd.extend(["-i", input_path])
 
     cmd.extend(["-o", job_output_dir])
