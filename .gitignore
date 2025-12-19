@@ -16,3 +16,5 @@ temp_*.mp4
 
 .env
 *_metadata.json
+
+.cache
