@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Download, Share2, Instagram, Youtube, Video, CheckCircle, AlertCircle, X, Loader2 } from 'lucide-react';
+import { getApiUrl } from '../config';
 
 export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUserId }) {
     const [showModal, setShowModal] = useState(false);
@@ -27,7 +28,7 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
         setPostResult(null);
 
         try {
-            const res = await fetch('/api/social/post', {
+            const res = await fetch(getApiUrl('/api/social/post'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -64,19 +65,21 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
         }
     };
 
+    const videoUrl = getApiUrl(clip.video_url);
+
     return (
         <div className="glass-panel overflow-hidden animate-[fadeIn_0.5s_ease-out]" style={{ animationDelay: `${index * 0.1}s` }}>
             <div className="grid md:grid-cols-2 gap-0">
                 <div className="bg-black/50 aspect-[9/16] relative group">
                     <video
-                        src={clip.video_url}
+                        src={videoUrl}
                         controls
                         className="w-full h-full object-contain"
                         loop
                     />
                     <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
                         <a
-                            href={clip.video_url}
+                            href={videoUrl}
                             download
                             className="p-2 bg-black/60 backdrop-blur rounded-lg text-white hover:bg-black/80 inline-flex"
                         >
@@ -131,7 +134,7 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
                             <Share2 size={16} /> Post to Socials
                         </button>
                         <a
-                            href={clip.video_url}
+                            href={videoUrl}
                             download
                             className="flex-1 py-2 bg-primary/10 hover:bg-primary/20 text-primary rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
                         >

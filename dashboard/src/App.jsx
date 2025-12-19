@@ -4,6 +4,7 @@ import KeyInput from './components/KeyInput';
 import MediaInput from './components/MediaInput';
 import ResultCard from './components/ResultCard';
 import ProcessingAnimation from './components/ProcessingAnimation';
+import { getApiUrl } from './config';
 
 // Simple TikTok icon sine Lucide might not have it or it varies
 const TikTokIcon = ({ size = 16, className = "" }) => (
@@ -85,7 +86,7 @@ const UserProfileSelector = ({ profiles, selectedUserId, onSelect }) => {
 
 // Mock polling function
 const pollJob = async (jobId) => {
-  const res = await fetch(`/api/status/${jobId}`);
+  const res = await fetch(getApiUrl(`/api/status/${jobId}`));
   if (!res.ok) throw new Error('Status check failed');
   return res.json();
 };
@@ -157,7 +158,7 @@ function App() {
   const fetchUserProfiles = async () => {
     if (!uploadPostKey) return;
     try {
-      const res = await fetch('/api/social/user', {
+      const res = await fetch(getApiUrl('/api/social/user'), {
         headers: { 'X-Upload-Post-Key': uploadPostKey }
       });
       if (!res.ok) throw new Error("Failed to fetch");
@@ -197,7 +198,7 @@ function App() {
         // Content-Type is auto-set for FormData
       }
 
-      const res = await fetch('/api/process', {
+      const res = await fetch(getApiUrl('/api/process'), {
         method: 'POST',
         headers: data.type === 'url' ? headers : { 'X-Gemini-Key': apiKey },
         body
