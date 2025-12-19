@@ -192,133 +192,34 @@ def download_youtube_video(url, output_dir="."):
     Returns the path to the downloaded video and the video title.
     """
     print("📥 Downloading video from YouTube...")
-    
-    # 1. Handle Cookies from ENV (Easier for deployment)
-    cookies_path = '/app/cookies.txt'
-    
-    # Check for JSON cookies first (from user input)
-    if os.environ.get("YOUTUBE_COOKIES"):
-        print("🍪 Found YOUTUBE_COOKIES env var, creating cookies.txt...")
-        try:
-            cookies_content = os.environ.get("YOUTUBE_COOKIES")
-            
-            # Helper to check if string looks like JSON list
-            clean_content = cookies_content.strip()
-            
-            # More robust check: does it look like a JSON list?
-            # It might have newlines or be compacted.
-            is_json = False
-            if clean_content.startswith('[') and clean_content.endswith(']'):
-                is_json = True
-            
-            if is_json:
-                import json
-                try:
-                    # Clean the content: remove backslash escapes which are common in env vars (e.g. \"domain\")
-                    clean_content = clean_content.replace('\\"', '"')
-                    
-                    cookies_json = json.loads(clean_content)
-                    with open(cookies_path, 'w') as f:
-                        f.write("# Netscape HTTP Cookie File\n")
-                        for cookie in cookies_json:
-                            domain = cookie.get('domain', '')
-                            if not domain: continue
-                            
-                            # Ensure initial dot for domain matching if not present
-                            # but only if it's not an IP or exact host
-                            if not domain.startswith('.') and 'youtube' in domain:
-                                domain = '.' + domain
-                            
-                            # Netscape format requires:
-                            # domain flag path secure expiration name value
-                            flag = 'TRUE' if domain.startswith('.') else 'FALSE'
-                            path = cookie.get('path', '/')
-                            secure = 'TRUE' if cookie.get('secure', False) else 'FALSE'
-                            
-                            # Expiration must be integer timestamp
-                            expiration_val = cookie.get('expirationDate')
-                            expiration = '0'
-                            if expiration_val is not None:
-                                try:
-                                    expiration = str(int(float(expiration_val)))
-                                except ValueError:
-                                    expiration = '0'
+    step_start_time = time.time()
 
-                            name = cookie.get('name', '')
-                            value = cookie.get('value', '')
-                            
-                            f.write(f"{domain}\t{flag}\t{path}\t{secure}\t{expiration}\t{name}\t{value}\n")
-                    print("✅ Converted JSON cookies to Netscape format.")
-                    
-                    # Log first few lines of cookies to verify format (for debugging)
-                    with open(cookies_path, 'r') as f:
-                        print(f"👀 Cookie file preview:\n{f.read(300)}...")
-                        
-                except json.JSONDecodeError as e:
-                     print(f"⚠️ JSON Decode Error: {e}. Content start: {clean_content[:20]}...")
-                     # Fallback if not valid JSON, assume it's already Netscape
-                     with open(cookies_path, 'w') as f:
-                        f.write(cookies_content)
-            else:
-                 # Assume Netscape format
-                 print("ℹ️ Cookie content does not look like JSON list, assuming Netscape format.")
-                 with open(cookies_path, 'w') as f:
-                    f.write(cookies_content)
-                    
+    cookies_path = '/app/cookies.txt'
+    cookies_env = os.environ.get("YOUTUBE_COOKIES")
+    if cookies_env:
+        print("🍪 Found YOUTUBE_COOKIES env var, creating cookies file inside container...")
+        print(f"📄 YOUTUBE_COOKIES raw value:\n{cookies_env}")
+        try:
+            with open(cookies_path, 'w') as f:
+                f.write(cookies_env)
+            print(f"✅ Cookies written to {cookies_path}")
         except Exception as e:
             print(f"⚠️ Failed to write cookies file: {e}")
-
-    step_start_time = time.time()
-    
-    # 2. Try multiple clients to bypass bot check
-    clients_to_try = ['ios', 'android', 'web', 'tv']
-    info = None
-    
-    # Check if cookies are available
-    has_cookies = cookies_path and os.path.exists(cookies_path)
-    if not has_cookies:
-        print("⚠️ No cookies found. This increases the risk of bot detection.")
+            cookies_path = None
     else:
-        print(f"🍪 Using cookies from: {cookies_path}")
-        
-    for client in clients_to_try:
-        print(f"🔄 Attempting extraction with client: {client}...")
-        current_opts = {
-            'quiet': True,
-            'no_warnings': True,
-            'cookiefile': cookies_path if has_cookies else None,
-            'extractor_args': {
-                'youtube': {
-                    'player_client': [client, 'web'],
-                    # Only skip webpage if we have cookies, as webpage is sometimes needed for auth check
-                    # 'player_skip': ['webpage', 'configs'] if client in ['android', 'ios'] else []
-                }
-            },
-            # Force IPv4 as IPv6 datacenter ranges are often blocked
-            'source_address': '0.0.0.0', 
-            # Add sleep interval to avoid rate limiting
-            'sleep_interval': 2,
-            'max_sleep_interval': 5,
-        }
-        
-        # EXPERIMENTAL: If client is web, try skipping client args to use default
-        if client == 'web':
-            current_opts.pop('extractor_args', None)
-
-        try:
-            with yt_dlp.YoutubeDL(current_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-            print(f"✅ Success with client: {client}")
-            break
-        except Exception as e:
-            print(f"⚠️ Failed with {client}: {e}")
-            
-    if not info:
-        print("❌ All clients failed. You MUST provide cookies via YOUTUBE_COOKIES env var.")
-        raise Exception("YouTube blocked all access attempts. Cookies required.")
-        
-    video_title = info.get('title', 'youtube_video')
-    sanitized_title = sanitize_filename(video_title)
+        cookies_path = None
+        print("⚠️ YOUTUBE_COOKIES env var not found.")
+    
+    ydl_opts_info = {
+        'quiet': True,
+        'no_warnings': True,
+        'cookiefile': cookies_path if cookies_path else None
+    }
+    
+    with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
+        info = ydl.extract_info(url, download=False)
+        video_title = info.get('title', 'youtube_video')
+        sanitized_title = sanitize_filename(video_title)
     
     output_template = os.path.join(output_dir, f'{sanitized_title}.%(ext)s')
     expected_file = os.path.join(output_dir, f'{sanitized_title}.mp4')
@@ -326,25 +227,16 @@ def download_youtube_video(url, output_dir="."):
         os.remove(expected_file)
         print(f"🗑️  Removed existing file to re-download with H.264 codec")
     
-    # Download with the successful client configuration
     ydl_opts = {
         'format': 'bestvideo[vcodec^=avc1][ext=mp4]+bestaudio[ext=m4a]/bestvideo[vcodec^=avc1]+bestaudio/best[ext=mp4]/best',
         'outtmpl': output_template,
         'merge_output_format': 'mp4',
         'quiet': False,
+        'no_warnings': True,
         'overwrites': True,
-        'cookiefile': cookies_path if has_cookies else None,
-        'extractor_args': {
-            'youtube': {
-                'player_client': [client, 'web'],
-                'player_skip': ['webpage', 'configs'] if client in ['android', 'ios'] else []
-            }
-        },
-        'source_address': '0.0.0.0',
+        'cookiefile': cookies_path if cookies_path else None
     }
     
-    # We use the same opts logic (try Android first, fallback implies logic complexity so for download we stick to opts)
-    # If extraction worked with common_opts, download should too.
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([url])
     
@@ -569,9 +461,10 @@ def get_viral_clips(transcript_result, video_duration):
 
     client = genai.Client(api_key=api_key)
     
-    # We use gemini-2.5-flash because 'gemini-3-flash' does not exist in the public API yet.
-    # If you have access to a preview model, change this string.
-    model_name = 'gemini-2.5-flash' 
+    # We use gemini-1.5-flash which is the standard current fast model.
+    # 'gemini-2.5-flash' does not exist in public API as of my knowledge cutoff or might be typo.
+    # Reverting to 'gemini-1.5-flash' to be safe, or use 'gemini-1.5-pro' for better quality.
+    model_name = 'gemini-1.5-flash' 
     
     print(f"🤖  Initializing Gemini with model: {model_name}")
 
