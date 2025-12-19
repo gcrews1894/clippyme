@@ -5,10 +5,12 @@ import threading
 import json
 import shutil
 import glob
+import glob
+import time
 import asyncio
 from typing import Dict, Optional, List
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -126,6 +128,7 @@ def enqueue_output(out, job_id):
         for line in iter(out.readline, b''):
             decoded_line = line.decode('utf-8').strip()
             if decoded_line:
+                print(f"📝 [Job Output] {decoded_line}")
                 if job_id in jobs:
                     jobs[job_id]['logs'].append(decoded_line)
     except Exception as e:
@@ -142,6 +145,7 @@ async def run_job(job_id, job_data):
     
     jobs[job_id]['status'] = 'processing'
     jobs[job_id]['logs'].append("Job started by worker.")
+    print(f"🎬 [run_job] Executing command for {job_id}: {' '.join(cmd)}")
     
     try:
         process = subprocess.Popen(
@@ -157,10 +161,44 @@ async def run_job(job_id, job_data):
         t_log.daemon = True
         t_log.start()
         
-        # Async wait for process
+        # Async wait for process with incremental updates
+        start_wait = time.time()
         while process.poll() is None:
-            await asyncio.sleep(1)
+            await asyncio.sleep(2)
             
+            # Check for partial results every 2 seconds
+            # Look for metadata file
+            try:
+                json_files = glob.glob(os.path.join(output_dir, "*_metadata.json"))
+                if json_files:
+                    target_json = json_files[0]
+                    # Read metadata (it might be being written to, so simple try/except or just read)
+                    # Use a lock or just robust read? json.load might fail if file is partial.
+                    # Usually main.py writes it once at start (based on my review).
+                    if os.path.getsize(target_json) > 0:
+                        with open(target_json, 'r') as f:
+                            data = json.load(f)
+                            
+                        base_name = os.path.basename(target_json).replace('_metadata.json', '')
+                        clips = data.get('shorts', [])
+                        
+                        # Check which clips actually exist on disk
+                        ready_clips = []
+                        for i, clip in enumerate(clips):
+                             clip_filename = f"{base_name}_clip_{i+1}.mp4"
+                             clip_path = os.path.join(output_dir, clip_filename)
+                             if os.path.exists(clip_path) and os.path.getsize(clip_path) > 0:
+                                 # Checking if file is growing? For now assume if it exists and main.py moves it there, it's done.
+                                 # main.py writes to temp_... then moves to final name. So presence means ready!
+                                 clip['video_url'] = f"/videos/{job_id}/{clip_filename}"
+                                 ready_clips.append(clip)
+                        
+                        if ready_clips:
+                             jobs[job_id]['result'] = {'clips': ready_clips}
+            except Exception as e:
+                # Ignore read errors during processing
+                pass
+
         returncode = process.returncode
         
         if returncode == 0:
@@ -268,3 +306,164 @@ async def get_status(job_id: str):
         "logs": job['logs'],
         "result": job.get('result')
     }
+
+class SocialPostRequest(BaseModel):
+    job_id: str
+    clip_index: int
+    api_key: str
+    user_id: str
+    platforms: List[str] # ["tiktok", "instagram", "youtube"]
+    # Optional overrides if frontend wants to edit them
+    title: Optional[str] = None
+    tiktok_description: Optional[str] = None
+    instagram_description: Optional[str] = None
+    youtube_description: Optional[str] = None
+
+import httpx
+
+@app.post("/api/social/post")
+async def post_to_socials(req: SocialPostRequest):
+    if req.job_id not in jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    job = jobs[req.job_id]
+    if 'result' not in job or 'clips' not in job['result']:
+        raise HTTPException(status_code=400, detail="Job result not available")
+        
+    try:
+        clip = job['result']['clips'][req.clip_index]
+        # Video URL is relative /videos/..., we need absolute file path
+        # clip['video_url'] is like "/videos/{job_id}/{filename}"
+        # We constructed it as: f"/videos/{job_id}/{clip_filename}"
+        # And file is at f"{OUTPUT_DIR}/{job_id}/{clip_filename}"
+        
+        filename = clip['video_url'].split('/')[-1]
+        file_path = os.path.join(OUTPUT_DIR, req.job_id, filename)
+        
+        if not os.path.exists(file_path):
+             raise HTTPException(status_code=404, detail=f"Video file not found: {file_path}")
+
+        # Construct parameters for Upload-Post API
+        # Fallbacks
+        final_title = req.title or clip.get('title', 'Viral Short')
+        
+        # Prepare form data
+        url = "https://api.upload-post.com/api/upload"
+        headers = {
+            "Authorization": f"Apikey {req.api_key}"
+        }
+        
+        data = {
+            "user": req.user_id,
+            "title": final_title,
+            "privacy_level": "PUBLIC_TO_EVERYONE", # TikTok
+            "privacyStatus": "public", # YouTube
+            "media_type": "REELS", # Instagram
+        }
+        
+        # Add platforms
+        for p in req.platforms:
+             data.update({f"platform[{len(data.get('platform', [])) if 'platform' in data else 0}]": p})
+        # Wait, httpx/requests handling of list params can be tricky.
+        # Usually list of tuples [('platform[]', 'tiktok'), ('platform[]', 'instagram')] works.
+        
+        # Prepare data as dict (httpx handles lists for multiple values)
+        data_payload = {
+            "user": req.user_id,
+            "title": final_title,
+            "platform[]": req.platforms # Pass list directly
+        }
+        
+        # Add Platform specifics
+        if "tiktok" in req.platforms:
+             desc = req.tiktok_description or clip.get('social_descriptions', {}).get('tiktok', final_title)
+             data_payload["tiktok_title"] = desc
+             
+        if "instagram" in req.platforms:
+             desc = req.instagram_description or clip.get('social_descriptions', {}).get('instagram', final_title)
+             data_payload["instagram_title"] = desc
+             data_payload["media_type"] = "REELS"
+
+        if "youtube" in req.platforms:
+             desc = req.youtube_description or clip.get('social_descriptions', {}).get('instagram', final_title) # Fallback
+             data_payload["youtube_title"] = final_title
+             data_payload["youtube_description"] = desc
+             data_payload["privacyStatus"] = "public"
+
+        # Send File
+        # httpx AsyncClient requires async file reading or bytes. 
+        # Since we have MAX_FILE_SIZE_MB, reading into memory is safe-ish.
+        with open(file_path, "rb") as f:
+            file_content = f.read()
+            
+        files = {
+            "video": (filename, file_content, "video/mp4")
+        }
+
+        # Switch to synchronous Client to avoid "sync request with AsyncClient" error with multipart/files
+        with httpx.Client(timeout=120.0) as client:
+            print(f"📡 Sending to Upload-Post for platforms: {req.platforms}")
+            response = client.post(url, headers=headers, data=data_payload, files=files)
+            
+        if response.status_code not in [200, 201, 202]: # Added 201
+             print(f"❌ Upload-Post Error: {response.text}")
+             raise HTTPException(status_code=response.status_code, detail=f"Vendor API Error: {response.text}")
+
+        return response.json()
+
+    except Exception as e:
+        print(f"❌ Social Post Exception: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/social/user")
+async def get_social_user(api_key: str = Header(..., alias="X-Upload-Post-Key")):
+    """Proxy to fetch user ID from Upload-Post"""
+    if not api_key:
+         raise HTTPException(status_code=400, detail="Missing X-Upload-Post-Key header")
+         
+    url = "https://api.upload-post.com/api/uploadposts/users"
+    print(f"🔍 Fetching User ID from: {url}")
+    headers = {"Authorization": f"Apikey {api_key}"}
+    
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            resp = await client.get(url, headers=headers)
+            if resp.status_code != 200:
+                print(f"❌ Upload-Post User Fetch Error: {resp.text}")
+                raise HTTPException(status_code=resp.status_code, detail=f"Failed to fetch user: {resp.text}")
+            
+            data = resp.json()
+            print(f"🔍 Upload-Post User Response: {data}")
+            
+            user_id = None
+            # The structure is {'success': True, 'profiles': [{'username': '...'}, ...]}
+            profiles_list = []
+            if isinstance(data, dict):
+                 raw_profiles = data.get('profiles', [])
+                 if isinstance(raw_profiles, list):
+                     for p in raw_profiles:
+                         username = p.get('username')
+                         if username:
+                             # Determine connected platforms
+                             socials = p.get('social_accounts', {})
+                             connected = []
+                             # Check typical platforms
+                             for platform in ['tiktok', 'instagram', 'youtube']:
+                                 account_info = socials.get(platform)
+                                 # If it's a dict and typically has data, or just not empty string
+                                 if isinstance(account_info, dict):
+                                     connected.append(platform)
+                             
+                             profiles_list.append({
+                                 "username": username,
+                                 "connected": connected
+                             })
+            
+            if not profiles_list:
+                # Fallback if no profiles found
+                return {"profiles": [], "error": "No profiles found"}
+                
+            return {"profiles": profiles_list}
+            
+        except Exception as e:
+             raise HTTPException(status_code=500, detail=str(e))

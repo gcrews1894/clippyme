@@ -5,10 +5,11 @@ torch
 torchvision
 tqdm
 yt-dlp
-openai-whisper
+faster-whisper
 google-genai
 python-dotenv
 
 fastapi
 uvicorn
 python-multipart
+httpx

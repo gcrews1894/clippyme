@@ -12,7 +12,9 @@ import os
 import numpy as np
 from tqdm import tqdm
 import yt_dlp
-import whisper
+import yt_dlp
+# import whisper (replaced by faster_whisper inside function)
+from google import genai
 from google import genai
 from dotenv import load_dotenv
 import json
@@ -380,10 +382,48 @@ def process_video_to_vertical(input_video, final_output_video):
     return True
 
 def transcribe_video(video_path):
-    print("🎙️  Transcribing video with Whisper...")
-    model_whisper = whisper.load_model("base")
-    result = model_whisper.transcribe(video_path, word_timestamps=True)
-    return result
+    print("🎙️  Transcribing video with Faster-Whisper (CPU Optimized)...")
+    from faster_whisper import WhisperModel
+    
+    # Run on CPU with INT8 quantization for speed
+    model = WhisperModel("base", device="cpu", compute_type="int8")
+    
+    segments, info = model.transcribe(video_path, word_timestamps=True)
+    
+    print(f"   Detected language '{info.language}' with probability {info.language_probability:.2f}")
+    
+    # Convert to openai-whisper compatible format
+    transcript_segments = []
+    full_text = ""
+    
+    for segment in segments:
+        # Print progress to keep user informed (and prevent timeouts feeling)
+        print(f"   [{segment.start:.2f}s -> {segment.end:.2f}s] {segment.text}")
+        
+        seg_dict = {
+            'text': segment.text,
+            'start': segment.start,
+            'end': segment.end,
+            'words': []
+        }
+        
+        if segment.words:
+            for word in segment.words:
+                seg_dict['words'].append({
+                    'word': word.word,
+                    'start': word.start,
+                    'end': word.end,
+                    'probability': word.probability
+                })
+        
+        transcript_segments.append(seg_dict)
+        full_text += segment.text + " "
+        
+    return {
+        'text': full_text.strip(),
+        'segments': transcript_segments,
+        'language': info.language
+    }
 
 def get_viral_clips(transcript_result, video_duration):
     print("🤖  Analyzing with Gemini...")

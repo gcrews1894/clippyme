@@ -29,8 +29,8 @@ export default function MediaInput({ onProcess, isProcessing }) {
                 <button
                     onClick={() => setMode('url')}
                     className={`flex items-center gap-2 pb-2 px-2 transition-all ${mode === 'url'
-                            ? 'text-primary border-b-2 border-primary -mb-[17px]'
-                            : 'text-zinc-400 hover:text-white'
+                        ? 'text-primary border-b-2 border-primary -mb-[17px]'
+                        : 'text-zinc-400 hover:text-white'
                         }`}
                 >
                     <Youtube size={18} />
@@ -39,8 +39,8 @@ export default function MediaInput({ onProcess, isProcessing }) {
                 <button
                     onClick={() => setMode('file')}
                     className={`flex items-center gap-2 pb-2 px-2 transition-all ${mode === 'file'
-                            ? 'text-primary border-b-2 border-primary -mb-[17px]'
-                            : 'text-zinc-400 hover:text-white'
+                        ? 'text-primary border-b-2 border-primary -mb-[17px]'
+                        : 'text-zinc-400 hover:text-white'
                         }`}
                 >
                     <Upload size={18} />
@@ -107,7 +107,7 @@ export default function MediaInput({ onProcess, isProcessing }) {
                         </>
                     ) : (
                         <>
-                            Start Automation
+                            Generate Clips
                         </>
                     )}
                 </button>
