@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Download, Share2, Instagram, Youtube, Video, CheckCircle, AlertCircle, X, Loader2 } from 'lucide-react';
+import { Download, Share2, Instagram, Youtube, Video, CheckCircle, AlertCircle, X, Loader2, Copy } from 'lucide-react';
 import { getApiUrl } from '../config';
 
 export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUserId }) {
@@ -10,11 +10,11 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
         youtube: true
     });
     const [posting, setPosting] = useState(false);
-    const [postResult, setPostResult] = useState(null); // { success: boolean, msg: string }
+    const [postResult, setPostResult] = useState(null);
 
     const handlePost = async () => {
         if (!uploadPostKey || !uploadUserId) {
-            setPostResult({ success: false, msg: "Missing API Key or User ID. Configure them at the top." });
+            setPostResult({ success: false, msg: "Missing API Key or User ID." });
             return;
         }
 
@@ -42,7 +42,6 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
 
             if (!res.ok) {
                 const errText = await res.text();
-                // Try parsing JSON error
                 try {
                     const jsonErr = JSON.parse(errText);
                     throw new Error(jsonErr.detail || errText);
@@ -51,8 +50,7 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
                 }
             }
 
-            const data = await res.json();
-            setPostResult({ success: true, msg: "Posted successfully! Check your social accounts." });
+            setPostResult({ success: true, msg: "Posted successfully!" });
             setTimeout(() => {
                 setShowModal(false);
                 setPostResult(null);
@@ -68,86 +66,84 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
     const videoUrl = getApiUrl(clip.video_url);
 
     return (
-        <div className="glass-panel overflow-hidden animate-[fadeIn_0.5s_ease-out]" style={{ animationDelay: `${index * 0.1}s` }}>
-            <div className="grid md:grid-cols-2 gap-0">
-                <div className="bg-black/50 aspect-[9/16] relative group">
-                    <video
-                        src={videoUrl}
-                        controls
-                        className="w-full h-full object-contain"
-                        loop
-                    />
-                    <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <a
-                            href={videoUrl}
-                            download
-                            className="p-2 bg-black/60 backdrop-blur rounded-lg text-white hover:bg-black/80 inline-flex"
-                        >
-                            <Download size={16} />
-                        </a>
-                    </div>
-                </div>
-
-                <div className="p-6 flex flex-col h-full">
-                    <div className="mb-4">
-                        <div className="flex items-center gap-2 mb-2">
-                            <span className="text-xs font-bold px-2 py-1 bg-primary/20 text-primary rounded-md uppercase tracking-wider">
-                                Clip {index + 1}
-                            </span>
-                            <span className="text-xs text-zinc-500 font-mono">
-                                {clip.start}s - {clip.end}s
-                            </span>
-                            <span className="ml-auto text-xs font-medium text-red-400 flex items-center gap-1">
-                                <Youtube size={12} /> YouTube Short Title
-                            </span>
-                        </div>
-                        <h3 className="text-xl font-bold leading-tight mb-4 text-white">
-                            {clip.video_title_for_youtube_short || "Viral Clip"}
-                        </h3>
-                    </div>
-
-                    <div className="space-y-4 flex-1">
-                        <div className="space-y-1">
-                            <div className="flex items-center gap-2 text-xs font-medium text-pink-400">
-                                <Instagram size={14} /> Instagram Description
-                            </div>
-                            <div className="p-3 bg-white/5 rounded-lg text-sm text-zinc-300 leading-relaxed border border-white/5 line-clamp-3 hover:line-clamp-none transition-all">
-                                {clip.video_description_for_instagram}
-                            </div>
-                        </div>
-
-                        <div className="space-y-1">
-                            <div className="flex items-center gap-2 text-xs font-medium text-cyan-400">
-                                <Video size={14} /> TikTok Description
-                            </div>
-                            <div className="p-3 bg-white/5 rounded-lg text-sm text-zinc-300 leading-relaxed border border-white/5 line-clamp-3 hover:line-clamp-none transition-all">
-                                {clip.video_description_for_tiktok || clip.video_description_for_instagram}
-                            </div>
-                        </div>
-                    </div>
-
-                    <div className="mt-6 pt-4 border-t border-white/10 flex gap-2">
-                        <button
-                            onClick={() => setShowModal(true)}
-                            className="flex-1 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2 text-white"
-                        >
-                            <Share2 size={16} /> Post to Socials
-                        </button>
-                        <a
-                            href={videoUrl}
-                            download
-                            className="flex-1 py-2 bg-primary/10 hover:bg-primary/20 text-primary rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
-                        >
-                            <Download size={16} /> Download
-                        </a>
-                    </div>
+        <div className="bg-surface border border-white/5 rounded-2xl overflow-hidden flex flex-col md:flex-row group hover:border-white/10 transition-all animate-[fadeIn_0.5s_ease-out] h-auto md:h-[350px]" style={{ animationDelay: `${index * 0.1}s` }}>
+            {/* Left: Video Preview (Fixed Width on Desktop) */}
+            <div className="w-full md:w-[200px] bg-black relative shrink-0 aspect-[9/16] md:aspect-auto">
+                <video
+                    src={videoUrl}
+                    controls
+                    className="w-full h-full object-cover"
+                    loop
+                    playsInline
+                />
+                <div className="absolute top-3 left-3 flex gap-2">
+                    <span className="bg-black/60 backdrop-blur-md text-white text-[10px] font-bold px-2 py-1 rounded-md border border-white/10 uppercase tracking-wide">
+                        Clip {index + 1}
+                    </span>
                 </div>
             </div>
 
-            {/* Modal */}
+            {/* Right: Content & Details */}
+            <div className="flex-1 p-5 flex flex-col bg-[#121214] overflow-hidden">
+                <div className="mb-4">
+                     <h3 className="text-base font-bold text-white leading-tight line-clamp-2 mb-2" title={clip.video_title_for_youtube_short}>
+                        {clip.video_title_for_youtube_short || "Viral Clip Generated"}
+                    </h3>
+                    <div className="flex gap-2 text-[10px] text-zinc-500 font-mono">
+                        <span className="bg-white/5 px-1.5 py-0.5 rounded border border-white/5">{Math.floor(clip.end - clip.start)}s</span>
+                        <span className="bg-white/5 px-1.5 py-0.5 rounded border border-white/5">#shorts</span>
+                        <span className="bg-white/5 px-1.5 py-0.5 rounded border border-white/5">#viral</span>
+                    </div>
+                </div>
+
+                {/* Scrollable Descriptions Area */}
+                <div className="flex-1 overflow-y-auto custom-scrollbar space-y-3 pr-2 mb-4">
+                     {/* YouTube */}
+                     <div className="bg-black/20 rounded-lg p-3 border border-white/5">
+                        <div className="flex items-center gap-2 text-[10px] font-bold text-red-400 mb-1.5 uppercase tracking-wider">
+                            <Youtube size={12} /> YouTube Title
+                        </div>
+                        <p className="text-xs text-zinc-300 select-all">
+                            {clip.video_title_for_youtube_short || "Viral Short Video"}
+                        </p>
+                     </div>
+
+                     {/* TikTok / IG */}
+                     <div className="bg-black/20 rounded-lg p-3 border border-white/5">
+                        <div className="flex items-center gap-2 text-[10px] font-bold text-zinc-400 mb-1.5 uppercase tracking-wider">
+                            <Video size={12} className="text-cyan-400" /> 
+                            <span className="text-zinc-500">/</span>
+                            <Instagram size={12} className="text-pink-400" />
+                            Caption
+                        </div>
+                        <p className="text-xs text-zinc-300 line-clamp-3 hover:line-clamp-none transition-all cursor-pointer select-all">
+                            {clip.video_description_for_tiktok || clip.video_description_for_instagram}
+                        </p>
+                     </div>
+                </div>
+
+                {/* Actions Footer */}
+                <div className="grid grid-cols-2 gap-3 mt-auto pt-4 border-t border-white/5">
+                    <button
+                        onClick={() => setShowModal(true)}
+                        className="col-span-1 py-2 bg-primary hover:bg-blue-600 text-white rounded-lg text-xs font-bold shadow-lg shadow-primary/20 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+                    >
+                        <Share2 size={14} /> Post
+                    </button>
+                    <a
+                        href={videoUrl}
+                        download
+                        className="col-span-1 py-2 bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-2 border border-white/5"
+                    >
+                        <Download size={14} /> Download
+                    </a>
+                </div>
+            </div>
+
+            {/* Post Modal */}
             {showModal && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
-                    <div className="bg-zinc-900 border border-white/10 p-6 rounded-2xl w-full max-w-sm shadow-2xl relative">
+                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
+                    <div className="bg-[#121214] border border-white/10 p-6 rounded-2xl w-full max-w-sm shadow-2xl relative">
                         <button
                             onClick={() => setShowModal(false)}
                             className="absolute top-4 right-4 text-zinc-500 hover:text-white"
@@ -155,61 +151,33 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
                             <X size={20} />
                         </button>
 
-                        <h3 className="text-xl font-bold text-white mb-4">Post to Socials</h3>
+                        <h3 className="text-lg font-bold text-white mb-4">Post to Socials</h3>
 
                         {!uploadPostKey && (
-                            <div className="mb-4 p-3 bg-yellow-500/10 border border-yellow-500/20 text-yellow-200 text-sm rounded-lg flex items-start gap-2">
-                                <AlertCircle size={16} className="mt-0.5 shrink-0" />
-                                <div>
-                                    Please configure your Upload-Post API Key at the top of the page first.
-                                </div>
+                            <div className="mb-4 p-3 bg-yellow-500/10 border border-yellow-500/20 text-yellow-200 text-xs rounded-lg flex items-start gap-2">
+                                <AlertCircle size={14} className="mt-0.5 shrink-0" />
+                                <div>Configure API Key in Settings first.</div>
                             </div>
                         )}
 
-                        <div className="space-y-3 mb-6">
+                        <div className="space-y-2 mb-6">
                             <label className="flex items-center gap-3 p-3 bg-white/5 rounded-lg cursor-pointer hover:bg-white/10 transition-colors border border-white/5">
-                                <input
-                                    type="checkbox"
-                                    checked={platforms.tiktok}
-                                    onChange={e => setPlatforms({ ...platforms, tiktok: e.target.checked })}
-                                    className="w-4 h-4 rounded border-zinc-600 bg-black/50 text-primary focus:ring-primary"
-                                />
-                                <div className="flex items-center gap-2">
-                                    <Video size={18} className="text-cyan-400" />
-                                    <span className="text-sm font-medium text-white">TikTok</span>
-                                </div>
+                                <input type="checkbox" checked={platforms.tiktok} onChange={e => setPlatforms({ ...platforms, tiktok: e.target.checked })} className="w-4 h-4 rounded border-zinc-600 bg-black/50 text-primary focus:ring-primary" />
+                                <div className="flex items-center gap-2 text-sm text-white"><Video size={16} className="text-cyan-400" /> TikTok</div>
                             </label>
-
                             <label className="flex items-center gap-3 p-3 bg-white/5 rounded-lg cursor-pointer hover:bg-white/10 transition-colors border border-white/5">
-                                <input
-                                    type="checkbox"
-                                    checked={platforms.instagram}
-                                    onChange={e => setPlatforms({ ...platforms, instagram: e.target.checked })}
-                                    className="w-4 h-4 rounded border-zinc-600 bg-black/50 text-primary focus:ring-primary"
-                                />
-                                <div className="flex items-center gap-2">
-                                    <Instagram size={18} className="text-pink-400" />
-                                    <span className="text-sm font-medium text-white">Instagram</span>
-                                </div>
+                                <input type="checkbox" checked={platforms.instagram} onChange={e => setPlatforms({ ...platforms, instagram: e.target.checked })} className="w-4 h-4 rounded border-zinc-600 bg-black/50 text-primary focus:ring-primary" />
+                                <div className="flex items-center gap-2 text-sm text-white"><Instagram size={16} className="text-pink-400" /> Instagram</div>
                             </label>
-
                             <label className="flex items-center gap-3 p-3 bg-white/5 rounded-lg cursor-pointer hover:bg-white/10 transition-colors border border-white/5">
-                                <input
-                                    type="checkbox"
-                                    checked={platforms.youtube}
-                                    onChange={e => setPlatforms({ ...platforms, youtube: e.target.checked })}
-                                    className="w-4 h-4 rounded border-zinc-600 bg-black/50 text-primary focus:ring-primary"
-                                />
-                                <div className="flex items-center gap-2">
-                                    <Youtube size={18} className="text-red-400" />
-                                    <span className="text-sm font-medium text-white">YouTube Shorts</span>
-                                </div>
+                                <input type="checkbox" checked={platforms.youtube} onChange={e => setPlatforms({ ...platforms, youtube: e.target.checked })} className="w-4 h-4 rounded border-zinc-600 bg-black/50 text-primary focus:ring-primary" />
+                                <div className="flex items-center gap-2 text-sm text-white"><Youtube size={16} className="text-red-400" /> YouTube Shorts</div>
                             </label>
                         </div>
 
                         {postResult && (
-                            <div className={`mb-4 p-3 rounded-lg text-sm flex items-start gap-2 ${postResult.success ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>
-                                {postResult.success ? <CheckCircle size={16} className="mt-0.5 shrink-0" /> : <AlertCircle size={16} className="mt-0.5 shrink-0" />}
+                            <div className={`mb-4 p-3 rounded-lg text-xs flex items-start gap-2 ${postResult.success ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>
+                                {postResult.success ? <CheckCircle size={14} className="mt-0.5 shrink-0" /> : <AlertCircle size={14} className="mt-0.5 shrink-0" />}
                                 <div>{postResult.msg}</div>
                             </div>
                         )}
@@ -219,15 +187,7 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
                             disabled={posting || !uploadPostKey}
                             className="w-full py-3 bg-primary hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl text-white font-bold transition-all flex items-center justify-center gap-2"
                         >
-                            {posting ? (
-                                <>
-                                    <Loader2 size={18} className="animate-spin" /> Publishing...
-                                </>
-                            ) : (
-                                <>
-                                    <Share2 size={18} /> Publish Now
-                                </>
-                            )}
+                            {posting ? <><Loader2 size={16} className="animate-spin" /> Publishing...</> : <><Share2 size={16} /> Publish Now</>}
                         </button>
                     </div>
                 </div>

@@ -18,7 +18,7 @@ export default function KeyInput({ onKeySet, savedKey }) {
     };
 
     return (
-        <div className="glass-panel p-6 mb-8 animate-[fadeIn_0.5s_ease-out]">
+        <div className="bg-surface border border-white/5 rounded-2xl p-6 mb-8 animate-[fadeIn_0.5s_ease-out]">
             <div className="flex items-center gap-3 mb-4">
                 <div className="p-2 bg-accent/20 rounded-lg text-accent">
                     <Key size={20} />

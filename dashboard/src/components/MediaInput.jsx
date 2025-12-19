@@ -24,8 +24,8 @@ export default function MediaInput({ onProcess, isProcessing }) {
     };
 
     return (
-        <div className="glass-panel p-6 animate-[fadeIn_0.6s_ease-out]">
-            <div className="flex gap-4 mb-6 border-b border-white/10 pb-4">
+        <div className="bg-surface border border-white/5 rounded-2xl p-6 animate-[fadeIn_0.6s_ease-out]">
+            <div className="flex gap-4 mb-6 border-b border-white/5 pb-4">
                 <button
                     onClick={() => setMode('url')}
                     className={`flex items-center gap-2 pb-2 px-2 transition-all ${mode === 'url'
