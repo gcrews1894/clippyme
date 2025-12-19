@@ -214,6 +214,9 @@ def download_youtube_video(url, output_dir="."):
             if is_json:
                 import json
                 try:
+                    # Clean the content: remove backslash escapes which are common in env vars (e.g. \"domain\")
+                    clean_content = clean_content.replace('\\"', '"')
+                    
                     cookies_json = json.loads(clean_content)
                     with open(cookies_path, 'w') as f:
                         f.write("# Netscape HTTP Cookie File\n")
