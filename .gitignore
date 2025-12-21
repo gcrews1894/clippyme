@@ -18,3 +18,5 @@ temp_*.mp4
 *_metadata.json
 
 .cache
+
+.config
