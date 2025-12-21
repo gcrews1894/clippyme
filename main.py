@@ -463,7 +463,6 @@ def download_youtube_video(url, output_dir="."):
         try:
             with open(cookies_path, 'w') as f:
                 f.write(cookies_env)
-            print(f"✅ Cookies written to {cookies_path}")
         except Exception as e:
             print(f"⚠️ Failed to write cookies file: {e}")
             cookies_path = None
