@@ -501,6 +501,11 @@ def download_youtube_video(url, output_dir="."):
         except Exception as e:
             # Force print to stderr/stdout immediately so it's captured before crash
             import sys
+            import traceback
+            
+            # Print minimal error first to ensure something gets out
+            print("🚨 YOUTUBE DOWNLOAD ERROR 🚨", file=sys.stderr)
+            
             error_msg = f"""
             
 ❌ ================================================================= ❌
@@ -518,10 +523,17 @@ REASON: YouTube has blocked the download request (Error 429/Unavailable).
 
 Technical Details: {str(e)}
             """
-            print(error_msg, file=sys.stderr)
+            # Print to both streams to ensure capture
             print(error_msg, file=sys.stdout)
+            print(error_msg, file=sys.stderr)
+            
+            # Force flush
             sys.stdout.flush()
             sys.stderr.flush()
+            
+            # Wait a split second to allow buffer to drain before raising
+            time.sleep(0.5)
+            
             raise e
     
     output_template = os.path.join(output_dir, f'{sanitized_title}.%(ext)s')
