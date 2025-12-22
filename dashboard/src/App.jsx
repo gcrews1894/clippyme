@@ -198,7 +198,8 @@ function App() {
             clearInterval(interval);
           } else if (data.status === 'failed') {
             setStatus('error');
-            setLogs(prev => [...prev, "Error: " + data.error]);
+            const errorMsg = data.error || (data.logs && data.logs.length > 0 ? data.logs[data.logs.length - 1] : "Process failed");
+            setLogs(prev => [...prev, "Error: " + errorMsg]);
             clearInterval(interval);
           } else {
             // Update logs if available
