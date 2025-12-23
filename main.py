@@ -892,18 +892,43 @@ if __name__ == '__main__':
 
     script_start_time = time.time()
     
+    def _ensure_dir(path: str) -> str:
+        """Create directory if missing and return the same path."""
+        if path:
+            os.makedirs(path, exist_ok=True)
+        return path
+    
     # 1. Get Input Video
     if args.url:
-        output_dir = args.output if args.output and os.path.isdir(args.output) else "."
-        if args.output and not os.path.isdir(args.output) and not args.skip_analysis:
-             # If output is a filename but we expect multiple clips, use its dir
-             output_dir = os.path.dirname(args.output) or "."
+        # For multi-clip runs, treat --output as an OUTPUT DIRECTORY (create it if needed).
+        # For whole-video runs (--skip-analysis), --output can be a file path.
+        if args.output and not args.skip_analysis:
+            output_dir = _ensure_dir(args.output)
+        else:
+            # If output is a directory, use it; if it's a filename, use its directory; else default "."
+            if args.output and os.path.isdir(args.output):
+                output_dir = args.output
+            elif args.output and not os.path.isdir(args.output):
+                output_dir = os.path.dirname(args.output) or "."
+            else:
+                output_dir = "."
         
         input_video, video_title = download_youtube_video(args.url, output_dir)
     else:
         input_video = args.input
         video_title = os.path.splitext(os.path.basename(input_video))[0]
-        output_dir = os.path.dirname(args.output) if args.output else os.path.dirname(input_video)
+        
+        if args.output and not args.skip_analysis:
+            # For multi-clip runs, treat --output as an OUTPUT DIRECTORY (create it if needed).
+            output_dir = _ensure_dir(args.output)
+        else:
+            # If output is a directory, use it; if it's a filename, use its directory; else default to input dir.
+            if args.output and os.path.isdir(args.output):
+                output_dir = args.output
+            elif args.output and not os.path.isdir(args.output):
+                output_dir = os.path.dirname(args.output) or os.path.dirname(input_video)
+            else:
+                output_dir = os.path.dirname(input_video)
 
     if not os.path.exists(input_video):
         print(f"❌ Input file not found: {input_video}")
