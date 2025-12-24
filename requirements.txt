@@ -8,6 +8,7 @@ faster-whisper
 google-genai
 python-dotenv
 mediapipe==0.10.14
+boto3
 
 fastapi
 uvicorn
