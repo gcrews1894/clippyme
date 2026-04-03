@@ -1,9 +1,11 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Scan, Scissors, Activity, Radio, CheckCircle, Cpu, Zap } from 'lucide-react';
+import { CheckCircle, Cpu, Zap, Activity } from 'lucide-react';
+import { Skeleton } from '@/components/ui/skeleton';
 
 const ProcessingAnimation = ({ media, isComplete, syncedTime, isSyncedPlaying, syncTrigger }) => {
   const [videoSrc, setVideoSrc] = useState(null);
   const [isYouTube, setIsYouTube] = useState(false);
+  const [dots, setDots] = useState('');
   const videoRef = useRef(null);
   const iframeRef = useRef(null);
 
@@ -21,42 +23,45 @@ const ProcessingAnimation = ({ media, isComplete, syncedTime, isSyncedPlaying, s
     }
   }, [media]);
 
+  // Animated dots for status text
+  useEffect(() => {
+    if (isComplete) return;
+    const interval = setInterval(() => {
+      setDots(prev => prev.length >= 3 ? '' : prev + '.');
+    }, 500);
+    return () => clearInterval(interval);
+  }, [isComplete]);
+
   // Handle Sync Playback for Local Video
   useEffect(() => {
     if (!isYouTube && videoRef.current) {
       if (isSyncedPlaying) {
-        // Sync Mode: Seek to time and Play
         videoRef.current.currentTime = syncedTime;
         videoRef.current.play().catch(e => console.log("Auto-play prevented", e));
         videoRef.current.loop = false;
-        videoRef.current.muted = true; // Keep muted to avoid double audio with clip
+        videoRef.current.muted = true;
       } else {
-        // Stop Sync: Pause
         videoRef.current.pause();
-        
         if (isComplete) {
-             videoRef.current.loop = true;
-             videoRef.current.play().catch(e => console.log("Ambient play prevented", e));
+          videoRef.current.loop = true;
+          videoRef.current.play().catch(e => console.log("Ambient play prevented", e));
         }
       }
     }
   }, [syncedTime, isSyncedPlaying, isYouTube, isComplete, syncTrigger]);
 
-  // Handle Sync Playback for YouTube (Basic Iframe Control via PostMessage)
+  // Handle Sync Playback for YouTube
   useEffect(() => {
     if (isYouTube && iframeRef.current && videoSrc) {
-        const iframeWindow = iframeRef.current.contentWindow;
-        if (isSyncedPlaying) {
-             // Seek and Play
-             iframeWindow.postMessage(JSON.stringify({ event: 'command', func: 'seekTo', args: [syncedTime, true] }), '*');
-             iframeWindow.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: [] }), '*');
-        } else {
-             // Pause
-             iframeWindow.postMessage(JSON.stringify({ event: 'command', func: 'pauseVideo', args: [] }), '*');
-        }
+      const iframeWindow = iframeRef.current.contentWindow;
+      if (isSyncedPlaying) {
+        iframeWindow.postMessage(JSON.stringify({ event: 'command', func: 'seekTo', args: [syncedTime, true] }), '*');
+        iframeWindow.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: [] }), '*');
+      } else {
+        iframeWindow.postMessage(JSON.stringify({ event: 'command', func: 'pauseVideo', args: [] }), '*');
+      }
     }
   }, [syncedTime, isSyncedPlaying, isYouTube, videoSrc, syncTrigger]);
-
 
   const getYouTubeId = (url) => {
     const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
@@ -64,122 +69,112 @@ const ProcessingAnimation = ({ media, isComplete, syncedTime, isSyncedPlaying, s
     return (match && match[2].length === 11) ? match[2] : null;
   };
 
-  const containerClasses = `relative w-full aspect-video rounded-xl overflow-hidden bg-black border border-white/10 shadow-2xl mb-8 group animate-[fadeIn_0.5s_ease-out] transition-all duration-500 
-    ${isComplete && !isSyncedPlaying ? 'grayscale brightness-50' : ''} 
-    ${isSyncedPlaying ? 'ring-2 ring-primary ring-offset-2 ring-offset-black shadow-primary/20' : ''}`;
-
-  const getVideoOpacityClass = () => {
-    if (isSyncedPlaying) return 'opacity-100'; // Playing: Full visibility
-    if (isComplete) return 'opacity-30';       // Idle Result: Darker
-    return 'opacity-40 grayscale group-hover:grayscale-0'; // Processing: Dark + Grayscale effect
-  };
+  const modelName = (localStorage.getItem('clippyme_model') || 'gemini-2.5-flash');
 
   return (
-    <div className={containerClasses}>
-      {/* Video Layer */}
-      <div className={`absolute inset-0 transition-all duration-700 ${getVideoOpacityClass()}`}>
-        {isYouTube && videoSrc ? (
+    <div className="relative w-full mb-8 animate-[fadeIn_0.5s_ease-out]">
+      {/* Video container with pulsing border */}
+      <div
+        className={`relative aspect-video rounded-2xl overflow-hidden bg-[#0f0f13] transition-all duration-500 ${
+          isSyncedPlaying
+            ? 'ring-2 ring-primary outline outline-2 outline-background'
+            : !isComplete
+              ? 'shadow-[0_0_0_2px_rgba(152,80,195,0.3)] pulse-ring-active'
+              : ''
+        }`}
+      >
+        {/* Video layer */}
+        <div className={`absolute inset-0 transition-all duration-700 ${
+          isSyncedPlaying ? 'opacity-100' :
+          isComplete ? 'opacity-30 grayscale brightness-50' :
+          'opacity-50'
+        }`}>
+          {isYouTube && videoSrc ? (
             <iframe
-            ref={iframeRef}
-            className={`w-full h-full ${isSyncedPlaying ? '' : 'pointer-events-none scale-110'}`}
-            // Add enablejsapi=1 for postMessage control
-            src={`https://www.youtube.com/embed/${videoSrc}?autoplay=1&mute=1&controls=0&loop=1&playlist=${videoSrc}&modestbranding=1&showinfo=0&rel=0&enablejsapi=1`}
-            title="Processing Video"
-            frameBorder="0"
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-          />
-        ) : videoSrc ? (
-          <video
-            ref={videoRef}
-            src={videoSrc}
-            className="w-full h-full object-cover"
-            autoPlay
-            muted
-            loop
-            playsInline
-          />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center bg-zinc-900">
-             <div className="w-16 h-16 border-4 border-zinc-700 border-t-zinc-500 rounded-full animate-spin"></div>
+              ref={iframeRef}
+              className={`w-full h-full ${isSyncedPlaying ? '' : 'pointer-events-none scale-105'}`}
+              src={`https://www.youtube.com/embed/${videoSrc}?autoplay=1&mute=1&controls=0&loop=1&playlist=${videoSrc}&modestbranding=1&showinfo=0&rel=0&enablejsapi=1`}
+              title="Processing Video"
+              frameBorder="0"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            />
+          ) : videoSrc ? (
+            <video
+              ref={videoRef}
+              src={videoSrc}
+              className="w-full h-full object-cover"
+              autoPlay
+              muted
+              loop
+              playsInline
+            />
+          ) : (
+            <Skeleton className="w-full h-full" />
+          )}
+        </div>
+
+        {/* Processing overlay - scan line + center indicator */}
+        {!isSyncedPlaying && !isComplete && (
+          <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
+            {/* Scan line */}
+            <div
+              className="scan-line absolute left-0 right-0 h-px opacity-60 pointer-events-none"
+              style={{ background: 'linear-gradient(90deg, transparent, rgba(152,80,195,0.8), rgba(230,66,141,0.6), transparent)' }}
+            />
+            {/* Center pulse dot */}
+            <div className="relative">
+              <div className="w-14 h-14 rounded-full border border-white/10 animate-ping opacity-15" />
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="w-2.5 h-2.5 rounded-full bg-accent-pink animate-pulse" />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Status badge - top left */}
+        {!isSyncedPlaying && (
+          <div className={`absolute top-3 left-3 z-20 flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium backdrop-blur-md transition-all duration-500 ${
+            isComplete
+              ? 'bg-success/10 border border-success/20 text-success'
+              : 'bg-black/50 border border-white/10 text-white/70'
+          }`}>
+            {isComplete ? (
+              <>
+                <CheckCircle size={13} />
+                <span>Complete</span>
+              </>
+            ) : (
+              <>
+                <div className="w-1.5 h-1.5 rounded-full bg-accent-pink animate-pulse" />
+                <span>Processing{dots}</span>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Synced playing indicator */}
+        {isSyncedPlaying && (
+          <div className="absolute top-3 right-3 z-20 flex items-center gap-1.5 px-3 py-1.5 bg-red-500/90 backdrop-blur-sm text-white rounded-lg text-xs font-medium animate-pulse">
+            <Activity size={12} />
+            Live Sync
           </div>
         )}
       </div>
 
-      {/* Overlays - Hide when synced playing so user sees clean video */}
-      {!isSyncedPlaying && !isComplete && (
-        <>
-            <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.03)_1px,transparent_1px)] bg-[size:40px_40px] z-10 pointer-events-none"></div>
-            <div className="absolute left-0 w-full h-[2px] bg-primary shadow-[0_0_15px_2px_rgba(59,130,246,0.5)] animate-[scan_2.5s_linear_infinite] z-20 pointer-events-none"></div>
-            <div className="absolute left-0 w-full h-[15%] bg-gradient-to-b from-primary/0 via-primary/5 to-primary/0 animate-[scan-overlay_2.5s_linear_infinite] z-10 pointer-events-none"></div>
-        </>
-      )}
-
-      {/* HUD Elements - Hide when synced playing */}
+      {/* HUD badges below the video */}
       {!isSyncedPlaying && (
-          <div className={`absolute top-4 left-4 z-30 flex items-center gap-2 px-3 py-1.5 backdrop-blur-md rounded-lg border text-xs font-mono font-bold uppercase transition-all duration-500 ${isComplete ? 'bg-green-500/10 border-green-500/20 text-green-400' : 'bg-black/60 border-primary/30 text-primary animate-pulse'}`}>
-            {isComplete ? (
-                <>
-                    <CheckCircle size={14} /> Analysis Complete
-                </>
-            ) : (
-                <>
-                    <Scan size={14} /> Scanning Content...
-                </>
-            )}
+        <div className="flex items-center gap-2 mt-3">
+          <div className="flex items-center gap-1.5 px-2.5 py-1 bg-[#0f0f13] border border-white/[0.06] rounded-lg text-[11px] text-zinc-500">
+            <Cpu size={11} className="text-zinc-400" />
+            {modelName}
           </div>
-      )}
-      
-      {!isSyncedPlaying && !isComplete && (
-          <div className="absolute top-4 right-4 z-30 flex items-center gap-2 px-3 py-1.5 bg-black/60 backdrop-blur-md rounded-lg border border-white/10 text-white/50 text-[10px] font-mono">
-            AI_MODEL: {(localStorage.getItem('clippyme_model') || 'gemini-2.5-flash').toUpperCase()}
+          <div className="flex items-center gap-1.5 px-2.5 py-1 bg-[#0f0f13] border border-white/[0.06] rounded-lg text-[11px] text-zinc-500">
+            <Zap size={11} className="text-warning" />
+            Auto Hardware
           </div>
-      )}
-      
-      {/* Hardware Acceleration Indicator */}
-      {!isSyncedPlaying && (
-          <div className="absolute top-14 left-4 z-30 flex items-center gap-2 px-2 py-1 bg-black/40 backdrop-blur-sm rounded-md border border-white/5 text-[9px] font-mono text-zinc-400 uppercase tracking-tighter">
-             <Zap size={10} className="text-yellow-500" />
-             Auto-Adaptive Hardware
-          </div>
+        </div>
       )}
 
-      {/* Visual Flair */}
-      {!isSyncedPlaying && !isComplete && (
-          <div className="absolute inset-0 pointer-events-none z-20 overflow-hidden">
-             <div className="absolute top-0 bottom-0 left-[35%] w-[1px] bg-yellow-500/20 border-r border-dashed border-yellow-500/40"></div>
-             <div className="absolute top-0 bottom-0 right-[35%] w-[1px] bg-yellow-500/20 border-l border-dashed border-yellow-500/40"></div>
-             <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-12 h-12 border border-white/20 rounded-full flex items-center justify-center">
-                <div className="w-1 h-1 bg-red-500 rounded-full animate-ping"></div>
-             </div>
-             <div className="absolute bottom-1/3 left-1/2 -translate-x-1/2 flex flex-col items-center justify-center gap-2 opacity-60">
-                 <Scissors size={24} className="text-white/20" />
-             </div>
-          </div>
-      )}
-
-       {/* Synced Playing Indicator */}
-       {isSyncedPlaying && (
-           <div className="absolute top-4 right-4 z-30 flex items-center gap-2 px-3 py-1.5 bg-red-600/90 backdrop-blur text-white rounded-lg shadow-lg animate-pulse font-bold text-[10px] uppercase tracking-wider border border-white/20">
-               <Activity size={12} /> Live Sync
-           </div>
-       )}
-      
-       {/* Bottom Info Bar */}
-      {!isSyncedPlaying && !isComplete && (
-          <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/90 to-transparent z-30 flex justify-between items-end border-t border-white/5">
-              <div className="font-mono text-[10px] text-primary/80 space-y-1">
-                 <div className="flex items-center gap-2"><Activity size={10} className="animate-bounce" /> &gt; ENGINE: OPTIMIZED_PIPELINE</div>
-                 <div className="flex items-center gap-2"><Cpu size={10} /> &gt; ACCELERATION: AUTO_ADAPTIVE</div>
-              </div>
-              <div className="flex gap-1">
-                 <div className="w-1 h-3 bg-primary/40 animate-[pulse_0.5s_infinite]"></div>
-                 <div className="w-1 h-5 bg-primary/60 animate-[pulse_0.7s_infinite]"></div>
-                 <div className="w-1 h-2 bg-primary/30 animate-[pulse_0.4s_infinite]"></div>
-                 <div className="w-1 h-4 bg-primary/80 animate-[pulse_0.6s_infinite]"></div>
-                 <div className="w-1 h-3 bg-primary/50 animate-[pulse_0.5s_infinite]"></div>
-              </div>
-          </div>
-      )}
     </div>
   );
 };

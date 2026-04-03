@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Youtube, Upload, FileVideo, X, Check, Globe, Link2, FileUp, Loader2, ChevronDown, Sparkles, Layers } from 'lucide-react';
+import React, { useState, useRef } from 'react';
+import { Youtube, Upload, FileVideo, X, Globe, Link2, FileUp, Loader2, ChevronDown, Sparkles, Layers, Clipboard } from 'lucide-react';
 
 export default function MediaInput({ onProcess, onBatchProcess, isProcessing }) {
     const [mode, setMode] = useState('url'); // 'url' | 'file' | 'batch'
@@ -9,6 +9,9 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing }) 
     const [instructions, setInstructions] = useState('');
     const [showAdvanced, setShowAdvanced] = useState(false);
     const [batchUrls, setBatchUrls] = useState('');
+    const [isDragging, setIsDragging] = useState(false);
+    const [showCookies, setShowCookies] = useState(false);
+    const urlInputRef = useRef(null);
 
     const handleSubmit = (e) => {
         e.preventDefault();
@@ -27,186 +30,246 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing }) 
 
     const handleDrop = (e) => {
         e.preventDefault();
+        setIsDragging(false);
         if (e.dataTransfer.files && e.dataTransfer.files[0]) {
             setFile(e.dataTransfer.files[0]);
             setMode('file');
         }
     };
 
+    const handlePaste = async () => {
+        try {
+            const text = await navigator.clipboard.readText();
+            if (text) setUrl(text);
+            urlInputRef.current?.focus();
+        } catch {
+            // clipboard access denied
+        }
+    };
+
+    const batchUrlCount = batchUrls.split('\n').filter(u => u.trim()).length;
+
+    const tabs = [
+        { id: 'url', label: 'URL', icon: Globe },
+        { id: 'file', label: 'Upload', icon: FileUp },
+        { id: 'batch', label: 'Batch', icon: Layers },
+    ];
+
+    const isDisabled = isProcessing || (mode === 'url' && !url) || (mode === 'file' && !file) || (mode === 'batch' && !batchUrls.trim());
+
     return (
-        <div className="glass-panel p-1 overflow-hidden animate-fade-in">
-            <div className="flex bg-black/20 p-1 shrink-0">
-                <button
-                    onClick={() => setMode('url')}
-                    className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl transition-all duration-500 font-black text-[10px] uppercase tracking-[0.15em] ${mode === 'url'
-                        ? 'bg-primary text-white shadow-glow-primary'
-                        : 'text-zinc-500 hover:text-white'
-                        }`}
-                >
-                    <Globe size={14} />
-                    URL
-                </button>
-                <button
-                    onClick={() => setMode('file')}
-                    className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl transition-all duration-500 font-black text-[10px] uppercase tracking-[0.15em] ${mode === 'file'
-                        ? 'bg-primary text-white shadow-glow-primary'
-                        : 'text-zinc-500 hover:text-white'
-                        }`}
-                >
-                    <FileUp size={14} />
-                    Upload
-                </button>
-                <button
-                    onClick={() => setMode('batch')}
-                    className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl transition-all duration-500 font-black text-[10px] uppercase tracking-[0.15em] ${mode === 'batch'
-                        ? 'bg-primary text-white shadow-glow-primary'
-                        : 'text-zinc-500 hover:text-white'
-                        }`}
-                >
-                    <Layers size={14} />
-                    Batch
-                </button>
+        <div className="bg-[#0f0f13] border border-white/5 rounded-xl overflow-hidden animate-fade-in shadow-2xl shadow-black/40">
+            {/* Pill Tabs */}
+            <div className="px-6 pt-6 pb-2">
+                <div className="inline-flex bg-white/[0.04] rounded-full p-1 gap-0.5">
+                    {tabs.map(({ id, label, icon: Icon }) => (
+                        <button
+                            key={id}
+                            type="button"
+                            onClick={() => setMode(id)}
+                            className={`flex items-center gap-2 px-5 py-2 rounded-full text-xs font-semibold tracking-wide transition-all duration-300 ${
+                                mode === id
+                                    ? 'bg-white/10 text-white shadow-sm'
+                                    : 'text-zinc-500 hover:text-zinc-300'
+                            }`}
+                        >
+                            <Icon size={14} />
+                            {label}
+                        </button>
+                    ))}
+                </div>
             </div>
 
-            <div className="p-8">
-                <form onSubmit={handleSubmit} className="space-y-8">
-                    {mode === 'batch' ? (
+            {/* Content */}
+            <div className="p-6">
+                <form onSubmit={handleSubmit} className="space-y-5">
+
+                    {/* URL Mode */}
+                    {mode === 'url' && (
                         <div className="space-y-4">
-                            <div className="space-y-3">
-                                <label className="text-[10px] font-black text-zinc-600 uppercase tracking-[0.2em] flex items-center gap-2">
-                                    <Layers size={12} /> Batch URLs (one per line)
-                                </label>
-                                <textarea
-                                    value={batchUrls}
-                                    onChange={(e) => setBatchUrls(e.target.value)}
-                                    placeholder={"https://www.youtube.com/watch?v=abc\nhttps://www.youtube.com/watch?v=def\nhttps://www.youtube.com/watch?v=ghi"}
-                                    className="w-full bg-black/40 border border-white/5 rounded-xl px-4 py-3 text-sm text-white placeholder:text-zinc-700 focus:outline-none focus:border-primary/30 resize-none h-32 font-mono"
-                                    maxLength={5000}
-                                />
-                                <p className="text-[10px] text-zinc-600">
-                                    {batchUrls.split('\n').filter(u => u.trim()).length} URLs — Max 20 per batch
-                                </p>
-                            </div>
-                        </div>
-                    ) : mode === 'url' ? (
-                        <div className="space-y-6">
-                            <div className="space-y-3">
-                                <label className="text-[10px] font-black text-zinc-600 uppercase tracking-[0.2em] flex items-center gap-2">
-                                    <Link2 size={12} /> Target Video URL
-                                </label>
+                            <div className="relative">
+                                <div className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-600" aria-hidden="true">
+                                    <Youtube size={20} />
+                                </div>
+                                <label htmlFor="video-url" className="sr-only">Video URL</label>
                                 <input
+                                    id="video-url"
+                                    ref={urlInputRef}
                                     type="url"
                                     value={url}
                                     onChange={(e) => setUrl(e.target.value)}
-                                    placeholder="https://www.youtube.com/watch?v=..."
-                                    className="input-field !bg-black/40 !border-white/5 focus:!border-primary/30"
+                                    placeholder="Paste a YouTube or video URL..."
+                                    className="w-full bg-white/[0.03] border border-white/5 rounded-xl pl-12 pr-24 py-4 text-[15px] text-white placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-transparent transition-all"
                                     required
                                 />
+                                <button
+                                    type="button"
+                                    onClick={handlePaste}
+                                    className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/[0.06] hover:bg-white/10 text-zinc-400 hover:text-white text-xs font-medium transition-all"
+                                >
+                                    <Clipboard size={13} />
+                                    Paste
+                                </button>
                             </div>
-                            
-                            <div className="p-6 rounded-2xl bg-white/[0.02] border border-white/5 space-y-4">
-                                <div className="flex items-center justify-between">
-                                    <label className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">
-                                        Auth_Cookies.txt (Optional)
-                                    </label>
-                                    {cookiesFile && <span className="text-[10px] font-black text-success uppercase">Loaded</span>}
-                                </div>
-                                <div className="relative group/file">
-                                    <input
-                                        type="file"
-                                        accept=".txt"
-                                        onChange={(e) => setCookiesFile(e.target.files?.[0] || null)}
-                                        className="absolute inset-0 opacity-0 cursor-pointer z-10"
-                                    />
-                                    <div className="w-full bg-black/40 border border-white/5 border-dashed rounded-xl py-3 px-4 text-xs text-zinc-600 group-hover/file:border-primary/30 transition-all flex items-center justify-between">
-                                        <span>{cookiesFile ? cookiesFile.name : "Drop netscape cookies to bypass bot detection"}</span>
-                                        <Upload size={14} className="group-hover/file:text-primary" />
+
+                            {/* Collapsible Advanced / Cookies */}
+                            <div>
+                                <button
+                                    type="button"
+                                    onClick={() => setShowCookies(!showCookies)}
+                                    className="flex items-center gap-1.5 text-[11px] text-zinc-500 hover:text-zinc-300 font-medium transition-colors"
+                                >
+                                    <ChevronDown size={12} className={`transition-transform duration-200 ${showCookies ? 'rotate-180' : ''}`} />
+                                    Advanced
+                                </button>
+                                {showCookies && (
+                                    <div className="mt-3 p-4 rounded-xl bg-white/[0.02] border border-white/5 space-y-3 animate-fade-in">
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-[11px] font-medium text-zinc-500">Cookie file (Netscape .txt)</span>
+                                            {cookiesFile && (
+                                                <span className="text-[11px] font-medium text-emerald-400 flex items-center gap-1">
+                                                    Loaded
+                                                </span>
+                                            )}
+                                        </div>
+                                        <div className="relative group/cookie">
+                                            <input
+                                                type="file"
+                                                accept=".txt"
+                                                onChange={(e) => setCookiesFile(e.target.files?.[0] || null)}
+                                                className="absolute inset-0 opacity-0 cursor-pointer z-10"
+                                            />
+                                            <div className="w-full bg-white/[0.02] border border-dashed border-white/10 rounded-lg py-2.5 px-4 text-xs text-zinc-500 group-hover/cookie:border-blue-500/30 transition-all flex items-center justify-between">
+                                                <span>{cookiesFile ? cookiesFile.name : 'Drop cookies file to bypass bot detection'}</span>
+                                                <Upload size={13} className="text-zinc-600 group-hover/cookie:text-zinc-400 transition-colors" />
+                                            </div>
+                                        </div>
                                     </div>
-                                </div>
+                                )}
                             </div>
                         </div>
-                    ) : (
+                    )}
+
+                    {/* Upload Mode */}
+                    {mode === 'file' && (
                         <div
-                            className={`border-2 border-dashed rounded-2xl p-12 text-center transition-all duration-500 relative group ${file ? 'border-primary/50 bg-primary/5 shadow-inner' : 'border-white/5 hover:border-primary/20 bg-black/20'
-                                }`}
-                            onDragOver={(e) => e.preventDefault()}
+                            className={`border-2 border-dashed rounded-xl p-10 text-center transition-all duration-300 relative group cursor-pointer ${
+                                file
+                                    ? 'border-emerald-500/30 bg-emerald-500/[0.03]'
+                                    : isDragging
+                                        ? 'border-blue-500/50 bg-blue-500/[0.04] shadow-[0_0_30px_-5px_rgba(59,130,246,0.15)]'
+                                        : 'border-white/[0.06] hover:border-white/[0.12] hover:shadow-[0_0_30px_-5px_rgba(255,255,255,0.03)] bg-white/[0.01]'
+                            }`}
+                            onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+                            onDragLeave={() => setIsDragging(false)}
                             onDrop={handleDrop}
                         >
                             {file ? (
-                                <div className="flex flex-col items-center gap-4 animate-fade-in">
-                                    <div className="w-16 h-16 rounded-2xl bg-primary/20 flex items-center justify-center text-primary border border-primary/20 shadow-lg shadow-primary/5">
-                                        <FileVideo size={32} />
+                                <div className="flex flex-col items-center gap-3">
+                                    <div className="w-14 h-14 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-400 border border-emerald-500/20">
+                                        <FileVideo size={28} />
                                     </div>
                                     <div className="text-center">
-                                        <p className="text-white font-black text-sm uppercase tracking-tight truncate max-w-[200px]">{file.name}</p>
-                                        <p className="text-[10px] font-bold text-zinc-500 uppercase mt-1">Ready for ingestion</p>
+                                        <p className="text-white font-semibold text-sm truncate max-w-[240px]">{file.name}</p>
+                                        <p className="text-[11px] text-zinc-500 mt-0.5">Ready to process</p>
                                     </div>
                                     <button
                                         type="button"
                                         onClick={() => setFile(null)}
-                                        className="mt-2 p-2 hover:bg-white/10 rounded-xl transition-all text-zinc-500 hover:text-white"
+                                        aria-label="Remove selected file"
+                                        className="mt-1 p-2.5 hover:bg-white/10 rounded-lg transition-all text-zinc-500 hover:text-white min-h-[44px] min-w-[44px] flex items-center justify-center"
                                     >
-                                        <X size={20} />
+                                        <X size={16} />
                                     </button>
                                 </div>
                             ) : (
-                                <label className="cursor-pointer flex flex-col items-center gap-4">
+                                <label className="cursor-pointer flex flex-col items-center gap-3">
                                     <input
                                         type="file"
                                         accept="video/*"
                                         onChange={(e) => setFile(e.target.files?.[0] || null)}
                                         className="hidden"
                                     />
-                                    <div className="w-16 h-16 rounded-2xl bg-white/[0.03] flex items-center justify-center text-zinc-600 group-hover:text-primary group-hover:bg-primary/5 border border-white/5 transition-all duration-500">
-                                        <Upload size={32} />
+                                    <div className="w-14 h-14 rounded-xl bg-white/[0.03] flex items-center justify-center text-zinc-500 group-hover:text-white group-hover:bg-white/[0.06] border border-white/5 transition-all duration-300">
+                                        <Upload size={26} />
                                     </div>
-                                    <div className="text-center space-y-1">
-                                        <p className="text-zinc-400 font-bold uppercase text-xs tracking-widest">Master Video Ingest</p>
-                                        <p className="text-[10px] text-zinc-600 font-medium uppercase tracking-tighter">MP4, MOV, WEBM up to 2GB</p>
+                                    <div className="text-center">
+                                        <p className="text-zinc-300 font-medium text-sm">Drop your video here or click to browse</p>
+                                        <p className="text-[11px] text-zinc-600 mt-1">MP4, MOV, WEBM up to 2GB</p>
                                     </div>
                                 </label>
                             )}
                         </div>
                     )}
 
-                    {/* AI Instructions (Advanced) */}
-                    <div className="border border-white/5 rounded-2xl overflow-hidden">
+                    {/* Batch Mode */}
+                    {mode === 'batch' && (
+                        <div className="space-y-2.5">
+                            <label htmlFor="batch-urls" className="sr-only">Batch URLs (one per line)</label>
+                            <textarea
+                                id="batch-urls"
+                                value={batchUrls}
+                                onChange={(e) => setBatchUrls(e.target.value)}
+                                placeholder={"https://youtube.com/watch?v=abc\nhttps://youtube.com/watch?v=def\nhttps://youtube.com/watch?v=ghi"}
+                                className="w-full bg-white/[0.03] border border-white/5 rounded-xl px-4 py-3.5 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-transparent resize-none h-36 font-mono leading-relaxed transition-all"
+                                maxLength={5000}
+                                aria-describedby="batch-url-hint"
+                            />
+                            <div className="flex items-center justify-between px-1">
+                                <p id="batch-url-hint" className="text-[11px] text-zinc-500">
+                                    One URL per line
+                                </p>
+                                <p className={`text-[11px] font-medium ${batchUrlCount > 20 ? 'text-red-400' : batchUrlCount > 0 ? 'text-zinc-400' : 'text-zinc-600'}`}>
+                                    {batchUrlCount} / 20 URLs
+                                </p>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* AI Instructions (collapsible) */}
+                    <div className="rounded-xl border border-white/5 overflow-hidden">
                         <button
                             type="button"
                             onClick={() => setShowAdvanced(!showAdvanced)}
-                            className="w-full flex items-center justify-between px-5 py-3 text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em] hover:text-zinc-300 transition-colors"
+                            className="w-full flex items-center justify-between px-4 py-3 hover:bg-white/[0.02] transition-colors"
                         >
-                            <span className="flex items-center gap-2"><Sparkles size={12} /> AI Instructions</span>
-                            <ChevronDown size={14} className={`transition-transform ${showAdvanced ? 'rotate-180' : ''}`} />
+                            <span className="flex items-center gap-2 text-[11px] font-medium text-zinc-400">
+                                <Sparkles size={13} className="text-purple-400/70" />
+                                AI Instructions
+                            </span>
+                            <ChevronDown size={14} className={`text-zinc-600 transition-transform duration-200 ${showAdvanced ? 'rotate-180' : ''}`} />
                         </button>
                         {showAdvanced && (
-                            <div className="px-5 pb-5 space-y-2 animate-fade-in">
+                            <div className="px-4 pb-4 space-y-2 animate-fade-in">
                                 <textarea
                                     value={instructions}
                                     onChange={(e) => setInstructions(e.target.value)}
-                                    placeholder="Tell the AI what to look for... e.g. 'Find the funniest moments' or 'Focus on the gaming parts, skip the intro'"
-                                    className="w-full bg-black/40 border border-white/5 rounded-xl px-4 py-3 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-primary/30 resize-none h-20"
+                                    placeholder="Guide the AI... e.g. 'Find the funniest moments' or 'Focus on the cooking parts, skip the intro'"
+                                    className="w-full bg-white/[0.03] border border-white/5 rounded-lg px-4 py-3 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-transparent resize-none h-20 transition-all"
                                     maxLength={500}
                                 />
-                                <p className="text-[10px] text-zinc-600">Optional. Guide the AI to find specific types of clips.</p>
+                                <p className="text-[11px] text-zinc-600 px-0.5">Optional. Helps the AI find specific types of clips.</p>
                             </div>
                         )}
                     </div>
 
+                    {/* Submit Button */}
                     <button
                         type="submit"
-                        disabled={isProcessing || (mode === 'url' && !url) || (mode === 'file' && !file) || (mode === 'batch' && !batchUrls.trim())}
-                        className="w-full btn-primary-glow !py-5 font-black uppercase tracking-[0.2em] italic text-lg"
+                        disabled={isDisabled}
+                        className={`w-full py-4 rounded-xl font-semibold text-[15px] tracking-wide transition-all duration-300 flex items-center justify-center gap-2.5 ${
+                            isDisabled
+                                ? 'bg-zinc-800/50 text-zinc-600 cursor-not-allowed'
+                                : 'bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-400 hover:to-purple-500 text-white shadow-lg shadow-purple-500/20 hover:shadow-purple-500/30 active:scale-[0.98]'
+                        }`}
                     >
                         {isProcessing ? (
                             <>
-                                <Loader2 size={24} className="animate-spin" />
+                                <Loader2 size={20} className="animate-spin" />
                                 <span>Processing...</span>
                             </>
                         ) : (
-                            <>
-                                <span>{mode === 'batch' ? 'Launch Batch' : 'Engage Engine'}</span>
-                            </>
+                            <span>{mode === 'batch' ? 'Launch Batch' : 'Start Processing'}</span>
                         )}
                     </button>
                 </form>
