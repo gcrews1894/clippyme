@@ -158,11 +158,12 @@ def create_hook_image(text, target_width, output_image_path="hook_overlay.png", 
     return output_image_path, canvas_w, canvas_h
 
 
-def add_hook_to_video(video_path, text, output_path, position="top", font_scale=1.0):
+def add_hook_to_video(video_path, text, output_path, position="top", font_scale=1.0, offset_y=0):
     """
     Overlays a text hook box onto a video.
     position: 'top', 'center', 'bottom'
     font_scale: float multiplier (0.8 = small, 1.0 = medium, 1.3 = large)
+    offset_y: vertical offset as percentage of video height (-50 to +50)
     """
     if not os.path.exists(video_path):
         raise FileNotFoundError(f"Video {video_path} not found")
@@ -188,6 +189,10 @@ def add_hook_to_video(video_path, text, output_path, position="top", font_scale=
             overlay_y = int(video_height * 0.70)
         else:
             overlay_y = int(video_height * 0.20)
+
+        # Apply manual vertical offset (percentage of video height)
+        overlay_y += int(video_height * offset_y / 100)
+        overlay_y = max(0, min(overlay_y, video_height - box_h))
 
         ffmpeg_cmd = [
             "ffmpeg", "-y",

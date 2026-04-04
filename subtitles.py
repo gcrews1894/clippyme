@@ -269,7 +269,8 @@ def generate_ass_karaoke(transcript, clip_start, clip_end, output_path,
                          preset="classic_white", mode="word_group",
                          words_per_group=3, uppercase=True,
                          font_name=None, font_color=None, highlight_color=None,
-                         font_size=None, outline_width=None, position="bottom"):
+                         font_size=None, outline_width=None, position="bottom",
+                         offset_y=0):
     """
     Generate an ASS subtitle file with karaoke word-by-word highlighting.
     Uses \\k tags so the current word snaps from secondary (base) to primary (highlight) color.
@@ -305,13 +306,16 @@ def generate_ass_karaoke(transcript, clip_start, clip_end, output_path,
     # Position → ASS alignment + margin
     if str(position).lower() == "top":
         ass_alignment = 8  # top-center
-        margin_v = 260
+        base_margin_v = 260
     elif str(position).lower() == "center":
         ass_alignment = 5  # center-center
-        margin_v = 0
+        base_margin_v = 0
     else:
         ass_alignment = 2  # bottom-center
-        margin_v = style.get("margin_v", 350)
+        base_margin_v = style.get("margin_v", 350)
+
+    # Apply manual vertical offset (percentage of 1920px frame height)
+    margin_v = base_margin_v + int(1920 * offset_y / 100)
 
     # Extract words in range
     words = []
@@ -422,7 +426,7 @@ def _group_words(words, clip_start, max_chars=60, max_duration=5.0):
 def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
                    font_name="Verdana", font_color="#FFFFFF",
                    border_color="#000000", border_width=2,
-                   bg_color="#000000", bg_opacity=0.0):
+                   bg_color="#000000", bg_opacity=0.0, offset_y=0):
     """
     Burns subtitles into the video using FFmpeg.
     Supports .srt (with force_style) and .ass (native ASS rendering with fontsdir).
@@ -463,6 +467,7 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
 
         back_colour = hex_to_ass_color("#000000", 0.0)
 
+        srt_margin_v = 350 - int(1920 * offset_y / 100)
         style_string = (
             f"Alignment={ass_alignment},"
             f"Fontname={font_name},"
@@ -473,7 +478,7 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
             f"BorderStyle={border_style},"
             f"Outline={outline_w},"
             f"Shadow=0,"
-            f"MarginV=350,"
+            f"MarginV={srt_margin_v},"
             f"Bold=1"
         )
         vf_filter = f"subtitles='{safe_sub_path}':force_style='{style_string}'"

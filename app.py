@@ -1061,6 +1061,155 @@ async def delete_history(job_id: str):
     logger.info("Deleted job %s and all files", job_id)
     return {"success": True}
 
+class ComposeRequest(BaseModel):
+    toggles: dict = {}
+    hook_params: dict = {}
+    subtitle_params: dict = {}
+
+@app.post("/api/compose/{job_id}/{clip_index}")
+async def compose_clip(job_id: str, clip_index: int, req: ComposeRequest):
+    """Compose a final video from active toggle layers (Smart Cut → Hook → Subtitles)."""
+    if not _re.match(r'^[0-9a-fA-F-]{36}$', job_id):
+        raise HTTPException(status_code=400, detail="Invalid job ID")
+
+    job_dir = os.path.join(OUTPUT_DIR, job_id)
+    if not os.path.isdir(job_dir):
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    # Find metadata
+    metadata_files = glob.glob(os.path.join(job_dir, "*_metadata.json"))
+    if not metadata_files:
+        raise HTTPException(status_code=404, detail="No metadata found")
+
+    with open(metadata_files[0]) as f:
+        metadata = json.load(f)
+
+    clips = metadata.get("shorts", [])
+    if clip_index < 0 or clip_index >= len(clips):
+        raise HTTPException(status_code=400, detail="Invalid clip index")
+
+    clip_info = clips[clip_index]
+
+    # Resolve the base clip filename (same logic as other endpoints)
+    clip_filename = clip_info.get("video_url", "").split("/")[-1]
+    if not clip_filename:
+        base_name = os.path.basename(metadata_files[0]).replace("_metadata.json", "")
+        clip_filename = f"{base_name}_clip_{clip_index + 1}.mp4"
+    base_clip = os.path.join(job_dir, clip_filename)
+
+    if not os.path.exists(base_clip):
+        raise HTTPException(status_code=404, detail="Clip file not found")
+
+    active = {k: v for k, v in req.toggles.items() if v}
+    if not active:
+        return {"composed_url": f"/videos/{job_id}/{clip_filename}"}
+
+    current_input = base_clip
+
+    try:
+        # Step 1: Smart Cut
+        if active.get("smartcut"):
+            smartcut_path = base_clip.replace(".mp4", "_smartcut.mp4")
+            if os.path.exists(smartcut_path):
+                current_input = smartcut_path
+            else:
+                transcript = metadata.get("transcript", {})
+                clip_start = clip_info.get("start", 0)
+                clip_end = clip_info.get("end", 0)
+                language = transcript.get("language")
+                loop = asyncio.get_event_loop()
+                sc_output, sc_stats = await loop.run_in_executor(
+                    None, smart_cut, current_input, transcript, clip_start, clip_end, language
+                )
+                if sc_output:
+                    current_input = sc_output
+
+        # Step 2: Hook
+        if active.get("hook") and req.hook_params.get("text"):
+            from hooks import add_hook_to_video
+            hook_output = os.path.join(job_dir, f"composed_hook_{clip_index}.mp4")
+            position = req.hook_params.get("position", "top")
+            size_map = {"S": 0.8, "M": 1.0, "L": 1.3}
+            font_scale = size_map.get(req.hook_params.get("size", "M"), 1.0)
+            hook_offset_y = req.hook_params.get("offset_y", 0)
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None, add_hook_to_video, current_input, req.hook_params["text"],
+                hook_output, position, font_scale, hook_offset_y
+            )
+            current_input = hook_output
+
+        # Step 3: Subtitles
+        if active.get("subtitles"):
+            sub_output = os.path.join(job_dir, f"composed_sub_{clip_index}.mp4")
+            transcript = metadata.get("transcript", {})
+            clip_start = clip_info.get("start", 0)
+            clip_end = clip_info.get("end", 0)
+            sub_mode = req.subtitle_params.get("mode", "karaoke")
+            sub_offset_y = req.subtitle_params.get("offset_y", 0)
+
+            if sub_mode == "karaoke":
+                preset_name = req.subtitle_params.get("preset", "classic_white")
+                ass_path = os.path.join(job_dir, f"composed_subs_{clip_index}.ass")
+                loop = asyncio.get_event_loop()
+                success = await loop.run_in_executor(
+                    None, lambda: generate_ass_karaoke(
+                        transcript, clip_start, clip_end, ass_path,
+                        preset=preset_name,
+                        mode=req.subtitle_params.get("display_mode", "word_group"),
+                        uppercase=req.subtitle_params.get("uppercase", True),
+                        highlight_color=req.subtitle_params.get("highlight_color"),
+                        font_name=req.subtitle_params.get("font"),
+                        font_size=req.subtitle_params.get("font_size"),
+                        position=req.subtitle_params.get("position", "bottom"),
+                        offset_y=sub_offset_y
+                    )
+                )
+                if not success:
+                    raise HTTPException(status_code=400, detail="No words found for this clip range.")
+                await loop.run_in_executor(
+                    None, burn_subtitles, current_input, ass_path, sub_output, 2, 16,
+                    "Verdana", "#FFFFFF", "#000000", 2, "#000000", 0.0, 0
+                )
+            else:
+                srt_path = os.path.join(job_dir, f"composed_subs_{clip_index}.srt")
+                loop = asyncio.get_event_loop()
+                success = await loop.run_in_executor(
+                    None, generate_srt, transcript, clip_start, clip_end, srt_path
+                )
+                if not success:
+                    raise HTTPException(status_code=400, detail="No words found for this clip range.")
+                await loop.run_in_executor(
+                    None, lambda: burn_subtitles(
+                        current_input, srt_path, sub_output,
+                        alignment=req.subtitle_params.get("position", "bottom"),
+                        fontsize=req.subtitle_params.get("font_size", 16),
+                        font_name=req.subtitle_params.get("font", "Verdana"),
+                        font_color=req.subtitle_params.get("font_color", "#FFFFFF"),
+                        border_color=req.subtitle_params.get("border_color", "#000000"),
+                        border_width=req.subtitle_params.get("border_width", 2),
+                        bg_color=req.subtitle_params.get("bg_color", "#000000"),
+                        bg_opacity=req.subtitle_params.get("bg_opacity", 0.0),
+                        offset_y=sub_offset_y
+                    )
+                )
+            current_input = sub_output
+
+        # Copy to final composed path
+        composed_filename = f"composed_clip_{clip_index}.mp4"
+        composed_path = os.path.join(job_dir, composed_filename)
+        if os.path.abspath(current_input) != os.path.abspath(composed_path):
+            shutil.copy2(current_input, composed_path)
+
+        return {"composed_url": f"/videos/{job_id}/{composed_filename}"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Compose error for job %s clip %d: %s", job_id, clip_index, e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/history/{job_id}/restore")
 async def restore_job(job_id: str):
     """Restore a past job into the in-memory jobs dict so edit/hook/subtitle endpoints work."""
