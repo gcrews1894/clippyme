@@ -306,6 +306,9 @@ THUMBNAILS_DIR = os.path.join(OUTPUT_DIR, "thumbnails")
 os.makedirs(THUMBNAILS_DIR, exist_ok=True)
 app.mount("/thumbnails", StaticFiles(directory=THUMBNAILS_DIR), name="thumbnails")
 
+# Mount static files for serving fonts (used by subtitle preview in frontend)
+app.mount("/fonts", StaticFiles(directory="fonts"), name="fonts")
+
 @app.get("/")
 async def root():
     return {"status": "online", "message": "ClippyMe API is running"}

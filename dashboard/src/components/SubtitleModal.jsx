@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Loader2, Zap, Type, Palette, Layers } from 'lucide-react';
 
@@ -19,6 +19,14 @@ const FONT_OPTIONS = [
     { value: 'Anton-Regular', label: 'Anton' },
     { value: 'Verdana', label: 'Verdana (Legacy)' },
 ];
+
+const FONT_FACE_MAP = {
+    'Montserrat-Black': '/fonts/Montserrat-Black.ttf',
+    'Bangers-Regular': '/fonts/Bangers-Regular.ttf',
+    'Poppins-Black': '/fonts/Poppins-Black.ttf',
+    'Poppins-Medium': '/fonts/Poppins-Medium.ttf',
+    'Anton-Regular': '/fonts/Anton-Regular.ttf',
+};
 
 const HIGHLIGHT_COLORS = [
     { color: '#FFFF00', label: 'Yellow' },
@@ -50,6 +58,15 @@ export default function SubtitleModal({ isOpen, onClose, onGenerate, isProcessin
     const bgColor = '#000000';
     const [bgOpacity, setBgOpacity] = useState(0.0);
 
+    useEffect(() => {
+        Object.entries(FONT_FACE_MAP).forEach(([name, url]) => {
+            const font = new FontFace(name, `url(${url})`);
+            font.load().then((loaded) => {
+                document.fonts.add(loaded);
+            }).catch(err => console.warn(`Font ${name} failed to load:`, err));
+        });
+    }, []);
+
     if (!isOpen) return null;
 
     const handleGenerate = () => {
@@ -74,7 +91,7 @@ export default function SubtitleModal({ isOpen, onClose, onGenerate, isProcessin
         }
     };
 
-    const previewFont = mode === 'viral' ? fontName.replace('-', ' ').split(' ')[0] : classicFontName;
+    const previewFont = mode === 'viral' ? fontName : classicFontName;
     const previewHighlight = mode === 'viral' ? highlightColor : fontColor;
 
     return createPortal(
