@@ -40,6 +40,7 @@ const HIGHLIGHT_COLORS = [
 export default function SubtitleModal({ isOpen, onClose, onGenerate, isProcessing, videoUrl }) {
     const [mode, setMode] = useState('viral');
     const [position, setPosition] = useState('bottom');
+    const [offsetY, setOffsetY] = useState(0);
 
     // Viral mode state
     const [selectedPreset, setSelectedPreset] = useState('classic_white');
@@ -73,6 +74,7 @@ export default function SubtitleModal({ isOpen, onClose, onGenerate, isProcessin
         if (mode === 'viral') {
             onGenerate({
                 position,
+                offsetY,
                 fontSize: 16,
                 fontName,
                 fontColor: '#FFFFFF',
@@ -87,7 +89,7 @@ export default function SubtitleModal({ isOpen, onClose, onGenerate, isProcessin
                 highlight_color: highlightColor,
             });
         } else {
-            onGenerate({ position, fontSize, fontName: classicFontName, fontColor, borderColor, borderWidth, bgColor, bgOpacity });
+            onGenerate({ position, offsetY, fontSize, fontName: classicFontName, fontColor, borderColor, borderWidth, bgColor, bgOpacity });
         }
     };
 
@@ -376,6 +378,22 @@ export default function SubtitleModal({ isOpen, onClose, onGenerate, isProcessin
                                 ))}
                             </div>
                         </div>
+
+                        {/* Vertical Offset (shared) */}
+                        <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                                <label className="text-xs font-medium text-zinc-400">Vertical Offset</label>
+                                <span className="text-xs text-zinc-500">{offsetY}%</span>
+                            </div>
+                            <input
+                                type="range"
+                                min="-50"
+                                max="50"
+                                value={offsetY}
+                                onChange={(e) => setOffsetY(Number(e.target.value))}
+                                className="w-full h-1 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-accent-pink"
+                            />
+                        </div>
                     </div>
 
                     {/* Apply button */}
@@ -409,7 +427,7 @@ export default function SubtitleModal({ isOpen, onClose, onGenerate, isProcessin
                             position === 'middle' ? 'my-auto' : ''
                         } ${
                             position === 'bottom' ? 'mt-auto mb-14' : ''
-                        }`}>
+                        }`} style={{ transform: `translateY(${offsetY}%)` }}>
                             {mode === 'viral' ? (
                                 <div className="text-center">
                                     <span style={{

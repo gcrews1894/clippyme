@@ -6,6 +6,7 @@ export default function HookModal({ isOpen, onClose, onGenerate, isProcessing, v
     const [text, setText] = useState(initialText || '');
     const [position, setPosition] = useState('top');
     const [size, setSize] = useState('M');
+    const [offsetY, setOffsetY] = useState(0);
 
     if (!isOpen) return null;
 
@@ -81,6 +82,22 @@ export default function HookModal({ isOpen, onClose, onGenerate, isProcessing, v
                             </div>
                         </div>
 
+                        {/* Vertical Offset */}
+                        <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                                <label className="text-xs font-medium text-zinc-400">Vertical Offset</label>
+                                <span className="text-xs text-zinc-500">{offsetY}%</span>
+                            </div>
+                            <input
+                                type="range"
+                                min="-50"
+                                max="50"
+                                value={offsetY}
+                                onChange={(e) => setOffsetY(Number(e.target.value))}
+                                className="w-full h-1 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-accent-pink"
+                            />
+                        </div>
+
                         {/* Size */}
                         <div className="space-y-2">
                             <label className="text-xs font-medium text-zinc-400">Text Size</label>
@@ -114,7 +131,7 @@ export default function HookModal({ isOpen, onClose, onGenerate, isProcessing, v
                     {/* Apply button */}
                     <div className="px-6 py-4 border-t border-white/10">
                         <button
-                            onClick={() => onGenerate({ text, position, size })}
+                            onClick={() => onGenerate({ text, position, size, offsetY })}
                             disabled={isProcessing || !text.trim()}
                             className="w-full py-3 rounded-xl font-semibold text-sm text-white transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                             style={{ background: 'linear-gradient(135deg, #e6428d, #9850c3)' }}
@@ -147,6 +164,7 @@ export default function HookModal({ isOpen, onClose, onGenerate, isProcessing, v
                                 fontFamily: 'Noto Serif, Georgia, serif',
                                 padding: '12px 20px',
                                 boxShadow: '0 8px 30px rgba(0,0,0,0.4)',
+                                transform: `translateY(${offsetY}%)`,
                             }}
                         >
                             {text || 'Enter your hook text...'}
