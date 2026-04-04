@@ -511,18 +511,15 @@ def analyze_scenes_strategy(video_path, scenes):
     """
     Analyzes each scene to determine framing strategy.
     Strategies:
-      TRACK       — single subject, follow with smart crop
-      TRACK_GROUP — 2+ faces close together, center on group baricentro
-      WIDE        — 2+ faces spread wide, use letterbox (blur bg + centered full frame)
-      GENERAL     — no faces detected, use letterbox
+      TRACK   — single subject, follow with smart crop
+      WIDE    — 2+ faces, use letterbox (blur bg + centered full frame)
+      GENERAL — no faces detected, use letterbox
     """
     cap = cv2.VideoCapture(video_path)
     strategies = []
 
     if not cap.isOpened():
         return ['TRACK'] * len(scenes)
-
-    video_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 
     for start, end in tqdm(scenes, desc="   Analyzing Scenes"):
         frames_to_check = [
@@ -532,38 +529,22 @@ def analyze_scenes_strategy(video_path, scenes):
         ]
 
         face_counts = []
-        spread_ratios = []  # how spread out faces are (0-1 of frame width)
         for f_idx in frames_to_check:
             cap.set(cv2.CAP_PROP_POS_FRAMES, f_idx)
             ret, frame = cap.read()
             if not ret:
                 continue
-
             candidates = detect_face_candidates(frame)
             face_counts.append(len(candidates))
 
-            if len(candidates) >= 2:
-                # Measure horizontal spread of faces
-                centers_x = [c['box'][0] + c['box'][2] / 2 for c in candidates]
-                spread = (max(centers_x) - min(centers_x)) / video_width if video_width else 0
-                spread_ratios.append(spread)
+        avg_faces = sum(face_counts) / len(face_counts) if face_counts else 0
 
-        if not face_counts:
-            avg_faces = 0
-        else:
-            avg_faces = sum(face_counts) / len(face_counts)
-
-        avg_spread = sum(spread_ratios) / len(spread_ratios) if spread_ratios else 0
-
-        # Decision logic
         if avg_faces < 0.5:
-            strategies.append('GENERAL')      # No faces → letterbox
+            strategies.append('GENERAL')
         elif avg_faces <= 1.2:
-            strategies.append('TRACK')         # Single person → follow
-        elif avg_spread > 0.50:
-            strategies.append('WIDE')          # Group spread wide → letterbox
+            strategies.append('TRACK')
         else:
-            strategies.append('TRACK_GROUP')   # Group close together → center on group
+            strategies.append('WIDE')
 
     cap.release()
     return strategies
@@ -991,28 +972,6 @@ def process_video_to_vertical(input_video, final_output_video):
                 # Reset cameraman so it doesn't drift while inactive
                 cameraman.current_center_x = original_width / 2
                 cameraman.target_center_x = original_width / 2
-
-            elif current_strategy == 'TRACK_GROUP':
-                # Group tracking: center crop on the baricentro of all detected faces
-                if frame_number % 2 == 0:
-                    candidates = detect_face_candidates(frame)
-                    candidates = detection_smoother.smooth(candidates, frame_number)
-                    if len(candidates) >= 2:
-                        centers_x = [c['box'][0] + c['box'][2] / 2 for c in candidates]
-                        group_center_x = sum(centers_x) / len(centers_x)
-                        avg_w = sum(c['box'][2] for c in candidates) / len(candidates)
-                        cameraman.update_target((group_center_x - avg_w / 2, 0, avg_w, 0))
-                    elif candidates:
-                        cameraman.update_target(candidates[0]['box'])
-
-                is_scene_start = (frame_number == scene_boundaries[current_scene_index][0])
-                x1, y1, x2, y2 = cameraman.get_crop_box(force_snap=is_scene_start)
-
-                if y2 > y1 and x2 > x1:
-                    cropped = frame[y1:y2, x1:x2]
-                    output_frame = cv2.resize(cropped, (OUTPUT_WIDTH, OUTPUT_HEIGHT))
-                else:
-                    output_frame = cv2.resize(frame, (OUTPUT_WIDTH, OUTPUT_HEIGHT))
 
             else:
                 # TRACK: single speaker tracking
