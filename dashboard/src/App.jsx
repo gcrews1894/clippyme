@@ -52,6 +52,7 @@ function App() {
   const [syncTrigger, setSyncTrigger] = useState(0);
 
   const [showConfetti, setShowConfetti] = useState(false);
+  const [preselections, setPreselections] = useState(null);
 
   const handleClipPlay = (startTime) => {
     setSyncedTime(startTime);
@@ -210,6 +211,11 @@ function App() {
     setResults(null);
     setProcessingMedia(data);
 
+    // Store preselections for use by ResultCards (Tasks 12/13)
+    if (data.preselections) {
+      setPreselections(data.preselections);
+    }
+
     try {
       let body;
       const headers = { 'X-Gemini-Key': apiKey };
@@ -218,6 +224,10 @@ function App() {
         headers['Content-Type'] = 'application/json';
         const jsonBody = { url: data.payload };
         if (data.instructions) jsonBody.instructions = data.instructions;
+        // Pass reframe_mode to backend if not default
+        if (data.preselections?.reframe_mode && data.preselections.reframe_mode !== 'auto') {
+          jsonBody.reframe_mode = data.preselections.reframe_mode;
+        }
         body = JSON.stringify(jsonBody);
       } else {
         const formData = new FormData();

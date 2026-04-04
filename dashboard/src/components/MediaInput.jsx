@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Youtube, Upload, FileVideo, X, Globe, Link2, FileUp, Loader2, ChevronDown, Sparkles, Layers, Clipboard } from 'lucide-react';
+import { Youtube, Upload, FileVideo, X, Globe, Link2, FileUp, Loader2, ChevronDown, Sparkles, Layers, Clipboard, Settings } from 'lucide-react';
 
 export default function MediaInput({ onProcess, onBatchProcess, isProcessing, cookiesConfigured }) {
     const [mode, setMode] = useState('url'); // 'url' | 'file' | 'batch'
@@ -11,9 +11,27 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
     const [isDragging, setIsDragging] = useState(false);
     const urlInputRef = useRef(null);
 
+    const [showPreselections, setShowPreselections] = useState(false);
+    const [reframeMode, setReframeMode] = useState('auto');
+    const [preSmartCut, setPreSmartCut] = useState(false);
+    const [preSubtitles, setPreSubtitles] = useState(false);
+    const [preSubPreset, setPreSubPreset] = useState('classic_white');
+    const [preSubMode, setPreSubMode] = useState('karaoke');
+    const [showSubConfig, setShowSubConfig] = useState(false);
+    const [preHook, setPreHook] = useState(false);
+    const [preHookPosition, setPreHookPosition] = useState('top');
+    const [preHookSize, setPreHookSize] = useState('M');
+    const [showHookConfig, setShowHookConfig] = useState(false);
+
     const handleSubmit = (e) => {
         e.preventDefault();
-        const opts = { instructions: instructions.trim() || undefined };
+        const preselections = {
+            reframe_mode: reframeMode,
+            smartcut: preSmartCut,
+            subtitles: preSubtitles ? { preset: preSubPreset, mode: preSubMode } : null,
+            hook: preHook ? { position: preHookPosition, size: preHookSize } : null,
+        };
+        const opts = { instructions: instructions.trim() || undefined, preselections };
         if (mode === 'batch' && batchUrls.trim()) {
             const urls = batchUrls.split('\n').map(u => u.trim()).filter(u => u);
             if (urls.length > 0 && onBatchProcess) {
@@ -219,6 +237,212 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
                                     maxLength={500}
                                 />
                                 <p className="text-[11px] text-zinc-600 px-0.5">Optional. Helps the AI find specific types of clips.</p>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Clip Options (collapsible) */}
+                    <div className="rounded-xl border border-white/5 overflow-hidden">
+                        <button
+                            type="button"
+                            onClick={() => setShowPreselections(!showPreselections)}
+                            className="w-full flex items-center justify-between px-4 py-3 hover:bg-white/[0.02] transition-colors"
+                        >
+                            <span className="flex items-center gap-2 text-[11px] font-medium text-zinc-400">
+                                <Settings size={13} className="text-blue-400/70" />
+                                Clip Options
+                            </span>
+                            <ChevronDown size={14} className={`text-zinc-600 transition-transform duration-200 ${showPreselections ? 'rotate-180' : ''}`} />
+                        </button>
+
+                        {showPreselections && (
+                            <div className="px-4 pb-4 space-y-4 animate-fade-in">
+
+                                {/* Reframe Mode */}
+                                <div className="space-y-2">
+                                    <p className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider">Reframe Mode</p>
+                                    <div className="flex gap-2">
+                                        {[
+                                            { value: 'auto', label: 'Auto Reframe' },
+                                            { value: 'disabled', label: 'Disabled (4:3)' },
+                                        ].map(({ value, label }) => (
+                                            <button
+                                                key={value}
+                                                type="button"
+                                                onClick={() => setReframeMode(value)}
+                                                className={`flex-1 py-2 px-3 rounded-lg text-xs font-medium border transition-all ${
+                                                    reframeMode === value
+                                                        ? 'bg-accent-pink/20 text-accent-pink border-accent-pink/30'
+                                                        : 'bg-white/[0.02] text-zinc-500 border-white/5 hover:text-zinc-300 hover:bg-white/[0.04]'
+                                                }`}
+                                            >
+                                                {label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {/* Smart Cut */}
+                                <div className="flex items-center justify-between py-1">
+                                    <span className="text-[12px] font-medium text-zinc-300">Smart Cut</span>
+                                    <button
+                                        type="button"
+                                        onClick={() => setPreSmartCut(!preSmartCut)}
+                                        aria-checked={preSmartCut}
+                                        role="switch"
+                                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50 ${
+                                            preSmartCut ? 'bg-accent-pink/60' : 'bg-white/10'
+                                        }`}
+                                    >
+                                        <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform ${preSmartCut ? 'translate-x-4' : 'translate-x-1'}`} />
+                                    </button>
+                                </div>
+
+                                {/* Subtitles */}
+                                <div className="space-y-2">
+                                    <div className="flex items-center justify-between py-1">
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-[12px] font-medium text-zinc-300">Subtitles</span>
+                                            {preSubtitles && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setShowSubConfig(!showSubConfig)}
+                                                    className={`p-1 rounded transition-colors ${showSubConfig ? 'text-accent-pink' : 'text-zinc-500 hover:text-zinc-300'}`}
+                                                    aria-label="Configure subtitles"
+                                                >
+                                                    <Settings size={12} />
+                                                </button>
+                                            )}
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => setPreSubtitles(!preSubtitles)}
+                                            aria-checked={preSubtitles}
+                                            role="switch"
+                                            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50 ${
+                                                preSubtitles ? 'bg-accent-pink/60' : 'bg-white/10'
+                                            }`}
+                                        >
+                                            <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform ${preSubtitles ? 'translate-x-4' : 'translate-x-1'}`} />
+                                        </button>
+                                    </div>
+
+                                    {preSubtitles && showSubConfig && (
+                                        <div className="bg-white/[0.02] border border-white/5 rounded-lg p-3 space-y-3 animate-fade-in">
+                                            {/* Preset */}
+                                            <div className="space-y-1.5">
+                                                <p className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Preset</p>
+                                                <select
+                                                    value={preSubPreset}
+                                                    onChange={(e) => setPreSubPreset(e.target.value)}
+                                                    className="w-full bg-white/[0.04] border border-white/5 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                                                >
+                                                    {['classic_white', 'hormozi_bold', 'neon_glow', 'mrbeast_box', 'minimal_clean', 'fire_impact'].map(p => (
+                                                        <option key={p} value={p} className="bg-[#1e1e28]">
+                                                            {p.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                            </div>
+                                            {/* Mode */}
+                                            <div className="space-y-1.5">
+                                                <p className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Mode</p>
+                                                <div className="flex gap-2">
+                                                    {['karaoke', 'classic'].map(m => (
+                                                        <button
+                                                            key={m}
+                                                            type="button"
+                                                            onClick={() => setPreSubMode(m)}
+                                                            className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-medium border transition-all ${
+                                                                preSubMode === m
+                                                                    ? 'bg-accent-pink/20 text-accent-pink border-accent-pink/30'
+                                                                    : 'bg-white/[0.02] text-zinc-500 border-white/5 hover:text-zinc-300 hover:bg-white/[0.04]'
+                                                            }`}
+                                                        >
+                                                            {m.charAt(0).toUpperCase() + m.slice(1)}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Hook */}
+                                <div className="space-y-2">
+                                    <div className="flex items-center justify-between py-1">
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-[12px] font-medium text-zinc-300">Hook</span>
+                                            {preHook && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setShowHookConfig(!showHookConfig)}
+                                                    className={`p-1 rounded transition-colors ${showHookConfig ? 'text-accent-pink' : 'text-zinc-500 hover:text-zinc-300'}`}
+                                                    aria-label="Configure hook"
+                                                >
+                                                    <Settings size={12} />
+                                                </button>
+                                            )}
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => setPreHook(!preHook)}
+                                            aria-checked={preHook}
+                                            role="switch"
+                                            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50 ${
+                                                preHook ? 'bg-accent-pink/60' : 'bg-white/10'
+                                            }`}
+                                        >
+                                            <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform ${preHook ? 'translate-x-4' : 'translate-x-1'}`} />
+                                        </button>
+                                    </div>
+
+                                    {preHook && showHookConfig && (
+                                        <div className="bg-white/[0.02] border border-white/5 rounded-lg p-3 space-y-3 animate-fade-in">
+                                            {/* Position */}
+                                            <div className="space-y-1.5">
+                                                <p className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Position</p>
+                                                <div className="flex gap-2">
+                                                    {['top', 'center', 'bottom'].map(pos => (
+                                                        <button
+                                                            key={pos}
+                                                            type="button"
+                                                            onClick={() => setPreHookPosition(pos)}
+                                                            className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-medium border transition-all ${
+                                                                preHookPosition === pos
+                                                                    ? 'bg-accent-pink/20 text-accent-pink border-accent-pink/30'
+                                                                    : 'bg-white/[0.02] text-zinc-500 border-white/5 hover:text-zinc-300 hover:bg-white/[0.04]'
+                                                            }`}
+                                                        >
+                                                            {pos.charAt(0).toUpperCase() + pos.slice(1)}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                            {/* Size */}
+                                            <div className="space-y-1.5">
+                                                <p className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Size</p>
+                                                <div className="flex gap-2">
+                                                    {['S', 'M', 'L'].map(sz => (
+                                                        <button
+                                                            key={sz}
+                                                            type="button"
+                                                            onClick={() => setPreHookSize(sz)}
+                                                            className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-medium border transition-all ${
+                                                                preHookSize === sz
+                                                                    ? 'bg-accent-pink/20 text-accent-pink border-accent-pink/30'
+                                                                    : 'bg-white/[0.02] text-zinc-500 border-white/5 hover:text-zinc-300 hover:bg-white/[0.04]'
+                                                            }`}
+                                                        >
+                                                            {sz}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+
                             </div>
                         )}
                     </div>
