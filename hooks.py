@@ -1,4 +1,5 @@
 import os
+import re
 import subprocess
 import urllib.request
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
@@ -20,6 +21,33 @@ def download_font_if_needed():
             print("✅ Font downloaded.")
         except Exception as e:
             print(f"❌ Failed to download font: {e}")
+
+
+EMOJI_FONT_URL = "https://github.com/googlefonts/noto-emoji/raw/main/fonts/NotoColorEmoji.ttf"
+EMOJI_FONT_PATH = os.path.join(FONT_DIR, "NotoColorEmoji.ttf")
+
+
+def download_emoji_font_if_needed():
+    """Downloads the Noto Color Emoji font if not present."""
+    os.makedirs(FONT_DIR, exist_ok=True)
+    if not os.path.exists(EMOJI_FONT_PATH):
+        print(f"Downloading emoji font...")
+        try:
+            req = urllib.request.Request(EMOJI_FONT_URL, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req) as response, open(EMOJI_FONT_PATH, "wb") as out_file:
+                out_file.write(response.read())
+            print("Emoji font downloaded.")
+        except Exception as e:
+            print(f"Failed to download emoji font: {e}")
+
+
+def has_emoji(text):
+    emoji_pattern = re.compile(
+        "[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF"
+        "\U0001F1E0-\U0001F1FF\U00002702-\U000027B0\U0001F900-\U0001F9FF"
+        "\U0001FA00-\U0001FA6F\U0001FA70-\U0001FAFF\U00002600-\U000026FF"
+        "\U0000FE00-\U0000FE0F\U0000200D]+")
+    return bool(emoji_pattern.search(text))
 
 
 def create_hook_image(text, target_width, output_image_path="hook_overlay.png", font_scale=1.0):
@@ -100,6 +128,15 @@ def create_hook_image(text, target_width, output_image_path="hook_overlay.png", 
     main_box = [(20, 20), (20 + box_width, 20 + box_height)]
     draw_final.rounded_rectangle(main_box, radius=corner_radius, fill=(255, 255, 255, 240))
 
+    # Emoji font (loaded lazily only when needed)
+    emoji_font = None
+    if any(has_emoji(line) for line in lines if line):
+        download_emoji_font_if_needed()
+        try:
+            emoji_font = ImageFont.truetype(EMOJI_FONT_PATH, font_size)
+        except Exception:
+            emoji_font = None
+
     # Text
     current_y = 20 + padding_y - 2
     for i, line in enumerate(lines):
@@ -109,7 +146,12 @@ def create_hook_image(text, target_width, output_image_path="hook_overlay.png", 
         bbox = draw_final.textbbox((0, 0), line, font=font)
         line_w = bbox[2] - bbox[0]
         x = 20 + (box_width - line_w) // 2
-        draw_final.text((x, current_y), line, font=font, fill="black")
+
+        if emoji_font and has_emoji(line):
+            draw_final.text((x, current_y), line, font=font, fill="black", embedded_color=True)
+        else:
+            draw_final.text((x, current_y), line, font=font, fill="black")
+
         current_y += (text_heights[i] if i < len(text_heights) else bbox[3] - bbox[1]) + line_spacing
 
     img.save(output_image_path)
