@@ -28,6 +28,8 @@ output/
 .env
 data/
 config.json
+cookies.txt
+data/cookies.txt
 
 # Generated metadata
 *_metadata.json
