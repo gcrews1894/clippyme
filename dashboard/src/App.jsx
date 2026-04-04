@@ -239,6 +239,9 @@ function App() {
       } else {
         const formData = new FormData();
         formData.append('file', data.payload);
+        if (data.preselections?.reframe_mode && data.preselections.reframe_mode !== 'auto') {
+          formData.append('reframe_mode', data.preselections.reframe_mode);
+        }
         body = formData;
       }
 
@@ -267,11 +270,20 @@ function App() {
     setLogs(["Launching batch processing..."]);
     setResults(null);
 
+    // Store preselections for batch jobs
+    if (data.preselections) {
+      setPreselections(data.preselections);
+    }
+
     try {
+      const batchBody = { urls: data.urls, instructions: data.instructions };
+      if (data.preselections?.reframe_mode && data.preselections.reframe_mode !== 'auto') {
+        batchBody.reframe_mode = data.preselections.reframe_mode;
+      }
       const res = await fetch(getApiUrl('/api/batch'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Gemini-Key': apiKey },
-        body: JSON.stringify({ urls: data.urls, instructions: data.instructions })
+        body: JSON.stringify(batchBody)
       });
 
       if (!res.ok) throw new Error(await res.text());

@@ -131,7 +131,7 @@ export default function HookModal({ isOpen, onClose, onGenerate, isProcessing, v
                     {/* Apply button */}
                     <div className="px-6 py-4 border-t border-white/10">
                         <button
-                            onClick={() => onGenerate({ text, position, size, offsetY })}
+                            onClick={() => onGenerate({ text, position, size, offset_y: offsetY })}
                             disabled={isProcessing || !text.trim()}
                             className="w-full py-3 rounded-xl font-semibold text-sm text-white transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                             style={{ background: 'linear-gradient(135deg, #e6428d, #9850c3)' }}

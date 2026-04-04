@@ -489,6 +489,11 @@ async def process_endpoint(
         instructions = body.get("instructions")
         reframe_mode = body.get("reframe_mode")
 
+    # For multipart/form-data uploads, extract reframe_mode from form fields
+    if "multipart/form-data" in content_type:
+        form = await request.form()
+        reframe_mode = form.get("reframe_mode", reframe_mode)
+
     if not url and not file:
         raise HTTPException(status_code=400, detail="Must provide URL or File")
 
@@ -556,6 +561,7 @@ async def process_endpoint(
 class BatchRequest(BaseModel):
     urls: List[str] = Field(..., min_length=1, max_length=20)
     instructions: Optional[str] = None
+    reframe_mode: Optional[str] = None
 
 
 @app.post("/api/batch")
@@ -580,6 +586,8 @@ async def batch_process(req: BatchRequest, request: Request):
         cmd = ["python", "-u", "main.py", "-u", url, "-o", job_output_dir]
         if req.instructions:
             cmd.extend(["--instructions", req.instructions])
+        if req.reframe_mode and req.reframe_mode != 'auto':
+            cmd.extend(["--reframe-mode", req.reframe_mode])
 
         env = os.environ.copy()
         env["GEMINI_API_KEY"] = api_key
@@ -1108,6 +1116,7 @@ async def compose_clip(job_id: str, clip_index: int, req: ComposeRequest):
         return {"composed_url": f"/videos/{job_id}/{clip_filename}"}
 
     current_input = base_clip
+    intermediate_files = []  # Track files to clean up
 
     try:
         # Step 1: Smart Cut
@@ -1131,6 +1140,7 @@ async def compose_clip(job_id: str, clip_index: int, req: ComposeRequest):
         if active.get("hook") and req.hook_params.get("text"):
             from hooks import add_hook_to_video
             hook_output = os.path.join(job_dir, f"composed_hook_{clip_index}.mp4")
+            intermediate_files.append(hook_output)
             position = req.hook_params.get("position", "top")
             size_map = {"S": 0.8, "M": 1.0, "L": 1.3}
             font_scale = size_map.get(req.hook_params.get("size", "M"), 1.0)
@@ -1145,6 +1155,7 @@ async def compose_clip(job_id: str, clip_index: int, req: ComposeRequest):
         # Step 3: Subtitles
         if active.get("subtitles"):
             sub_output = os.path.join(job_dir, f"composed_sub_{clip_index}.mp4")
+            intermediate_files.append(sub_output)
             transcript = metadata.get("transcript", {})
             clip_start = clip_info.get("start", 0)
             clip_end = clip_info.get("end", 0)
@@ -1154,6 +1165,7 @@ async def compose_clip(job_id: str, clip_index: int, req: ComposeRequest):
             if sub_mode == "karaoke":
                 preset_name = req.subtitle_params.get("preset", "classic_white")
                 ass_path = os.path.join(job_dir, f"composed_subs_{clip_index}.ass")
+                intermediate_files.append(ass_path)
                 loop = asyncio.get_event_loop()
                 success = await loop.run_in_executor(
                     None, lambda: generate_ass_karaoke(
@@ -1172,10 +1184,11 @@ async def compose_clip(job_id: str, clip_index: int, req: ComposeRequest):
                     raise HTTPException(status_code=400, detail="No words found for this clip range.")
                 await loop.run_in_executor(
                     None, burn_subtitles, current_input, ass_path, sub_output, 2, 16,
-                    "Verdana", "#FFFFFF", "#000000", 2, "#000000", 0.0, 0
+                    "Verdana", "#FFFFFF", "#000000", 2, "#000000", 0.0, sub_offset_y
                 )
             else:
                 srt_path = os.path.join(job_dir, f"composed_subs_{clip_index}.srt")
+                intermediate_files.append(srt_path)
                 loop = asyncio.get_event_loop()
                 success = await loop.run_in_executor(
                     None, generate_srt, transcript, clip_start, clip_end, srt_path
@@ -1203,6 +1216,14 @@ async def compose_clip(job_id: str, clip_index: int, req: ComposeRequest):
         composed_path = os.path.join(job_dir, composed_filename)
         if os.path.abspath(current_input) != os.path.abspath(composed_path):
             shutil.copy2(current_input, composed_path)
+
+        # Clean up intermediate files
+        for temp_file in intermediate_files:
+            if temp_file and os.path.exists(temp_file) and os.path.abspath(temp_file) != os.path.abspath(composed_path):
+                try:
+                    os.remove(temp_file)
+                except OSError:
+                    pass
 
         return {"composed_url": f"/videos/{job_id}/{composed_filename}"}
 

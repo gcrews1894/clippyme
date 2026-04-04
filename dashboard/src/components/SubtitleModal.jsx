@@ -74,7 +74,7 @@ export default function SubtitleModal({ isOpen, onClose, onGenerate, isProcessin
         if (mode === 'viral') {
             onGenerate({
                 position,
-                offsetY,
+                offset_y: offsetY,
                 fontSize: 16,
                 fontName,
                 fontColor: '#FFFFFF',
@@ -89,7 +89,7 @@ export default function SubtitleModal({ isOpen, onClose, onGenerate, isProcessin
                 highlight_color: highlightColor,
             });
         } else {
-            onGenerate({ position, offsetY, fontSize, fontName: classicFontName, fontColor, borderColor, borderWidth, bgColor, bgOpacity });
+            onGenerate({ position, offset_y: offsetY, fontSize, fontName: classicFontName, fontColor, borderColor, borderWidth, bgColor, bgOpacity });
         }
     };
 
