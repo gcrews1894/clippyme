@@ -876,7 +876,41 @@ def select_cover_frame(video_path):
     return None
 
 
-def process_video_to_vertical(input_video, final_output_video):
+def create_disabled_reframe(frame, output_width, output_height):
+    """
+    Center-crop to 4:3 then add black bars top/bottom to fill 9:16.
+    """
+    h, w = frame.shape[:2]
+    target_ratio = 4 / 3
+    current_ratio = w / h
+    if current_ratio > target_ratio:
+        new_w = int(h * target_ratio)
+        x_start = (w - new_w) // 2
+        cropped = frame[:, x_start:x_start + new_w]
+    else:
+        new_h = int(w / target_ratio)
+        y_start = (h - new_h) // 2
+        cropped = frame[y_start:y_start + new_h, :]
+
+    scale = output_width / cropped.shape[1]
+    scaled_w = output_width
+    scaled_h = int(cropped.shape[0] * scale)
+    if scaled_h % 2 != 0:
+        scaled_h += 1
+    scaled = cv2.resize(cropped, (scaled_w, scaled_h))
+
+    canvas = np.zeros((output_height, output_width, 3), dtype=np.uint8)
+    y_offset = (output_height - scaled_h) // 2
+    if y_offset < 0:
+        crop_y = (-y_offset)
+        canvas[:] = scaled[crop_y:crop_y + output_height, :]
+    else:
+        canvas[y_offset:y_offset + scaled_h, :] = scaled
+
+    return canvas
+
+
+def process_video_to_vertical(input_video, final_output_video, reframe_mode='auto'):
     """
     Core logic to convert horizontal video to vertical using scene detection and Active Speaker Tracking (MediaPipe).
     """
@@ -922,7 +956,10 @@ def process_video_to_vertical(input_video, final_output_video):
     print("\n   🤖 Step 3: Analyzing Scenes for Strategy (Single vs Group)...")
     scene_strategies = analyze_scenes_strategy(input_video, scenes)
     # scene_strategies is a list of 'TRACK' or 'General' corresponding to scenes
-    
+
+    if reframe_mode == 'disabled':
+        scene_strategies = ['DISABLED'] * len(scenes)
+
     print("\n   ✂️ Step 4: Processing video frames...")
     
     command = [
@@ -965,7 +1002,10 @@ def process_video_to_vertical(input_video, final_output_video):
             current_strategy = scene_strategies[current_scene_index] if current_scene_index < len(scene_strategies) else 'TRACK'
             
             # Apply Strategy
-            if current_strategy in ('GENERAL', 'WIDE'):
+            if current_strategy == 'DISABLED':
+                output_frame = create_disabled_reframe(frame, OUTPUT_WIDTH, OUTPUT_HEIGHT)
+
+            elif current_strategy in ('GENERAL', 'WIDE'):
                 # Letterbox: blur background + centered full frame
                 output_frame = create_general_frame(frame, OUTPUT_WIDTH, OUTPUT_HEIGHT)
 
@@ -1248,6 +1288,8 @@ if __name__ == '__main__':
     parser.add_argument('-c', '--cookies', type=str, help="Path to cookies.txt file for yt-dlp")
     parser.add_argument('--instructions', type=str, help="Custom instructions for AI clip selection (e.g., 'find the funniest parts')")
     parser.add_argument('--no-zoom', action='store_true', help="Disable subtle auto-zoom effect on clips")
+    parser.add_argument('--reframe-mode', choices=['auto', 'disabled'], default='auto',
+                        help='Reframe mode: auto (face tracking) or disabled (4:3 crop with black bars)')
 
     args = parser.parse_args()
 
@@ -1299,7 +1341,7 @@ if __name__ == '__main__':
     if args.skip_analysis:
         print("⏩ Skipping analysis, processing entire video...")
         output_file = args.output if args.output else os.path.join(output_dir, f"{video_title}_vertical.mp4")
-        process_video_to_vertical(input_video, output_file)
+        process_video_to_vertical(input_video, output_file, reframe_mode=args.reframe_mode)
     else:
         # 3. Transcribe (with cache for URL-based jobs)
         cached = _load_cached_transcript(args.url) if args.url else None
@@ -1323,7 +1365,7 @@ if __name__ == '__main__':
         if not clips_data or 'shorts' not in clips_data:
             print("❌ Failed to identify clips. Converting whole video as fallback.")
             output_file = os.path.join(output_dir, f"{video_title}_vertical.mp4")
-            process_video_to_vertical(input_video, output_file)
+            process_video_to_vertical(input_video, output_file, reframe_mode=args.reframe_mode)
         else:
             print(f"🔥 Found {len(clips_data['shorts'])} viral clips!")
             
@@ -1360,7 +1402,7 @@ if __name__ == '__main__':
                 subprocess.run(cut_command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
                 
                 # Process vertical
-                success = process_video_to_vertical(clip_temp_path, clip_final_path)
+                success = process_video_to_vertical(clip_temp_path, clip_final_path, reframe_mode=args.reframe_mode)
                 
                 if success:
                     if not args.no_zoom:

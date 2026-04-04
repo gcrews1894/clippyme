@@ -479,11 +479,13 @@ async def process_endpoint(
     
     # Handle JSON body manually for URL payload
     instructions = None
+    reframe_mode = None
     content_type = request.headers.get("content-type", "")
     if "application/json" in content_type:
         body = await request.json()
         url = body.get("url")
         instructions = body.get("instructions")
+        reframe_mode = body.get("reframe_mode")
 
     if not url and not file:
         raise HTTPException(status_code=400, detail="Must provide URL or File")
@@ -528,6 +530,9 @@ async def process_endpoint(
 
     if instructions:
         cmd.extend(["--instructions", instructions])
+
+    if reframe_mode and reframe_mode != 'auto':
+        cmd.extend(["--reframe-mode", reframe_mode])
 
     # Enqueue Job
     jobs[job_id] = {
