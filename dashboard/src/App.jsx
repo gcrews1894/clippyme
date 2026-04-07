@@ -12,7 +12,7 @@ import ConfettiOverlay from './components/ConfettiOverlay';
 import { getApiUrl } from './config';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/sonner';
-import { submitProcessJob, submitBatchJob } from './lib/api';
+import { useJobSubmission } from './hooks/useJobSubmission';
 import { useHistory } from './hooks/useHistory';
 import { useSessionPersistence } from './hooks/useSessionPersistence';
 import { useJobPolling } from './hooks/useJobPolling';
@@ -108,69 +108,16 @@ function App() {
     },
   });
 
-  const handleProcess = async (data) => {
-    if (!apiKey) {
-      setShowKeyModal(true);
-      return;
-    }
-    setStatus('processing');
-    setLogs(["Initializing engine..."]);
-    setResults(null);
-    setProcessingMedia(data);
-
-    // Store preselections for use by ResultCards (Tasks 12/13)
-    if (data.preselections) {
-      setPreselections(data.preselections);
-    }
-
-    try {
-      const resData = await submitProcessJob(data, apiKey);
-      setJobId(resData.job_id);
-    } catch (e) {
-      setStatus('error');
-      setLogs(l => [...l, `Error: ${e.message}`]);
-    }
-  };
-
-  const handleBatchProcess = async (data) => {
-    if (!apiKey) {
-      setShowKeyModal(true);
-      return;
-    }
-    setStatus('processing');
-    setLogs(["Launching batch processing..."]);
-    setResults(null);
-
-    // Store preselections for batch jobs
-    if (data.preselections) {
-      setPreselections(data.preselections);
-    }
-
-    try {
-      const resData = await submitBatchJob(data, apiKey);
-      setLogs(l => [...l, `Batch ${resData.batch_id}: ${resData.total} jobs queued`]);
-
-      // Poll batch status
-      const batchId = resData.batch_id;
-      const pollBatch = setInterval(async () => {
-        try {
-          const statusRes = await fetch(getApiUrl(`/api/batch/${batchId}`));
-          if (!statusRes.ok) return;
-          const statusData = await statusRes.json();
-          setLogs([`Batch progress: ${statusData.completed}/${statusData.total} completed, ${statusData.failed} failed`]);
-          if (statusData.completed + statusData.failed >= statusData.total) {
-            clearInterval(pollBatch);
-            setStatus('completed');
-            setLogs(l => [...l, `Batch complete! ${statusData.completed} succeeded, ${statusData.failed} failed.`]);
-          }
-        } catch { /* ignore poll errors */ }
-      }, 3000);
-
-    } catch (e) {
-      setStatus('error');
-      setLogs(l => [...l, `Batch error: ${e.message}`]);
-    }
-  };
+  const { handleProcess, handleBatchProcess } = useJobSubmission({
+    apiKey,
+    setShowKeyModal,
+    setStatus,
+    setLogs,
+    setResults,
+    setProcessingMedia,
+    setPreselections,
+    setJobId,
+  });
 
   const handleReset = (skipConfirm = false) => {
     if (!skipConfirm && status === 'processing') {
