@@ -55,18 +55,20 @@ FROM runtime-${GPU_RUNTIME} AS final
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1
 
-# Install all Python deps directly (avoids cross-distro venv/symlink issues)
+# Install Python deps. CUDA pip wheels (nvidia-cublas-cu12, cudnn) are only
+# needed on the GPU path — skipping them on CPU saves ~500 MB per image.
+ARG GPU_RUNTIME
 COPY requirements.txt .
 RUN pip install --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir nvidia-cublas-cu12 && \
+    if [ "$GPU_RUNTIME" = "nvidia" ]; then \
+        pip install --no-cache-dir nvidia-cublas-cu12 && \
+        SITE=$(python -c "import site; print(site.getsitepackages()[0])") && \
+        echo "$SITE/nvidia/cublas/lib" > /etc/ld.so.conf.d/nvidia-pip.conf && \
+        echo "$SITE/nvidia/cudnn/lib" >> /etc/ld.so.conf.d/nvidia-pip.conf && \
+        ldconfig 2>/dev/null || true; \
+    fi && \
     pip install --upgrade --no-cache-dir yt-dlp
-
-# Set LD_LIBRARY_PATH so ctranslate2 finds CUDA libs from pip
-RUN SITE=$(python -c "import site; print(site.getsitepackages()[0])") && \
-    echo "$SITE/nvidia/cublas/lib" > /etc/ld.so.conf.d/nvidia-pip.conf && \
-    echo "$SITE/nvidia/cudnn/lib" >> /etc/ld.so.conf.d/nvidia-pip.conf && \
-    ldconfig 2>/dev/null || true
 
 # Create non-root user
 RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuser && \
