@@ -910,15 +910,24 @@ async def publish_clip_endpoint(job_id: str, clip_index: int, req: PublishReques
             scheduled_for=req.scheduled_for,
             timezone=req.timezone or cfg.get("timezone") or "Europe/Rome",
             tiktok_settings=req.tiktok_settings,
+            start_date=req.start_date,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except ZernioError as e:
         logger.error("publish: Zernio error: %s (status=%s body=%s)",
                      e, e.status_code, (e.body or "")[:200])
+        # Include the full response body (truncated) in the HTTPException
+        # detail so the frontend can parse per-platform failures like the
+        # Zernio "Daily limit reached" 429 and skip the exhausted platform
+        # for the rest of a batch publish run.
+        body_snippet = (e.body or "")[:500]
+        detail_msg = f"Zernio API error: {e}"
+        if body_snippet:
+            detail_msg = f"{detail_msg} | body={body_snippet}"
         raise HTTPException(
             status_code=502 if e.status_code is None else e.status_code,
-            detail=f"Zernio API error: {e}",
+            detail=detail_msg,
         )
     except Exception as e:
         logger.exception("publish: unexpected error")

@@ -270,6 +270,7 @@ def publish_clip(
     timezone: str = DEFAULT_TIMEZONE,
     tiktok_settings: Optional[dict] = None,
     scheduler: Optional[SmartScheduler] = None,
+    start_date: Optional[str] = None,
 ) -> dict:
     """Publish a single clip via Zernio.
 
@@ -311,10 +312,21 @@ def publish_clip(
     publish_now = schedule_mode == "now"
     final_scheduled_for: Optional[str] = None
     if schedule_mode == "auto":
-        # Pick a slot today (or tomorrow if it's late)
+        # Pick a slot today (or tomorrow if it's late), or honour an
+        # explicit start_date from the caller (batch publish UI lets the
+        # user pick the day the schedule should begin).
         sched = scheduler or SmartScheduler()
         now = datetime.now()
-        target_day = now.date() + timedelta(days=1) if now.hour >= 22 else now.date()
+        if start_date:
+            try:
+                requested = datetime.strptime(start_date, "%Y-%m-%d").date()
+            except ValueError as exc:
+                raise ValueError(f"invalid start_date, expected YYYY-MM-DD: {start_date}") from exc
+            # Never schedule in the past — bump to today if the user picked
+            # a day that has already passed.
+            target_day = max(requested, now.date())
+        else:
+            target_day = now.date() + timedelta(days=1) if now.hour >= 22 else now.date()
         date_iso = target_day.strftime("%Y-%m-%d")
         try:
             posts = client.list_scheduled_posts(date_iso, date_iso)
@@ -330,7 +342,31 @@ def publish_clip(
         except ZernioError as e:
             logger.warning("list_scheduled_posts failed, falling back to empty occupancy: %s", e)
             occupied = []
+
+        # Verbose scheduling trace — lets the operator see exactly which
+        # slots were considered occupied and which slot was picked.
+        weekday_name = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][target_day.weekday()]
+        windows = sched._windows_for(target_day.weekday())
+        windows_str = ", ".join(f"{s:02d}-{e:02d}" for s, e in windows)
+        occupied_str = ", ".join(o.strftime("%H:%M") for o in sorted(occupied)) or "none"
+        logger.info(
+            "SmartScheduler: day=%s (%s), prime-time windows=[%s], already occupied: [%s], min_gap=%ds",
+            date_iso, weekday_name, windows_str, occupied_str, sched.min_gap_seconds,
+        )
         slot = sched.find_slot(target_day, occupied, now=now)
+        # Describe why this slot was chosen
+        in_window = next(
+            (w for w in windows if w[0] <= slot.hour < w[1]),
+            None,
+        )
+        reason = (
+            f"free prime-time window {in_window[0]:02d}-{in_window[1]:02d}"
+            if in_window else "fallback (all prime-time windows busy)"
+        )
+        logger.info(
+            "SmartScheduler: → picked %s (%s), reason: %s",
+            slot.strftime("%Y-%m-%d %H:%M"), weekday_name, reason,
+        )
         final_scheduled_for = slot.isoformat()
     elif schedule_mode == "manual":
         final_scheduled_for = scheduled_for

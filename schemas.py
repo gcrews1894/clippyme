@@ -78,6 +78,10 @@ class PublishRequest(BaseModel):
     platforms: List[dict] = Field(..., min_length=1, max_length=14)
     schedule_mode: str = "now"
     scheduled_for: Optional[str] = None
+    # Optional YYYY-MM-DD that defines the day the SmartScheduler should
+    # start picking slots from when schedule_mode="auto". Ignored by
+    # "now" / "manual". Defaults to today if omitted.
+    start_date: Optional[str] = None
     timezone: str = "Europe/Rome"
     tiktok_settings: Optional[dict] = None
     # If true, force a fresh compose pass before upload using the supplied

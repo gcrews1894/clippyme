@@ -16,6 +16,35 @@ import { getApiUrl } from '../config';
 export default function BatchPublishModal({ isOpen, onClose, jobId, clips, onPublished }) {
     const [zernioConfig, setZernioConfig] = useState(null);
     const [scheduleMode, setScheduleMode] = useState('auto');
+    // Start date for auto slots — defaults to today (local YYYY-MM-DD).
+    // Only meaningful when scheduleMode === 'auto'. The batch publisher
+    // schedules **one clip per day** starting from this date (replicating
+    // the behavior of the original tmp/programma_shorts.py script) so a
+    // single batch doesn't hit Zernio's per-platform daily limits.
+    const todayLocalISO = () => {
+        const d = new Date();
+        const off = d.getTimezoneOffset();
+        const local = new Date(d.getTime() - off * 60_000);
+        return local.toISOString().slice(0, 10);
+    };
+    // Add N days to a YYYY-MM-DD string, returning YYYY-MM-DD.
+    const addDaysISO = (isoDate, days) => {
+        const [y, m, d] = isoDate.split('-').map(Number);
+        // Construct in local time to avoid TZ drift across midnight
+        const dt = new Date(y, m - 1, d);
+        dt.setDate(dt.getDate() + days);
+        const yy = dt.getFullYear();
+        const mm = String(dt.getMonth() + 1).padStart(2, '0');
+        const dd = String(dt.getDate()).padStart(2, '0');
+        return `${yy}-${mm}-${dd}`;
+    };
+    const [startDate, setStartDate] = useState(todayLocalISO());
+    // "One per day" spacing mode: default ON, replicates the original
+    // tmp/programma_shorts.py behavior. When OFF all clips get the same
+    // start_date and the backend SmartScheduler distributes them across
+    // slots within that single day (old behavior, only useful for very
+    // small batches ≤ 5 that fit under the daily limit).
+    const [oneClipPerDay, setOneClipPerDay] = useState(true);
     const [enabled, setEnabled] = useState({ tiktok: true, instagram: true, youtube: true });
     const [publishing, setPublishing] = useState(false);
     const [results, setResults] = useState({}); // {originalIndex: 'ok' | 'error' | 'pending'}
@@ -23,6 +52,7 @@ export default function BatchPublishModal({ isOpen, onClose, jobId, clips, onPub
     useEffect(() => {
         if (!isOpen) return;
         setResults({});
+        setStartDate(todayLocalISO());
         fetch(getApiUrl('/api/config/zernio'))
             .then((r) => (r.ok ? r.json() : null))
             .then(setZernioConfig)
@@ -91,13 +121,74 @@ export default function BatchPublishModal({ isOpen, onClose, jobId, clips, onPub
             return;
         }
 
-        const platformTargets = buildPlatformTargets();
+        // Local, mutable view of which platforms are still healthy for THIS
+        // batch run. If Zernio reports a daily quota exhaustion for a
+        // platform on any clip, we remove that platform from subsequent
+        // clips in the batch instead of blindly hammering the rate limit.
+        const activePlatforms = { ...enabled };
+        const exhausted = new Set();
         setPublishing(true);
 
         let ok = 0;
         let fail = 0;
+        let skipped = 0;
+        let batchIdx = 0;
         for (const { clip, originalIndex } of clips) {
+            // Each clip gets its OWN start_date when "one per day" is on:
+            //   clip #0 → startDate
+            //   clip #1 → startDate + 1 day
+            //   clip #N → startDate + N days
+            // This matches tmp/programma_shorts.py (original script) and
+            // avoids Zernio's per-platform 5/day limit on medium batches.
+            const perClipStartDate = oneClipPerDay
+                ? addDaysISO(startDate, batchIdx)
+                : startDate;
+            batchIdx += 1;
             setResults((prev) => ({ ...prev, [originalIndex]: 'pending' }));
+
+            // Rebuild target list per-clip from the current active set so
+            // exhausted platforms drop out for the rest of the batch.
+            const platformTargets = [];
+            if (activePlatforms.tiktok && accounts.tiktok) {
+                platformTargets.push({
+                    platform: 'tiktok',
+                    accountId: accounts.tiktok,
+                    platformSpecificData: {
+                        tiktokSettings: {
+                            privacy_level: 'PUBLIC_TO_EVERYONE',
+                            allow_comment: true,
+                            allow_duet: true,
+                            allow_stitch: true,
+                            content_preview_confirmed: true,
+                            express_consent_given: true,
+                        },
+                    },
+                });
+            }
+            if (activePlatforms.instagram && accounts.instagram) {
+                platformTargets.push({
+                    platform: 'instagram',
+                    accountId: accounts.instagram,
+                    platformSpecificData: { shareToFeed: true },
+                });
+            }
+            if (activePlatforms.youtube && accounts.youtube) {
+                platformTargets.push({
+                    platform: 'youtube',
+                    accountId: accounts.youtube,
+                    platformSpecificData: { visibility: 'public', madeForKids: false },
+                });
+            }
+
+            if (platformTargets.length === 0) {
+                // Every selected platform has been exhausted. Stop the loop
+                // entirely — keep remaining clips untouched so the user can
+                // republish them tomorrow.
+                setResults((prev) => ({ ...prev, [originalIndex]: 'skipped' }));
+                skipped += 1;
+                continue;
+            }
+
             try {
                 const body = {
                     title: (clip.video_title_for_youtube_short || `Clip ${originalIndex + 1}`).slice(0, 100),
@@ -113,6 +204,8 @@ export default function BatchPublishModal({ isOpen, onClose, jobId, clips, onPub
                         };
                     }),
                     schedule_mode: scheduleMode,
+                    // Only send start_date in auto mode — ignored by backend for now/manual
+                    ...(scheduleMode === 'auto' && perClipStartDate ? { start_date: perClipStartDate } : {}),
                     timezone: zernioConfig?.timezone || 'Europe/Rome',
                 };
                 const res = await fetch(getApiUrl(`/api/publish/${jobId}/${originalIndex}`), {
@@ -122,7 +215,63 @@ export default function BatchPublishModal({ isOpen, onClose, jobId, clips, onPub
                 });
                 if (!res.ok) {
                     const err = await res.json().catch(() => ({}));
-                    throw new Error(err.detail || `HTTP ${res.status}`);
+                    const detail = (err.detail || `HTTP ${res.status}`).toString();
+
+                    // Detect Zernio per-platform daily-limit responses and
+                    // disable the offending platform for the rest of the
+                    // batch. The backend surfaces the Zernio error body
+                    // verbatim in the detail (see app.py publish handler),
+                    // so we match on the stable substrings:
+                    //   "Daily limit reached for this account"
+                    //   "platform":"youtube" / "tiktok" / "instagram"
+                    const isDailyLimit = /daily limit/i.test(detail);
+                    // Tolerant regex: matches "platform":"youtube" with any
+                    // amount of whitespace or escaping.
+                    const platformMatch = detail.match(/"?platform"?\s*:\s*\\?"([a-zA-Z]+)/i);
+                    let offending = platformMatch ? platformMatch[1].toLowerCase() : null;
+                    // Secondary heuristic: if the detail mentions a platform
+                    // name in plain text (e.g. "youtube daily limit"), pick
+                    // that up too. Useful when Zernio changes its body shape.
+                    if (!offending && isDailyLimit) {
+                        for (const p of ['youtube', 'tiktok', 'instagram']) {
+                            if (detail.toLowerCase().includes(p)) {
+                                offending = p;
+                                break;
+                            }
+                        }
+                    }
+                    // Last-resort fallback: on a 429 with "daily limit" that
+                    // we still can't attribute, disable **all** currently
+                    // active platforms so we don't keep hammering Zernio.
+                    if (isDailyLimit && !offending && res.status === 429) {
+                        Object.keys(activePlatforms).forEach((k) => {
+                            if (activePlatforms[k]) exhausted.add(k);
+                            activePlatforms[k] = false;
+                        });
+                        toast.warning('Zernio daily quota reached — stopping batch (could not identify the specific platform, disabling all).');
+                        setResults((prev) => ({ ...prev, [originalIndex]: 'error' }));
+                        fail += 1;
+                        continue;
+                    }
+
+                    if (isDailyLimit && offending && activePlatforms[offending]) {
+                        activePlatforms[offending] = false;
+                        exhausted.add(offending);
+                        const nicer = offending.charAt(0).toUpperCase() + offending.slice(1);
+                        toast.warning(
+                            `${nicer} daily quota reached — skipping ${nicer} for the rest of this batch. Remaining clips continue on other platforms.`,
+                        );
+                        // This clip partially failed (on the exhausted
+                        // platform) but may still have succeeded on the
+                        // others — Zernio returns a hard fail on any
+                        // platform rejection, so we mark it as error and
+                        // move on without throwing.
+                        setResults((prev) => ({ ...prev, [originalIndex]: 'error' }));
+                        fail += 1;
+                        continue;
+                    }
+
+                    throw new Error(detail);
                 }
                 setResults((prev) => ({ ...prev, [originalIndex]: 'ok' }));
                 onPublished(originalIndex);
@@ -134,8 +283,19 @@ export default function BatchPublishModal({ isOpen, onClose, jobId, clips, onPub
             }
         }
         setPublishing(false);
-        if (fail === 0) toast.success(`All ${ok} clips published successfully!`);
-        else toast.warning(`${ok} succeeded, ${fail} failed`);
+
+        const exhaustedList = Array.from(exhausted).join(', ');
+        if (fail === 0 && skipped === 0) {
+            toast.success(`All ${ok} clips published successfully!`);
+        } else if (skipped > 0) {
+            toast.warning(
+                `${ok} published, ${fail} failed, ${skipped} skipped (all selected platforms exhausted${exhaustedList ? `: ${exhaustedList}` : ''}). Try again tomorrow.`,
+            );
+        } else {
+            toast.warning(
+                `${ok} published, ${fail} failed${exhaustedList ? ` — ${exhaustedList} daily quota reached` : ''}.`,
+            );
+        }
     };
 
     return createPortal(
@@ -230,10 +390,61 @@ export default function BatchPublishModal({ isOpen, onClose, jobId, clips, onPub
                         </div>
                         <p className="text-[10px] text-zinc-600">
                             {scheduleMode === 'auto'
-                                ? 'Each clip gets its own optimal slot today/tomorrow (anti-collision via SmartScheduler).'
+                                ? 'One clip per day starting from the selected date (default). SmartScheduler picks the optimal slot per day.'
                                 : 'All clips publish immediately on every selected platform.'}
                         </p>
                     </div>
+
+                    {/* Start date picker + one-per-day toggle — only visible when schedule_mode === 'auto' */}
+                    {scheduleMode === 'auto' && (
+                        <div className="space-y-3">
+                            <div className="space-y-2">
+                                <label className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider flex items-center gap-1.5">
+                                    <Calendar size={11} />
+                                    Start from day
+                                </label>
+                                <input
+                                    type="date"
+                                    value={startDate}
+                                    min={todayLocalISO()}
+                                    onChange={(e) => setStartDate(e.target.value)}
+                                    disabled={publishing}
+                                    className="w-full bg-[#0f0f13] border border-white/10 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-accent-pink/50 disabled:opacity-50"
+                                />
+                            </div>
+
+                            {/* One-per-day toggle */}
+                            <div className="flex items-start justify-between gap-3 p-3 rounded-lg bg-white/[0.02] border border-white/5">
+                                <div className="flex-1 min-w-0">
+                                    <div className="text-[11px] font-medium text-zinc-300">
+                                        One clip per day
+                                    </div>
+                                    <p className="text-[10px] text-zinc-500 mt-0.5">
+                                        {oneClipPerDay
+                                            ? `Each clip lands on its own day starting from ${startDate} → ${addDaysISO(startDate, Math.max(0, clips.length - 1))} (${clips.length} day${clips.length === 1 ? '' : 's'}). Bypasses Zernio's 5/day per-platform limit.`
+                                            : `All ${clips.length} clips on ${startDate} in different slots. Only works for batches ≤ 5 due to daily posting limits.`}
+                                    </p>
+                                </div>
+                                <button
+                                    onClick={() => setOneClipPerDay(!oneClipPerDay)}
+                                    disabled={publishing}
+                                    className={`shrink-0 w-10 h-5 rounded-full transition-all duration-300 relative p-0.5 ${
+                                        oneClipPerDay ? 'bg-accent-pink' : 'bg-white/10'
+                                    } disabled:opacity-50`}
+                                >
+                                    <div
+                                        className={`w-4 h-4 rounded-full bg-white transition-all duration-300 ${
+                                            oneClipPerDay ? 'translate-x-5' : 'translate-x-0'
+                                        }`}
+                                    />
+                                </button>
+                            </div>
+
+                            <p className="text-[10px] text-zinc-600">
+                                Past dates auto-bump to today. SmartScheduler picks the optimal time slot on each day (prime-time IT windows).
+                            </p>
+                        </div>
+                    )}
 
                     {/* Clip list with per-clip status */}
                     <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
@@ -251,6 +462,9 @@ export default function BatchPublishModal({ isOpen, onClose, jobId, clips, onPub
                                     {status === 'pending' && <Loader2 size={12} className="animate-spin text-accent-pink" />}
                                     {status === 'ok' && <Check size={12} className="text-emerald-400" />}
                                     {status === 'error' && <AlertCircle size={12} className="text-red-400" />}
+                                    {status === 'skipped' && (
+                                        <span className="text-[9px] font-medium text-amber-400 uppercase">Skipped</span>
+                                    )}
                                 </div>
                             );
                         })}
@@ -269,7 +483,7 @@ export default function BatchPublishModal({ isOpen, onClose, jobId, clips, onPub
                         {publishing ? (
                             <>
                                 <Loader2 size={14} className="animate-spin" />
-                                Publishing {Object.values(results).filter((r) => r === 'ok' || r === 'error').length}/{clips.length}
+                                Publishing {Object.values(results).filter((r) => r === 'ok' || r === 'error' || r === 'skipped').length}/{clips.length}
                             </>
                         ) : (
                             <>
