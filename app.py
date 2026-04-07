@@ -46,7 +46,7 @@ from config_store import (
     save_persistent_config,
 )
 from job_artifacts import relocate_root_job_artifacts
-from job_worker import make_workers
+from job_worker import make_workers, enqueue_output
 from gemini_service import list_available_models
 
 load_dotenv()
@@ -130,20 +130,6 @@ async def list_gemini_models(api_key: Optional[str] = Header(None, alias="X-Gemi
     """List available Gemini models using the provided API key."""
     return list_available_models(api_key or os.environ.get("GEMINI_API_KEY"))
 
-def enqueue_output(out, job_id):
-    """Reads output from a subprocess and appends it to jobs logs."""
-    try:
-        for line in iter(out.readline, b''):
-            decoded_line = line.decode('utf-8').strip()
-            if decoded_line:
-                print(f"📝 [Job Output] {decoded_line}")
-                if job_id in jobs:
-                    jobs[job_id]['logs'].append(decoded_line)
-    except Exception as e:
-        logger.error("Error reading output for job %s: %s", job_id, e)
-    finally:
-        out.close()
-
 async def run_job(job_id, job_data):
     """Executes the subprocess for a specific job."""
     
@@ -167,7 +153,7 @@ async def run_job(job_id, job_data):
         jobs[job_id]['process'] = process
         
         # We need to capture logs in a thread because Popen isn't async
-        t_log = threading.Thread(target=enqueue_output, args=(process.stdout, job_id))
+        t_log = threading.Thread(target=enqueue_output, args=(process.stdout, job_id, jobs))
         t_log.daemon = True
         t_log.start()
         

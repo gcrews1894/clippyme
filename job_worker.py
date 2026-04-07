@@ -14,6 +14,24 @@ from typing import Awaitable, Callable, Dict
 logger = logging.getLogger("clippyme")
 
 
+def enqueue_output(out, job_id: str, jobs: Dict[str, Dict]) -> None:
+    """Read lines from a subprocess stream and append them to the job's log list.
+
+    Intended to run inside a background thread.
+    """
+    try:
+        for line in iter(out.readline, b""):
+            decoded_line = line.decode("utf-8").strip()
+            if decoded_line:
+                print(f"📝 [Job Output] {decoded_line}")
+                if job_id in jobs:
+                    jobs[job_id]["logs"].append(decoded_line)
+    except Exception as e:
+        logger.error("Error reading output for job %s: %s", job_id, e)
+    finally:
+        out.close()
+
+
 def make_workers(
     *,
     jobs: Dict[str, Dict],
