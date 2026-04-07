@@ -15,6 +15,7 @@ import { Toaster } from '@/components/ui/sonner';
 import { useHistory } from './hooks/useHistory';
 import { useSessionPersistence } from './hooks/useSessionPersistence';
 import { useJobPolling } from './hooks/useJobPolling';
+import { useBackendStatus } from './hooks/useBackendStatus';
 
 const TikTokIcon = ({ size = 16, className = "" }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" className={className}>
@@ -34,8 +35,7 @@ function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [sessionRecovered, setSessionRecovered] = useState(false);
   const { history, saveToHistory, deleteFromHistory, clearHistory } = useHistory();
-  const [hfTokenSet, setHfTokenSet] = useState(true); // assume set until checked
-  const [cookiesConfigured, setCookiesConfigured] = useState(false);
+  const { hfTokenSet, cookiesConfigured, setCookiesConfigured } = useBackendStatus();
 
   const [currentStep, setCurrentStep] = useState(null);
 
@@ -61,22 +61,6 @@ function App() {
   useEffect(() => {
     if (apiKey) localStorage.setItem('gemini_key', apiKey);
   }, [apiKey]);
-
-  // Check HF_TOKEN on mount
-  useEffect(() => {
-    fetch(getApiUrl('/api/config'))
-      .then(r => r.ok ? r.json() : {})
-      .then(data => setHfTokenSet(!!data.HF_TOKEN))
-      .catch(() => {});
-  }, []);
-
-  // Check cookies configured on mount
-  useEffect(() => {
-    fetch(getApiUrl('/api/config/cookies/status'))
-      .then(r => r.ok ? r.json() : {})
-      .then(data => setCookiesConfigured(!!data.configured))
-      .catch(() => {});
-  }, []);
 
   useJobPolling({
     jobId,
