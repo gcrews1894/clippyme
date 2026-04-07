@@ -14,6 +14,7 @@ import SettingsTab from './components/SettingsTab';
 import PipelineSteps from './components/PipelineSteps';
 import LogsPanel from './components/LogsPanel';
 import IdleHero from './components/IdleHero';
+import ResultsGrid from './components/ResultsGrid';
 import { getApiUrl } from './config';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/sonner';
@@ -454,103 +455,22 @@ function App() {
 
             {/* Step 3: Results (complete or error with results) */}
             {(status === 'complete' || (status === 'error' && results?.clips?.length > 0)) && (
-              <div className="space-y-6">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                  <div>
-                    <h2 className="text-2xl font-bold text-white flex items-center gap-2">
-                      <Sparkles size={22} className="text-purple-400" />
-                      Your Clips
-                    </h2>
-                    <p className="text-zinc-500 text-sm mt-1">AI-curated high-engagement segments</p>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    {results?.clips?.length > 0 && (
-                      <div className="flex items-center gap-3 px-4 py-2 rounded-xl backdrop-blur-xl bg-white/5 border border-white/10">
-                        <span className="text-sm font-semibold text-white">{results.clips.length} clips</span>
-                        {results?.cost_analysis && (
-                          <>
-                            <div className="h-4 w-px bg-white/10" />
-                            <span className="text-sm font-mono text-emerald-400" title={`Tokens: ${results.cost_analysis.input_tokens}i / ${results.cost_analysis.output_tokens}o`}>
-                              ${results.cost_analysis.total_cost.toFixed(4)}
-                            </span>
-                          </>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Source preview */}
-                {processingMedia && (
-                  <div className="rounded-2xl bg-[#0f0f13] border border-white/5 p-4">
-                    <ProcessingAnimation
-                      media={processingMedia}
-                      isComplete={status === 'complete'}
-                      syncedTime={syncedTime}
-                      isSyncedPlaying={isSyncedPlaying}
-                      syncTrigger={syncTrigger}
-                    />
-                  </div>
-                )}
-
-                {/* Results grid */}
-                {results && results.clips && results.clips.length > 0 ? (
-                  <div className="grid gap-6 grid-cols-1 lg:grid-cols-2">
-                    {results.clips.map((clip, i) => (
-                      <ResultCard
-                        key={i}
-                        clip={clip}
-                        index={i}
-                        jobId={jobId}
-                        preselections={preselections}
-                        onPlay={(time) => handleClipPlay(time)}
-                        onPause={handleClipPause}
-                      />
-                    ))}
-                  </div>
-                ) : null}
-
-                {/* Error banner with retry (when error but some clips exist) */}
-                {status === 'error' && (
-                  <div className="rounded-2xl bg-red-500/10 border border-red-500/20 p-4 flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <AlertCircle size={18} className="text-red-400 shrink-0" />
-                      <p className="text-sm text-red-400">Processing encountered an error. Some clips may be incomplete.</p>
-                    </div>
-                    {processingMedia && (
-                      <button
-                        onClick={() => handleProcess(processingMedia)}
-                        className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-pink-500 to-purple-500 text-white text-xs font-semibold hover:opacity-90 transition-all shrink-0 ml-3"
-                      >
-                        <RotateCcw size={12} /> Retry
-                      </button>
-                    )}
-                  </div>
-                )}
-
-                {/* Collapsed logs for completed state */}
-                <div className="rounded-2xl bg-[#0f0f13] border border-white/5 overflow-hidden opacity-60 hover:opacity-100 transition-opacity">
-                  <button
-                    onClick={() => setLogsVisible(!logsVisible)}
-                    className="w-full px-5 py-3 flex items-center justify-between hover:bg-white/[0.02] transition-all"
-                  >
-                    <span className="text-xs font-medium text-zinc-500 flex items-center gap-2">
-                      <Terminal size={13} /> Session Logs
-                    </span>
-                    <ChevronDown size={14} className={`text-zinc-600 transition-transform ${logsVisible ? '' : 'rotate-180'}`} />
-                  </button>
-                  {logsVisible && (
-                    <div className="border-t border-white/5 p-5 max-h-40 overflow-y-auto font-mono text-[11px] space-y-1.5 text-zinc-500 leading-relaxed">
-                      {logs.map((log, i) => (
-                        <div key={i} className={`flex gap-3 ${log.toLowerCase().includes('error') ? 'text-red-400' : ''} ${log.startsWith('   ✅') || log.startsWith('✅') ? 'text-emerald-400' : ''}`}>
-                          <span className="text-zinc-700 shrink-0 select-none">[{new Date().toLocaleTimeString()}]</span>
-                          <span className="break-words">{log}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
+              <ResultsGrid
+                results={results}
+                status={status}
+                jobId={jobId}
+                preselections={preselections}
+                processingMedia={processingMedia}
+                syncedTime={syncedTime}
+                isSyncedPlaying={isSyncedPlaying}
+                syncTrigger={syncTrigger}
+                logs={logs}
+                logsVisible={logsVisible}
+                onLogsToggle={() => setLogsVisible(!logsVisible)}
+                onClipPlay={handleClipPlay}
+                onClipPause={handleClipPause}
+                onRetry={handleProcess}
+              />
             )}
           </div>
         )}
