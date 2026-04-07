@@ -25,6 +25,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from job_results import load_partial_result, load_final_result, build_main_cmd
+from compose import compose_layers
 from schemas import (
     BatchRequest,
     ComposeRequest,
@@ -732,122 +733,18 @@ async def compose_clip(job_id: str, clip_index: int, req: ComposeRequest):
     if not os.path.exists(base_clip):
         raise HTTPException(status_code=404, detail="Clip file not found")
 
-    active = {k: v for k, v in req.toggles.items() if v}
-    if not active:
-        return {"composed_url": f"/videos/{job_id}/{clip_filename}"}
-
-    current_input = base_clip
-    intermediate_files = []  # Track files to clean up
-
     try:
-        # Step 1: Smart Cut
-        if active.get("smartcut"):
-            smartcut_path = base_clip.replace(".mp4", "_smartcut.mp4")
-            if os.path.exists(smartcut_path):
-                current_input = smartcut_path
-            else:
-                transcript = metadata.get("transcript", {})
-                clip_start = clip_info.get("start", 0)
-                clip_end = clip_info.get("end", 0)
-                language = transcript.get("language")
-                loop = asyncio.get_event_loop()
-                sc_output, sc_stats = await loop.run_in_executor(
-                    None, smart_cut, current_input, transcript, clip_start, clip_end, language
-                )
-                if sc_output:
-                    current_input = sc_output
-
-        # Step 2: Hook
-        if active.get("hook") and req.hook_params.get("text"):
-            from hooks import add_hook_to_video
-            hook_output = os.path.join(job_dir, f"composed_hook_{clip_index}.mp4")
-            intermediate_files.append(hook_output)
-            position = req.hook_params.get("position", "top")
-            size_map = {"S": 0.8, "M": 1.0, "L": 1.3}
-            font_scale = size_map.get(req.hook_params.get("size", "M"), 1.0)
-            hook_offset_y = req.hook_params.get("offset_y", 0)
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(
-                None, add_hook_to_video, current_input, req.hook_params["text"],
-                hook_output, position, font_scale, hook_offset_y
-            )
-            current_input = hook_output
-
-        # Step 3: Subtitles
-        if active.get("subtitles"):
-            sub_output = os.path.join(job_dir, f"composed_sub_{clip_index}.mp4")
-            intermediate_files.append(sub_output)
-            transcript = metadata.get("transcript", {})
-            clip_start = clip_info.get("start", 0)
-            clip_end = clip_info.get("end", 0)
-            sub_mode = req.subtitle_params.get("mode", "karaoke")
-            sub_offset_y = req.subtitle_params.get("offset_y", 0)
-
-            if sub_mode == "karaoke":
-                preset_name = req.subtitle_params.get("preset", "classic_white")
-                ass_path = os.path.join(job_dir, f"composed_subs_{clip_index}.ass")
-                intermediate_files.append(ass_path)
-                loop = asyncio.get_event_loop()
-                success = await loop.run_in_executor(
-                    None, lambda: generate_ass_karaoke(
-                        transcript, clip_start, clip_end, ass_path,
-                        preset=preset_name,
-                        mode=req.subtitle_params.get("display_mode", "word_group"),
-                        uppercase=req.subtitle_params.get("uppercase", True),
-                        highlight_color=req.subtitle_params.get("highlight_color"),
-                        font_name=req.subtitle_params.get("font"),
-                        font_size=req.subtitle_params.get("font_size"),
-                        position=req.subtitle_params.get("position", "bottom"),
-                        offset_y=sub_offset_y
-                    )
-                )
-                if not success:
-                    raise HTTPException(status_code=400, detail="No words found for this clip range.")
-                await loop.run_in_executor(
-                    None, burn_subtitles, current_input, ass_path, sub_output, 2, 16,
-                    "Verdana", "#FFFFFF", "#000000", 2, "#000000", 0.0, sub_offset_y
-                )
-            else:
-                srt_path = os.path.join(job_dir, f"composed_subs_{clip_index}.srt")
-                intermediate_files.append(srt_path)
-                loop = asyncio.get_event_loop()
-                success = await loop.run_in_executor(
-                    None, generate_srt, transcript, clip_start, clip_end, srt_path
-                )
-                if not success:
-                    raise HTTPException(status_code=400, detail="No words found for this clip range.")
-                await loop.run_in_executor(
-                    None, lambda: burn_subtitles(
-                        current_input, srt_path, sub_output,
-                        alignment=req.subtitle_params.get("position", "bottom"),
-                        fontsize=req.subtitle_params.get("font_size", 16),
-                        font_name=req.subtitle_params.get("font", "Verdana"),
-                        font_color=req.subtitle_params.get("font_color", "#FFFFFF"),
-                        border_color=req.subtitle_params.get("border_color", "#000000"),
-                        border_width=req.subtitle_params.get("border_width", 2),
-                        bg_color=req.subtitle_params.get("bg_color", "#000000"),
-                        bg_opacity=req.subtitle_params.get("bg_opacity", 0.0),
-                        offset_y=sub_offset_y
-                    )
-                )
-            current_input = sub_output
-
-        # Copy to final composed path
-        composed_filename = f"composed_clip_{clip_index}.mp4"
-        composed_path = os.path.join(job_dir, composed_filename)
-        if os.path.abspath(current_input) != os.path.abspath(composed_path):
-            shutil.copy2(current_input, composed_path)
-
-        # Clean up intermediate files
-        for temp_file in intermediate_files:
-            if temp_file and os.path.exists(temp_file) and os.path.abspath(temp_file) != os.path.abspath(composed_path):
-                try:
-                    os.remove(temp_file)
-                except OSError:
-                    pass
-
+        composed_filename = await compose_layers(
+            base_clip=base_clip,
+            job_dir=job_dir,
+            clip_index=clip_index,
+            metadata=metadata,
+            clip_info=clip_info,
+            toggles=req.toggles,
+            hook_params=req.hook_params,
+            subtitle_params=req.subtitle_params,
+        )
         return {"composed_url": f"/videos/{job_id}/{composed_filename}"}
-
     except HTTPException:
         raise
     except Exception as e:
