@@ -13,7 +13,8 @@ import { getApiUrl } from './config';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/sonner';
 import { pollJob } from './lib/api';
-import { SESSION_KEY, HISTORY_KEY, HISTORY_MAX_ITEMS } from './lib/constants';
+import { SESSION_KEY } from './lib/constants';
+import { useHistory } from './hooks/useHistory';
 
 const TikTokIcon = ({ size = 16, className = "" }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" className={className}>
@@ -32,7 +33,7 @@ function App() {
   const [processingMedia, setProcessingMedia] = useState(null);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [sessionRecovered, setSessionRecovered] = useState(false);
-  const [history, setHistory] = useState([]);
+  const { history, saveToHistory, deleteFromHistory, clearHistory } = useHistory();
   const [hfTokenSet, setHfTokenSet] = useState(true); // assume set until checked
   const [cookiesConfigured, setCookiesConfigured] = useState(false);
 
@@ -100,35 +101,6 @@ function App() {
       .then(data => setCookiesConfigured(!!data.configured))
       .catch(() => {});
   }, []);
-
-  // Load history on mount
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem(HISTORY_KEY);
-      if (saved) setHistory(JSON.parse(saved));
-    } catch { /* ignore */ }
-  }, []);
-
-  const saveToHistory = (entry) => {
-    setHistory(prev => {
-      const updated = [entry, ...prev.filter(h => h.jobId !== entry.jobId)].slice(0, HISTORY_MAX_ITEMS);
-      try { localStorage.setItem(HISTORY_KEY, JSON.stringify(updated)); } catch { /* ignore */ }
-      return updated;
-    });
-  };
-
-  const deleteFromHistory = (jobId) => {
-    setHistory(prev => {
-      const updated = prev.filter(h => h.jobId !== jobId);
-      try { localStorage.setItem(HISTORY_KEY, JSON.stringify(updated)); } catch { /* ignore */ }
-      return updated;
-    });
-  };
-
-  const clearHistory = () => {
-    setHistory([]);
-    localStorage.removeItem(HISTORY_KEY);
-  };
 
   useEffect(() => {
     let interval;
