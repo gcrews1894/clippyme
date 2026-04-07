@@ -11,6 +11,7 @@ import ResultCard from './components/ResultCard';
 import ProcessingAnimation from './components/ProcessingAnimation';
 import HistoryTab from './components/HistoryTab';
 import SettingsTab from './components/SettingsTab';
+import PipelineSteps from './components/PipelineSteps';
 import { getApiUrl } from './config';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/sonner';
@@ -395,33 +396,7 @@ function App() {
                 <div className={`rounded-2xl p-[1px] ${status === 'processing' ? 'bg-gradient-to-r from-pink-500 via-purple-500 to-blue-500 animate-pulse' : 'bg-red-500/50'}`}>
                   <div className="rounded-2xl bg-[#0f0f13] p-6 space-y-6">
                     {/* Pipeline steps */}
-                    {status === 'processing' && (
-                      <div className="flex items-center gap-2 flex-wrap">
-                        {[
-                          { key: 'downloading', label: 'Download' },
-                          { key: 'transcribing', label: 'Transcribe' },
-                          { key: 'analyzing', label: 'AI Analysis' },
-                          { key: 'processing', label: 'Render' },
-                        ].map((step, i, arr) => {
-                          const steps = ['downloading', 'transcribing', 'analyzing', 'processing'];
-                          const currentIdx = steps.indexOf(currentStep);
-                          const stepIdx = steps.indexOf(step.key);
-                          const isDone = stepIdx < currentIdx;
-                          const isActive = stepIdx === currentIdx;
-                          return (
-                            <React.Fragment key={step.key}>
-                              <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                                isDone ? 'text-emerald-400 bg-emerald-500/10' : isActive ? 'text-blue-400 bg-blue-500/10 border border-blue-500/20' : 'text-zinc-600'
-                              }`}>
-                                {isDone ? <Check size={12} /> : isActive ? <Zap size={12} className="animate-pulse" /> : null}
-                                {step.label}
-                              </div>
-                              {i < arr.length - 1 && <div className={`w-6 h-px ${isDone ? 'bg-emerald-500/50' : 'bg-zinc-800'}`} />}
-                            </React.Fragment>
-                          );
-                        })}
-                      </div>
-                    )}
+                    {status === 'processing' && <PipelineSteps currentStep={currentStep} />}
 
                     {/* Processing animation */}
                     {processingMedia && (
@@ -524,31 +499,7 @@ function App() {
                 </div>
 
                 {/* Pipeline steps */}
-                <div className="flex items-center gap-2 flex-wrap">
-                  {[
-                    { key: 'downloading', label: 'Download' },
-                    { key: 'transcribing', label: 'Transcribe' },
-                    { key: 'analyzing', label: 'AI Analysis' },
-                    { key: 'processing', label: 'Render' },
-                  ].map((step, i, arr) => {
-                    const steps = ['downloading', 'transcribing', 'analyzing', 'processing'];
-                    const currentIdx = steps.indexOf(currentStep);
-                    const stepIdx = steps.indexOf(step.key);
-                    const isDone = stepIdx < currentIdx;
-                    const isActive = stepIdx === currentIdx;
-                    return (
-                      <React.Fragment key={step.key}>
-                        <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                          isDone ? 'text-emerald-400 bg-emerald-500/10' : isActive ? 'text-blue-400 bg-blue-500/10 border border-blue-500/20' : 'text-zinc-600'
-                        }`}>
-                          {isDone ? <Check size={12} /> : isActive ? <Zap size={12} className="animate-pulse" /> : null}
-                          {step.label}
-                        </div>
-                        {i < arr.length - 1 && <div className={`w-6 h-px ${isDone ? 'bg-emerald-500/50' : 'bg-zinc-800'}`} />}
-                      </React.Fragment>
-                    );
-                  })}
-                </div>
+                <PipelineSteps currentStep={currentStep} />
 
                 {/* Partial results grid */}
                 <div className="grid gap-6 grid-cols-1 lg:grid-cols-2">
