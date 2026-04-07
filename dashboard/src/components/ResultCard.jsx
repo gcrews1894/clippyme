@@ -34,9 +34,13 @@ export default function ResultCard({ clip, index, jobId, onPlay, onPause, presel
         mode: preselections?.subtitles?.mode || 'karaoke',
         display_mode: 'word_group',
         highlight_color: null,
-        font: 'Montserrat-Black',
+        // Karaoke font default; classic mode overrides via preselections.font below
+        font: preselections?.subtitles?.font || 'Montserrat-Black',
         uppercase: true,
         offset_y: 0,
+        // Classic-mode params (only meaningful when mode === 'classic')
+        font_color: preselections?.subtitles?.font_color || '#FFFFFF',
+        position: preselections?.subtitles?.position || 'bottom',
     });
 
     const [isComposing, setIsComposing] = useState(false);

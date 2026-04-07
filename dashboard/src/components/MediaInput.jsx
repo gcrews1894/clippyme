@@ -89,6 +89,10 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
     const [preSubPreset, setPreSubPreset] = useState('classic_white');
     const [preSubMode, setPreSubMode] = useState('karaoke');
     const [showSubConfig, setShowSubConfig] = useState(false);
+    // Classic-mode pre-selection controls
+    const [preSubClassicFont, setPreSubClassicFont] = useState('Verdana');
+    const [preSubClassicFontColor, setPreSubClassicFontColor] = useState('#FFFFFF');
+    const [preSubClassicPosition, setPreSubClassicPosition] = useState('bottom');
     const [preHook, setPreHook] = useState(false);
     const [preHookPosition, setPreHookPosition] = useState('top');
     const [preHookSize, setPreHookSize] = useState('S');
@@ -102,7 +106,12 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
             subtitles: preSubtitles
                 ? (preSubMode === 'karaoke'
                     ? { preset: preSubPreset, mode: 'karaoke' }
-                    : { mode: 'classic' })
+                    : {
+                        mode: 'classic',
+                        font: preSubClassicFont,
+                        font_color: preSubClassicFontColor,
+                        position: preSubClassicPosition,
+                      })
                 : null,
             hook: preHook ? { position: preHookPosition, size: preHookSize } : null,
         };
@@ -547,12 +556,64 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
                                                     </div>
                                                 </div>
                                             ) : (
-                                                <div className="rounded-lg bg-white/[0.02] border border-white/5 px-3 py-2.5">
-                                                    <p className="text-[10px] text-zinc-500 leading-relaxed">
-                                                        Classic mode uses standard SRT subtitles with default styling.
-                                                        Font, color and outline are configurable per-clip from the
-                                                        captions modal after generation.
-                                                    </p>
+                                                <div className="space-y-2.5">
+                                                    {/* Font */}
+                                                    <div className="space-y-1.5">
+                                                        <p className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Font</p>
+                                                        <select
+                                                            value={preSubClassicFont}
+                                                            onChange={(e) => setPreSubClassicFont(e.target.value)}
+                                                            className="w-full bg-white/[0.04] border border-white/5 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                                                        >
+                                                            {['Verdana', 'Montserrat-Black', 'Anton-Regular', 'Bangers-Regular', 'Poppins-Black', 'Poppins-Medium'].map(f => (
+                                                                <option key={f} value={f} className="bg-[#1e1e28]">{f.replace(/-/g, ' ')}</option>
+                                                            ))}
+                                                        </select>
+                                                    </div>
+                                                    {/* Font color */}
+                                                    <div className="space-y-1.5">
+                                                        <p className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Font color</p>
+                                                        <div className="flex flex-wrap gap-1.5">
+                                                            {['#FFFFFF', '#FFFF00', '#00FFFF', '#00FF00', '#FF4444', '#FF69B4'].map(c => (
+                                                                <button
+                                                                    key={c}
+                                                                    type="button"
+                                                                    onClick={() => setPreSubClassicFontColor(c)}
+                                                                    className={`w-6 h-6 rounded-full border-2 transition-all ${
+                                                                        preSubClassicFontColor === c
+                                                                            ? 'border-white scale-110'
+                                                                            : 'border-transparent hover:border-white/30'
+                                                                    }`}
+                                                                    style={{ backgroundColor: c }}
+                                                                    aria-label={`Color ${c}`}
+                                                                />
+                                                            ))}
+                                                            <label className="w-6 h-6 rounded-full border-2 border-dashed border-white/20 cursor-pointer flex items-center justify-center hover:border-white/40 relative">
+                                                                <span className="text-[9px] text-zinc-500">+</span>
+                                                                <input type="color" value={preSubClassicFontColor} onChange={(e) => setPreSubClassicFontColor(e.target.value)} className="absolute inset-0 opacity-0 cursor-pointer" />
+                                                            </label>
+                                                        </div>
+                                                    </div>
+                                                    {/* Position */}
+                                                    <div className="space-y-1.5">
+                                                        <p className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Position</p>
+                                                        <div className="flex gap-2">
+                                                            {['top', 'middle', 'bottom'].map(pos => (
+                                                                <button
+                                                                    key={pos}
+                                                                    type="button"
+                                                                    onClick={() => setPreSubClassicPosition(pos)}
+                                                                    className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-medium border transition-all ${
+                                                                        preSubClassicPosition === pos
+                                                                            ? 'bg-accent-pink/20 text-accent-pink border-accent-pink/30'
+                                                                            : 'bg-white/[0.02] text-zinc-500 border-white/5 hover:text-zinc-300 hover:bg-white/[0.04]'
+                                                                    }`}
+                                                                >
+                                                                    {pos.charAt(0).toUpperCase() + pos.slice(1)}
+                                                                </button>
+                                                            ))}
+                                                        </div>
+                                                    </div>
                                                 </div>
                                             )}
                                         </div>
