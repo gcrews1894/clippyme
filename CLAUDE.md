@@ -26,7 +26,7 @@ ClippyMe is a self-hosted AI video platform that transforms long-form videos (Yo
   - **Logo**: Custom SVG with multi-color gradient design (`public/logo.svg`)
   - **Color palette**: Dark foundation (#050507, #0f0f13, #16161d, #1e1e28) + brand colors (blue #0a81d9 primary, pink-purple-indigo gradient accent, teal #02c5bf, cyan #00d9ff)
   - **Design tokens**: Glassmorphism with backdrop-blur, gradient borders, glow shadows, ambient noise texture, responsive single-column layout
-  - **Components** (`dashboard/src/components/`): `TopNav` (logo + tabs + status + cancel), `IdleHero`, `MediaInput` (URL/Upload/Batch tabs, pre-selection panel), `ResultCard` (9:16 video + toggles + compose download), `ResultsGrid`, `SubtitleModal`/`HookModal` (two-column settings/preview with offset slider), `ProcessingView` (merges processing + error + partial-results states), `ProcessingAnimation`, `PipelineSteps`, `LogsPanel`, `HistoryTab`, `SettingsTab`, `ApiKeyModal`, `ConfettiOverlay`, Landing page
+  - **Components** (`dashboard/src/components/`): `TopNav` (logo + tabs + status + cancel), `IdleHero`, `MediaInput` (**Single** tab with URL/Upload toggle + **Batch** tab with mixed URLs+files, pre-selection panel), `ResultCard` (9:16 video + toggles + compose download), `ResultsGrid`, `SubtitleModal`/`HookModal` (two-column settings/preview with offset slider), `ProcessingView` (merges processing + error + partial-results states), `ProcessingAnimation`, `PipelineSteps`, `LogsPanel`, `HistoryTab`, `SettingsTab`, `ApiKeyModal`, `ConfettiOverlay`, Landing page
   - **shadcn/ui components** (`dashboard/src/components/ui/`): Button, Badge, Tooltip, Skeleton, Sonner (toasts), Progress, Dialog, Tabs — all using Radix UI primitives via `radix-ui` monorepo
 - **Fonts** (`fonts/`): Bundled TTF fonts for subtitle and hook rendering (Anton, Bangers, Montserrat-Black/ExtraBold, Poppins-Black/Medium, NotoSerif-Bold). Served via `/fonts` static mount.
 
@@ -44,6 +44,10 @@ The post-processing workflow uses independent toggles per clip:
 
 **Pre-selections**: Users can pre-configure toggle states and params before processing (in MediaInput's "Clip Options" panel). These defaults are applied to all generated clips. Each clip can be overridden individually.
 
+**Subtitle pre-selection mode coupling**: The pre-selection panel shows different controls depending on `mode`:
+- **Karaoke**: visual 2×3 grid of the 6 `SUBTITLE_PRESETS` (Classic, Hormozi, Neon, MrBeast, Minimal, Fire) — each rendered with its actual font/color/shadow style.
+- **Classic**: font dropdown (Verdana, Montserrat-Black, Anton, Bangers, Poppins-Black/Medium) + font color swatches + position (top/middle/bottom). These params are propagated via `preselections.subtitles.{font, font_color, position}` and seeded into each `ResultCard`'s `subtitleParams` so the compose endpoint receives them per-clip without manual reconfiguration.
+
 **Auto Edit was removed** — the `/api/edit` endpoint and `VideoEditor` class are no longer used.
 
 ## Frontend Design & Components
@@ -52,7 +56,7 @@ The post-processing workflow uses independent toggles per clip:
 
 **Key Components** (`dashboard/src/components/`):
 - **TopNav**: Slim header with ClippyMe logo/text, step-based tabs (Create/History/Settings), status indicator.
-- **MediaInput**: Three tabs (URL, Upload, Batch) with paste button, drag-drop zone, AI instructions collapsible. **Clip Options** collapsible panel: reframe mode (auto/disabled), Smart Cut toggle, Subtitles toggle+config (preset, mode), Hook toggle+config (position, size). Cookie warning banner when cookies not configured.
+- **MediaInput**: **Two tabs** — `Single` (with internal URL/Upload toggle, paste button, drag-drop zone) and `Batch` (textarea for URLs + multi-file upload zone with removable list, total counter URLs+files / 20). AI instructions collapsible. **Clip Options** collapsible panel: reframe mode (auto/disabled), Smart Cut toggle, Subtitles toggle+config (mode-aware: karaoke shows visual preset grid, classic shows font/color/position), Hook toggle+config (position, size — defaults to **S**). Cookie warning banner when cookies not configured.
 - **ResultCard**: 9:16 aspect ratio video player, viral score badge (color-coded: green 80+, yellow 50-79, orange <50 with tooltip), duration. **Toggle buttons** (Smart Cut, Hook, Subtitles) with pink active state + gear icon for config. Compose-on-download: clicking Download calls `/api/compose` with active toggles, or downloads original clip if no toggles active. YouTube title/TikTok caption fields.
 - **SubtitleModal / HookModal**: Two-column layout (settings left, live preview right; stacks vertically on mobile). Modal backdrop blur, gradient apply buttons, color pickers, preset dropdowns. **Vertical offset slider** (-50% to +50%). Font preview loads actual TTFs via FontFace API.
 - **KeyInput** (Settings): Gemini API key, HuggingFace token, Gemini model selector. **Cookie upload** section: file input (.txt), save/remove buttons, configured status indicator.
@@ -67,6 +71,7 @@ The post-processing workflow uses independent toggles per clip:
 - Custom animations: `gradient-shift` (8s cycle), `float`, `shimmer`, `pulseRing`, `scanLine`
 - Custom shadows: `glow-primary`, `glow-accent`, `glow-pink`, `elevated`, `glass`
 - `@` path alias configured in `vite.config.js` and `jsconfig.json` → resolves to `dashboard/src/`
+- **Vite dev proxy** (`vite.config.js`): `/api`, `/videos`, `/thumbnails`, `/gallery`, `/video`, **`/fonts`** → all proxied to `http://backend:8000`. The `/fonts` proxy is **mandatory** for the SubtitleModal font preview to work — without it, `FontFace` requests 404 and the preview falls back silently to the system font (this was a real bug).
 
 **CSS Features** (`dashboard/src/index.css`):
 - Tailwind v4 syntax: `@import "tailwindcss"` + `@import "tw-animate-css"`
@@ -140,6 +145,7 @@ Activates the pre-commit hook that blocks sensitive data (API keys, cookies, tok
 
 - **Job queue**: In-memory async queue in `app.py`. Jobs submitted via `POST /api/process`, polled via `GET /api/status/{job_id}`.
 - **Batch processing**: `POST /api/batch` accepts up to 20 URLs, creates one job per URL, returns `batch_id`. Polled via `GET /api/batch/{batch_id}`. Supports `reframe_mode` parameter.
+- **Mixed batch (URLs + files)**: The frontend `useJobSubmission.handleBatchProcess` supports both. URLs are submitted in one shot to `/api/batch`; each file is submitted individually to `/api/process`. The hook then unifies polling across all returned `job_id`s using `/api/status/{job_id}`, aggregating progress until every job reaches a terminal state. No backend change is needed for mixed batches.
 - **Compose endpoint**: `POST /api/compose/{job_id}/{clip_index}` accepts `toggles` (smartcut/hook/subtitles booleans), `hook_params`, `subtitle_params`. Composes layers in order: Smart Cut → Hook → Subtitles. Returns `composed_url`. Cleans up intermediate files.
 - **Transcription cache**: `data/cache/` stores transcripts keyed by SHA256(url)[:16]. TTL 7 days, pruned by the background cleanup task.
 - **Hardware auto-detection**: CUDA/CPU fallback at runtime for faster-whisper and YOLOv8. No manual config needed.
@@ -186,16 +192,29 @@ Defined in `subtitles.py:SUBTITLE_PRESETS`. Six built-in presets:
 
 When using ASS karaoke, the `ass` FFmpeg filter is used with `fontsdir` pointing to the `fonts/` directory. For SRT the `subtitles` filter is used with adjustable `MarginV` (default 350, modified by `offset_y`).
 
-## Reframing Modes
+## Reframing Modes (overhauled)
 
-`analyze_scenes_strategy()` in `main.py` returns one of three modes per scene:
-- `TRACK`: single speaker, exponential easing (`diff * 0.08` per frame) via `SmoothedCameraman`
-- `WIDE`: 2+ faces detected → letterbox with blurred background (stable, no camera movement)
-- `GENERAL`: no faces detected → static letterbox framing
+`analyze_scenes_strategy()` samples **7 frames per scene** (was 3) and returns one of three modes:
+- `TRACK`: single speaker (≤1.0 avg faces) → active-speaker tracking via `SpeakerTracker` + `SmoothedCameraman`
+- `WIDE`: multi-speaker (max ≥2 and avg >1.0) → **also routed through `SpeakerTracker`** with longer cooldown (45 frames ≈ 1.5s) for interview/podcast switching. **No more letterbox-with-blurred-bg fallback.**
+- `GENERAL`: no faces seen anywhere in scene → letterbox via `create_general_frame()`
 
-Additionally, `--reframe-mode disabled` overrides all scenes to `DISABLED`: center-crops to 4:3 and adds black bars top/bottom.
+`--reframe-mode disabled` overrides all scenes to `DISABLED`: center-crops to 4:3 + black bars.
 
-`DetectionSmoother` applies a rolling average (window=5) on bounding boxes before feeding to `SmoothedCameraman`.
+### Active speaker detection (`SpeakerTracker`)
+Uses **mouth-aspect-ratio (MAR) variance** as the dominant signal. For each detected face the pipeline:
+1. Runs MediaPipe `FaceMesh` (max_num_faces=1) on the face ROI to extract mouth landmarks (13/14/78/308) → `compute_mouth_aspect_ratio()`
+2. Keeps a 1-second sliding window of MAR samples per speaker ID
+3. Combined score = `0.3 * face_size_norm + 1.0 * MAR_variance` — mouth motion dominates, so a small but speaking face beats a larger silent one
+4. Hysteresis: active speaker gets a 3.0× sticky bonus; switches require `cooldown_frames=45` to elapse
+
+### `SmoothedCameraman` (overhauled)
+- **Adaptive smoothing**: `SMOOTHING_SLOW=0.08` for small/medium moves, `SMOOTHING_FAST=0.30` when target is >60% of crop_width away (eliminates "software-glide" on speaker switches inside one scene)
+- **Y-axis tracking**: crop now follows faces vertically, not just horizontally — separate dead-band per axis
+- **Dynamic vertical zoom**: animates between 1.0× and 1.6× based on detected face height ratio (small face → tight zoom; large face → no zoom)
+- **YOLO person fallback**: when faces aren't detectable, the YOLO body bbox is used with `is_person_box=True` so the cameraman aims at the upper 15% (head zone) instead of the body center — fixes the "camera shows knees" bug
+
+`DetectionSmoother` still applies a rolling average (window=5) on bbox coordinates before feeding to `SpeakerTracker`. MAR is computed *after* smoothing on the smoothed bbox.
 
 ## Pipeline Post-processing (per clip)
 
