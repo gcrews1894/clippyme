@@ -6,9 +6,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ClippyMe is a self-hosted AI video platform that transforms long-form videos (YouTube or local uploads) into viral 9:16 vertical shorts. Fork of OpenShorts.
 
+## Repo layout (post-refactor)
+
+All Python backend code lives under `src/clippyme/` (src-layout, installed via `pip install -e .`):
+
+- `src/clippyme/api/` — FastAPI app (`app.py`), `schemas.py`, `security.py`
+- `src/clippyme/pipeline/` — `main.py` orchestrator, `deepgram_transcribe.py`, `gemini_parser.py`, `gemini_service.py`
+- `src/clippyme/domain/` — `compose.py`, `subtitle_pipeline.py`, `clip_endpoints.py`, `job_results.py`, `job_artifacts.py`, `job_worker.py`, `history_service.py`, `subtitles.py`, `smartcut.py`, `hooks.py`
+- `src/clippyme/integrations/` — `social_publisher.py`, `auto_editor_updater.py`
+- `src/clippyme/storage/` — `config_store.py`
+
+Run with `uvicorn clippyme.api.app:app` and the pipeline CLI as `python -m clippyme.pipeline.main`. The descriptions below reference the **logical module names** (e.g. `compose.py`); their on-disk path is `src/clippyme/<subpkg>/<file>`.
+
 ## Architecture
 
-- **Backend** (`app.py`, ~680 lines): Thin FastAPI layer — endpoint handlers + job queue + worker loop. Heavy logic lives in dedicated modules listed below. Config persistence, async job queue, batch processing.
+- **Backend** (`clippyme.api.app`): Thin FastAPI layer — endpoint handlers + job queue + worker loop. Heavy logic lives in dedicated modules listed below. Config persistence, async job queue, batch processing.
 - **Backend modules** (extracted from `app.py` during 8-round refactor):
   - `compose.py` — `compose_layers()` runs the Smart Cut → Hook → Subtitles pipeline for `/api/compose`. Owns intermediate-file cleanup.
   - `subtitle_pipeline.py` — `run_subtitle_pipeline()` + `resolve_clip_filename()` for `/api/subtitle` and `/api/hook`.
@@ -49,7 +61,7 @@ Config is persisted in `data/config.json` (git-ignored). Cookies in `data/cookie
 
 ## Post-hoc reframe switching
 
-After a job completes, every clip can be flipped between **`auto`** (face tracking) and **`disabled`** (4:3 + black bars) without re-running the entire pipeline. To enable this the clip generator (`main.py`) now **preserves the 16:9 source slice per clip** on disk as `source_<clip_filename>.mp4` (never deleted at the end of the pipeline). The new endpoint `POST /api/reframe/{job_id}/{clip_index}` spawns `python main.py --reframe-only -i <source> -o <target> --reframe-mode <mode>` which:
+After a job completes, every clip can be flipped between **`auto`** (face tracking) and **`disabled`** (4:3 + black bars) without re-running the entire pipeline. To enable this the clip generator (`main.py`) now **preserves the 16:9 source slice per clip** on disk as `source_<clip_filename>.mp4` (never deleted at the end of the pipeline). The new endpoint `POST /api/reframe/{job_id}/{clip_index}` spawns `python -m clippyme.pipeline.main --reframe-only -i <source> -o <target> --reframe-mode <mode>` which:
 1. Calls `process_video_to_vertical` with the new mode
 2. Re-runs `apply_subtle_zoom` (unless `--no-zoom`), `normalize_audio`, `select_cover_frame`
 3. Overwrites the same clip filename so all downstream references (subtitle/hook/compose) keep working
@@ -140,7 +152,8 @@ Backend: http://localhost:8000 | Frontend: http://localhost:5175
 ```
 # Backend
 pip install -r requirements.txt
-python -m uvicorn app:app --reload --host 0.0.0.0 --port 8000
+pip install -e .
+python -m uvicorn clippyme.api.app:app --reload --host 0.0.0.0 --port 8000
 
 # Frontend
 cd dashboard && npm install && npm run dev
@@ -186,7 +199,7 @@ Activates the pre-commit hook that blocks sensitive data (API keys, cookies, tok
 ## main.py CLI Args
 
 ```
-python main.py <url_or_path> [options]
+python -m clippyme.pipeline.main <url_or_path> [options]
   --instructions "focus on hooks"        # Directive injected into Gemini prompt
   --no-zoom                              # Disable Ken Burns auto-zoom (1.0→1.05x)
   --reframe-mode auto|disabled           # Auto face tracking or 4:3 crop with black bars

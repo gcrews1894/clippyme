@@ -11,9 +11,9 @@ from types import SimpleNamespace
 
 import pytest
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
-import social_publisher as sp  # noqa: E402
+from clippyme.integrations import social_publisher as sp  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

@@ -51,7 +51,8 @@ Open **http://localhost:5175**, enter your Gemini API key in **Settings**, and s
 ```bash
 # Backend
 pip install -r requirements.txt
-python -m uvicorn app:app --reload --host 0.0.0.0 --port 8000
+pip install -e .
+python -m uvicorn clippyme.api.app:app --reload --host 0.0.0.0 --port 8000
 
 # Frontend (separate terminal)
 cd dashboard && npm install && npm run dev
@@ -128,21 +129,32 @@ Input (URL or file)
 ## Architecture
 
 ```
-app.py              FastAPI server, job queue, endpoints (~680 lines)
-main.py             Pipeline: download → transcribe → detect → reframe → normalize
-deepgram_transcribe.py  Deepgram Nova-3 REST client (retry/backoff, keyterm prompting)
-compose.py          Smart Cut → Hook → Subtitles compose pipeline
-subtitle_pipeline.py Subtitle generation + burn helper
-clip_endpoints.py   Smart Cut + history restore endpoint helpers
-job_results.py      Worker loop result loaders + main.py command builder
-smartcut.py         Two-stage cut: filler-word + audio polish (auto-editor v3 timeline)
-auto_editor_updater.py  Background daily updater for the auto-editor binary
-social_publisher.py Zernio REST client + SmartScheduler + publish_clip orchestrator
-config_store.py     Persistent config (core keys + Zernio namespace)
-schemas.py          Pydantic request models
-security.py         Trusted-origin checks, job ID validation
-subtitles.py        ASS karaoke (6 presets) + SRT
-hooks.py            Text overlay with Pillow + NotoColorEmoji
+src/clippyme/
+  api/
+    app.py            FastAPI server, job queue, endpoints
+    schemas.py        Pydantic request models
+    security.py       Trusted-origin checks, job ID validation
+  pipeline/
+    main.py           Pipeline: download → transcribe → detect → reframe → normalize
+    deepgram_transcribe.py  Deepgram Nova-3 REST client (retry/backoff, keyterm prompting)
+    gemini_parser.py  5-level Gemini JSON parsing chain
+    gemini_service.py List available Gemini models
+  domain/
+    compose.py        Smart Cut → Hook → Subtitles compose pipeline
+    subtitle_pipeline.py  Subtitle generation + burn helper
+    clip_endpoints.py Smart Cut + history restore endpoint helpers
+    job_results.py    Worker loop result loaders + clippyme.pipeline.main command builder
+    job_artifacts.py  Filesystem helpers for job outputs
+    job_worker.py     Async queue workers + log enqueue
+    history_service.py  Job history scan + id validation
+    smartcut.py       Two-stage cut: filler-word + audio polish (auto-editor v3 timeline)
+    subtitles.py      ASS karaoke (6 presets) + SRT
+    hooks.py          Text overlay with Pillow + NotoColorEmoji
+  integrations/
+    social_publisher.py     Zernio REST client + SmartScheduler + publish_clip orchestrator
+    auto_editor_updater.py  Background daily updater for the auto-editor binary
+  storage/
+    config_store.py   Persistent config (core keys + Zernio namespace)
 
 dashboard/src/
   App.jsx                       Top-level orchestrator (~270 lines)
@@ -277,7 +289,7 @@ All three flags persist via `useClipStates(jobId)` → `localStorage` and surviv
 ## CLI
 
 ```bash
-python main.py <url_or_path> [options]
+python -m clippyme.pipeline.main <url_or_path> [options]
   --instructions "focus on hooks"        # Directive for Gemini
   --no-zoom                              # Disable Ken Burns auto-zoom
   --reframe-mode auto|disabled           # Auto tracking or 4:3 crop

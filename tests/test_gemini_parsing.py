@@ -14,12 +14,13 @@ import sys
 import pytest
 from pydantic import ValidationError
 
-# Make the repo root importable when pytest is run from anywhere.
+# Make the clippyme src layout importable when pytest is run from anywhere.
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if ROOT not in sys.path:
-    sys.path.insert(0, ROOT)
+SRC = os.path.join(ROOT, "src")
+if SRC not in sys.path:
+    sys.path.insert(0, SRC)
 
-from gemini_parser import (  # noqa: E402
+from clippyme.pipeline.gemini_parser import (  # noqa: E402
     JSON_DELIMITER,
     parse_gemini_response,
     validate_and_dedupe,

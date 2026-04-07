@@ -9,17 +9,19 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
 
-import app
-import editor
+from clippyme.api import app  # noqa: E402
+import editor  # noqa: E402,F401  # legacy import — module no longer exists, predates refactor
 
 
 class MainModuleSmokeTests(unittest.TestCase):
     def test_main_py_compiles(self):
-        source = (ROOT / "main.py").read_text(encoding="utf-8")
-        compile(source, str(ROOT / "main.py"), "exec")
+        main_path = SRC / "clippyme" / "pipeline" / "main.py"
+        source = main_path.read_text(encoding="utf-8")
+        compile(source, str(main_path), "exec")
 
 
 class ConfigPersistenceTests(unittest.TestCase):

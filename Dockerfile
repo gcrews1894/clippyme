@@ -110,9 +110,15 @@ RUN python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')"
 
 COPY --chown=appuser:appuser . .
 
+# Install the clippyme package itself (src-layout) so that
+# `python -m clippyme.pipeline.main` and `uvicorn clippyme.api.app:app` resolve.
+USER root
+RUN pip install --no-cache-dir -e .
+USER appuser
+
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
   CMD curl http://localhost:8000/ || exit 1
 
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "clippyme.api.app:app", "--host", "0.0.0.0", "--port", "8000"]
