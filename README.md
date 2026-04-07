@@ -244,18 +244,15 @@ python main.py <url_or_path> [options]
   --reframe-mode auto|disabled           # Auto tracking or 4:3 crop
 ```
 
-## Security
+## Privacy &amp; Security
 
-- Pre-commit hook blocks API keys, tokens, and cookie data from being committed
-- `.gitignore` covers `data/`, cookies, `.env`, `tmp/`, and all output directories
-- Zernio API key is only ever returned to the UI in masked form (`{prefix}...{suffix}`)
-- Job IDs validated with strict regex to prevent path traversal
-- Config endpoints require trusted origin / private network client
-- Containers run as non-root users
-- The Whisper transcription cache is namespaced by URL hash and pruned automatically
+ClippyMe is fully self-hosted — your videos, transcripts, and API keys never leave your machine.
 
-> [!IMPORTANT]
-> After cloning, activate the pre-commit hook: `git config core.hooksPath .githooks`
+- **No `.env` file, no cloud sync.** All API keys are entered through the Settings UI and saved to a local `data/config.json` that's automatically excluded from git.
+- **Zernio API key is never shown in full** after you save it — the UI only displays a masked preview (`sk_12ab...c9d0`).
+- **Backend runs as a non-root user** inside the Docker container.
+- **No telemetry.** ClippyMe doesn't phone home, doesn't track usage, and doesn't upload your videos anywhere except the social platforms *you* explicitly choose via the Publish button.
+- Your downloaded videos, generated clips, and transcription cache stay in local folders (`uploads/`, `output/`, `data/cache/`) that you can wipe at any time.
 
 ## CPU / Apple Silicon
 
