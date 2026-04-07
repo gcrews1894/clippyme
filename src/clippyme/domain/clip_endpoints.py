@@ -7,7 +7,7 @@ import os
 
 from fastapi import HTTPException
 
-from smartcut import smart_cut
+from clippyme.domain.smartcut import smart_cut
 
 logger = logging.getLogger(__name__)
 

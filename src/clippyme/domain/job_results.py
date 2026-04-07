@@ -14,7 +14,7 @@ def build_main_cmd(
     cookies_path: str | None = None,
 ) -> list[str]:
     """Build a `python -u main.py ...` command line for a single processing job."""
-    cmd = ["python", "-u", "main.py"]
+    cmd = ["python", "-u", "-m", "clippyme.pipeline.main"]
     if url:
         cmd.extend(["-u", url])
         if cookies_path and os.path.exists(cookies_path):

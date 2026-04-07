@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from subtitles import (
+from clippyme.domain.subtitles import (
     generate_srt,
     generate_ass_karaoke,
     burn_subtitles,

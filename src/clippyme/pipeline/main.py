@@ -1316,7 +1316,7 @@ def transcribe_video(video_path):
     provider = (os.getenv("TRANSCRIPTION_PROVIDER") or "deepgram").strip().lower()
     if provider == "deepgram":
         try:
-            from deepgram_transcribe import transcribe_with_deepgram, DeepgramError
+            from clippyme.pipeline.deepgram_transcribe import transcribe_with_deepgram, DeepgramError
             return transcribe_with_deepgram(video_path)
         except Exception as exc:  # noqa: BLE001 — broad catch for safe fallback
             print(f"⚠️  Deepgram transcription failed ({exc}); falling back to Faster-Whisper.")
@@ -1462,7 +1462,7 @@ def get_viral_clips(transcript_result, video_duration, instructions=None):
     # Parse response JSON via the 5-level chain in gemini_parser.
     # See CLAUDE.md section "Gemini viral detection — parsing chain".
     try:
-        from gemini_parser import parse_gemini_response, validate_and_dedupe
+        from clippyme.pipeline.gemini_parser import parse_gemini_response, validate_and_dedupe
         from pydantic import ValidationError
 
         text = response.text or ""

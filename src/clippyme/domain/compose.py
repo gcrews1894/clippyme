@@ -10,8 +10,8 @@ import shutil
 
 from fastapi import HTTPException
 
-from smartcut import smart_cut
-from subtitles import generate_ass_karaoke, generate_srt, burn_subtitles
+from clippyme.domain.smartcut import smart_cut
+from clippyme.domain.subtitles import generate_ass_karaoke, generate_srt, burn_subtitles
 
 
 _SIZE_MAP = {"S": 0.8, "M": 1.0, "L": 1.3}
@@ -44,7 +44,7 @@ async def _apply_hook(
     hook_params: dict,
     intermediate_files: list,
 ) -> str:
-    from hooks import add_hook_to_video
+    from clippyme.domain.hooks import add_hook_to_video
 
     hook_output = os.path.join(job_dir, f"composed_hook_{clip_index}.mp4")
     intermediate_files.append(hook_output)

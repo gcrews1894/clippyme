@@ -25,11 +25,11 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
-from job_results import load_partial_result, load_final_result, build_main_cmd
-from compose import compose_layers
-from subtitle_pipeline import resolve_clip_filename, run_subtitle_pipeline
-from clip_endpoints import run_smart_cut, restore_job_from_disk
-from schemas import (
+from clippyme.domain.job_results import load_partial_result, load_final_result, build_main_cmd
+from clippyme.domain.compose import compose_layers
+from clippyme.domain.subtitle_pipeline import resolve_clip_filename, run_subtitle_pipeline
+from clippyme.domain.clip_endpoints import run_smart_cut, restore_job_from_disk
+from clippyme.api.schemas import (
     BatchRequest,
     ComposeRequest,
     ConfigUpdateRequest,
@@ -40,14 +40,14 @@ from schemas import (
     SubtitleRequest,
     ZernioConfigRequest,
 )
-from security import (
+from clippyme.api.security import (
     ALLOWED_ORIGINS,
     is_trusted_client_host,
     is_trusted_origin,
     parse_allowed_origins,
     require_trusted_config_request,
 )
-from config_store import (
+from clippyme.storage.config_store import (
     CONFIG_FILE,
     VALID_CONFIG_KEYS,
     load_persistent_config,
@@ -56,14 +56,14 @@ from config_store import (
     save_zernio_config,
     zernio_config_status,
 )
-from job_artifacts import (
+from clippyme.domain.job_artifacts import (
     relocate_root_job_artifacts,
     load_job_metadata,
     save_job_metadata,
 )
-from job_worker import make_workers, enqueue_output
-from gemini_service import list_available_models
-from history_service import scan_history, is_valid_job_id
+from clippyme.domain.job_worker import make_workers, enqueue_output
+from clippyme.pipeline.gemini_service import list_available_models
+from clippyme.domain.history_service import scan_history, is_valid_job_id
 
 load_dotenv()
 
@@ -110,7 +110,7 @@ async def lifespan(app: FastAPI):
     cleanup_task = asyncio.create_task(cleanup_jobs())
     # Background auto-update for the auto-editor binary used by smartcut.py.
     # Failures are non-fatal — smartcut has an FFmpeg fallback path.
-    from auto_editor_updater import background_updater_loop
+    from clippyme.integrations.auto_editor_updater import background_updater_loop
     ae_updater_task = asyncio.create_task(background_updater_loop())
     yield
     ae_updater_task.cancel()
@@ -461,9 +461,9 @@ async def delete_cookies():
         os.remove(cookies_path)
     return {"status": "ok", "message": "Cookies removed"}
 
-from subtitles import generate_srt, burn_subtitles, generate_srt_from_video, generate_ass_karaoke, SUBTITLE_PRESETS
-from smartcut import smart_cut
-from hooks import add_hook_to_video
+from clippyme.domain.subtitles import generate_srt, burn_subtitles, generate_srt_from_video, generate_ass_karaoke, SUBTITLE_PRESETS
+from clippyme.domain.smartcut import smart_cut
+from clippyme.domain.hooks import add_hook_to_video
 
 @app.post("/api/subtitle")
 async def add_subtitles(req: SubtitleRequest):
@@ -606,7 +606,8 @@ async def reframe_clip(job_id: str, clip_index: int, req: ReframeRequest):
 
     cmd = [
         sys.executable,
-        "main.py",
+        "-m",
+        "clippyme.pipeline.main",
         "--reframe-only",
         "-i", source_path,
         "-o", target_path,
@@ -825,7 +826,7 @@ async def list_zernio_accounts(request: Request):
     api_key = cfg.get("api_key")
     if not api_key:
         raise HTTPException(status_code=400, detail="Zernio API key not configured")
-    from social_publisher import ZernioClient, ZernioError
+    from clippyme.integrations.social_publisher import ZernioClient, ZernioError
     try:
         client = ZernioClient(api_key)
         accounts = client.list_accounts()
@@ -897,7 +898,7 @@ async def publish_clip_endpoint(job_id: str, clip_index: int, req: PublishReques
         raise HTTPException(status_code=404, detail=f"Clip file not found: {upload_path}")
 
     # Run the publish in a worker thread (presign + PUT + create are blocking)
-    from social_publisher import publish_clip, ZernioError
+    from clippyme.integrations.social_publisher import publish_clip, ZernioError
     try:
         result = await asyncio.to_thread(
             publish_clip,

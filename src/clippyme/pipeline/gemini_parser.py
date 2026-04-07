@@ -32,7 +32,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from pydantic import ValidationError
 
-from schemas import ViralClipsResponse
+from clippyme.api.schemas import ViralClipsResponse
 
 logger = logging.getLogger(__name__)
 
