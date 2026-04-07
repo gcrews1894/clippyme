@@ -52,6 +52,7 @@ from job_artifacts import (
 )
 from job_worker import make_workers, enqueue_output
 from gemini_service import list_available_models
+from history_service import scan_history, is_valid_job_id
 
 load_dotenv()
 
@@ -736,58 +737,15 @@ async def add_hook(req: HookRequest):
     }
 
 
-import re as _re
-
 @app.get("/api/history")
 async def list_history():
     """Scan output/ for past jobs with metadata files."""
-    results = []
-    try:
-        for entry in os.listdir(OUTPUT_DIR):
-            job_dir = os.path.join(OUTPUT_DIR, entry)
-            if not os.path.isdir(job_dir) or not _re.match(r'^[0-9a-fA-F-]{36}$', entry):
-                continue
-            meta_files = glob.glob(os.path.join(job_dir, "*_metadata.json"))
-            if not meta_files:
-                continue
-            try:
-                with open(meta_files[0], 'r') as f:
-                    data = json.load(f)
-                clips = data.get('shorts', [])
-                clip_files = []
-                for i, clip in enumerate(clips):
-                    clip_filename = clip.get('video_url', '').split('/')[-1]
-                    if not clip_filename:
-                        base_name = os.path.basename(meta_files[0]).replace('_metadata.json', '')
-                        clip_filename = f"{base_name}_clip_{i+1}.mp4"
-                    clip_path = os.path.join(job_dir, clip_filename)
-                    if os.path.exists(clip_path):
-                        clip_files.append({
-                            "video_url": f"/videos/{entry}/{clip_filename}",
-                            "title": clip.get('video_title_for_youtube_short', ''),
-                            "start": clip.get('start', 0),
-                            "end": clip.get('end', 0),
-                        })
-                dir_mtime = os.path.getmtime(job_dir)
-                results.append({
-                    "jobId": entry,
-                    "timestamp": int(dir_mtime * 1000),
-                    "clipCount": len(clip_files),
-                    "clips": clip_files,
-                    "cost": data.get('cost_analysis', {}).get('total_cost') if data.get('cost_analysis') else None,
-                    "source": os.path.basename(meta_files[0]).replace('_metadata.json', '').replace('_', ' '),
-                })
-            except Exception:
-                continue
-    except Exception as e:
-        logger.warning("Error scanning history: %s", e)
-    results.sort(key=lambda x: x['timestamp'], reverse=True)
-    return {"jobs": results}
+    return {"jobs": scan_history(OUTPUT_DIR)}
 
 @app.delete("/api/history/{job_id}")
 async def delete_history(job_id: str):
     """Delete a job's output directory and all its files."""
-    if not _re.match(r'^[0-9a-fA-F-]{36}$', job_id):
+    if not is_valid_job_id(job_id):
         raise HTTPException(status_code=400, detail="Invalid job ID")
     job_dir = os.path.join(OUTPUT_DIR, job_id)
     if not os.path.isdir(job_dir):
@@ -801,7 +759,7 @@ async def delete_history(job_id: str):
 @app.post("/api/compose/{job_id}/{clip_index}")
 async def compose_clip(job_id: str, clip_index: int, req: ComposeRequest):
     """Compose a final video from active toggle layers (Smart Cut → Hook → Subtitles)."""
-    if not _re.match(r'^[0-9a-fA-F-]{36}$', job_id):
+    if not is_valid_job_id(job_id):
         raise HTTPException(status_code=400, detail="Invalid job ID")
 
     job_dir = os.path.join(OUTPUT_DIR, job_id)
@@ -958,7 +916,7 @@ async def compose_clip(job_id: str, clip_index: int, req: ComposeRequest):
 @app.post("/api/history/{job_id}/restore")
 async def restore_job(job_id: str):
     """Restore a past job into the in-memory jobs dict so edit/hook/subtitle endpoints work."""
-    if not _re.match(r'^[0-9a-fA-F-]{36}$', job_id):
+    if not is_valid_job_id(job_id):
         raise HTTPException(status_code=400, detail="Invalid job ID")
     job_dir = os.path.join(OUTPUT_DIR, job_id)
     if not os.path.isdir(job_dir):
