@@ -1,0 +1,207 @@
+"""Robust parser for Gemini viral-moment JSON responses.
+
+Implements a 5-level fallback chain designed to make the clip-detection
+pipeline resilient to the kinds of malformations Gemini occasionally
+produces (stray backslashes, smart quotes, code fences, reasoning
+prose mixed with the JSON body, trailing commas, etc.):
+
+    1. strict   - json.loads on the section after the ``### JSON ###``
+                  delimiter (or on the full text if absent).
+    2. clean    - deterministic cleanup pass (smart quotes, trailing
+                  commas, lone backslashes, control chars) then retry.
+    3. json_repair - delegate to the ``json_repair`` library if
+                  installed.
+    4. retry    - one additional round-trip to Gemini with the decoder
+                  error as context, asking it to emit JSON only.
+    5. fallback - give up, return ``ParseResult.data = None`` so the
+                  caller can degrade gracefully (whole-video mode).
+
+Post-parse, ``validate_and_dedupe`` runs the result through the
+``ViralClipsResponse`` Pydantic model and removes clips whose time
+ranges overlap more than ``overlap_threshold`` (IoU) with a
+higher-scoring neighbour.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import re
+import time
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, List, Optional
+
+from pydantic import ValidationError
+
+from schemas import ViralClipsResponse
+
+logger = logging.getLogger(__name__)
+
+JSON_DELIMITER = "### JSON ###"
+
+_CODE_FENCE_OPEN = re.compile(r"^\s*```(?:json)?\s*", re.IGNORECASE)
+_CODE_FENCE_CLOSE = re.compile(r"\s*```\s*$")
+_TRAILING_COMMA = re.compile(r",(\s*[}\]])")
+_LONE_BACKSLASH = re.compile(r'\\(?!["\\/bfnrtu])')
+_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+
+@dataclass
+class ParseResult:
+    """Outcome of ``parse_gemini_response``.
+
+    ``parse_path`` tells downstream logging which level of the chain
+    succeeded (or ``"fallback"`` if every level failed).
+    """
+    data: Optional[Dict[str, Any]]
+    parse_path: str  # strict | clean | json_repair | retry | fallback
+    duration_ms: float
+    error: Optional[str] = None
+
+
+def _extract_json_section(text: str) -> str:
+    """Isolate the JSON body from reasoning + code fences.
+
+    If the ``### JSON ###`` delimiter is present, everything before it
+    (including chain-of-thought reasoning) is discarded. Then any
+    ``` ```json ... ``` ``` fence is stripped defensively so the rest
+    of the pipeline sees raw JSON whatever the model emits.
+    """
+    if JSON_DELIMITER in text:
+        text = text.split(JSON_DELIMITER, 1)[1]
+    text = _CODE_FENCE_OPEN.sub("", text)
+    text = _CODE_FENCE_CLOSE.sub("", text)
+    return text.strip()
+
+
+def _clean_json(raw: str) -> str:
+    """Deterministic JSON repair for the most common Gemini mistakes.
+
+    * curly/smart quotes -> straight ASCII quotes
+    * trailing comma before ``}``/``]`` -> removed
+    * lone backslash not part of a valid escape -> doubled
+    * ASCII control chars (except ``\\n \\r \\t``) -> stripped
+    """
+    raw = (
+        raw.replace("\u201c", '"')
+        .replace("\u201d", '"')
+        .replace("\u2018", "'")
+        .replace("\u2019", "'")
+    )
+    raw = _TRAILING_COMMA.sub(r"\1", raw)
+    raw = _LONE_BACKSLASH.sub(r"\\\\", raw)
+    raw = _CONTROL_CHARS.sub("", raw)
+    return raw
+
+
+def parse_gemini_response(
+    text: str,
+    retry_fn: Optional[Callable[[str], str]] = None,
+    request_id: str = "",
+) -> ParseResult:
+    """Run the 5-level parsing chain on a Gemini response.
+
+    Parameters
+    ----------
+    text:
+        The raw text returned by ``response.text`` from the
+        google-genai SDK.
+    retry_fn:
+        Optional callable that takes the last decoder error message
+        and returns a fresh Gemini response (as text) for one retry.
+        Pass ``None`` to disable level 4.
+    request_id:
+        Opaque ID to correlate logs across the parse chain.
+    """
+    t0 = time.time()
+    section = _extract_json_section(text)
+
+    # Level 1: strict ------------------------------------------------
+    try:
+        data = json.loads(section)
+        return ParseResult(data, "strict", (time.time() - t0) * 1000)
+    except json.JSONDecodeError as e1:
+        strict_err = f"{e1.msg}: line {e1.lineno} col {e1.colno}"
+
+    # Level 2: deterministic clean ----------------------------------
+    cleaned = _clean_json(section)
+    try:
+        data = json.loads(cleaned)
+        return ParseResult(data, "clean", (time.time() - t0) * 1000)
+    except json.JSONDecodeError:
+        pass
+
+    # Level 3: json_repair library ----------------------------------
+    try:
+        from json_repair import repair_json  # type: ignore
+
+        data = json.loads(repair_json(section))
+        return ParseResult(data, "json_repair", (time.time() - t0) * 1000)
+    except Exception:  # pragma: no cover - json_repair may be missing
+        pass
+
+    # Level 4: one retry with error context -------------------------
+    if retry_fn is not None:
+        try:
+            retry_text = retry_fn(strict_err)
+            retry_section = _extract_json_section(retry_text)
+            data = json.loads(_clean_json(retry_section))
+            return ParseResult(data, "retry", (time.time() - t0) * 1000)
+        except Exception as e:
+            return ParseResult(
+                None,
+                "fallback",
+                (time.time() - t0) * 1000,
+                f"retry failed: {e}; original: {strict_err}",
+            )
+
+    return ParseResult(None, "fallback", (time.time() - t0) * 1000, strict_err)
+
+
+def validate_and_dedupe(
+    data: Dict[str, Any],
+    video_duration: Optional[float] = None,
+    overlap_threshold: float = 0.7,
+) -> List[Dict[str, Any]]:
+    """Pydantic-validate then remove overlapping clips.
+
+    Clips are sorted by ``viral_score`` desc; for each candidate, if
+    its intersection-over-union with any already-kept clip exceeds
+    ``overlap_threshold`` it's dropped. When ``video_duration`` is
+    given, clips whose ``end`` exceeds it are also dropped.
+
+    Raises
+    ------
+    pydantic.ValidationError
+        If the top-level response does not match ``ViralClipsResponse``
+        or any individual clip fails its validators (duration out of
+        range, missing viral_reason, etc.).
+    """
+    parsed = ViralClipsResponse.model_validate(data)
+
+    candidates = list(parsed.shorts)
+    if video_duration is not None:
+        candidates = [c for c in candidates if c.end <= video_duration + 0.5]
+
+    candidates.sort(key=lambda c: -c.viral_score)
+
+    kept: List = []
+    for clip in candidates:
+        overlaps = False
+        for k in kept:
+            inter = max(0.0, min(clip.end, k.end) - max(clip.start, k.start))
+            union = max(clip.end, k.end) - min(clip.start, k.start)
+            if union > 0 and (inter / union) > overlap_threshold:
+                overlaps = True
+                break
+        if not overlaps:
+            kept.append(clip)
+
+    return [c.model_dump() for c in kept]
+
+
+__all__ = [
+    "JSON_DELIMITER",
+    "ParseResult",
+    "parse_gemini_response",
+    "validate_and_dedupe",
+]

@@ -1,7 +1,7 @@
 """Pydantic request schemas for the ClippyMe FastAPI app."""
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class ProcessRequest(BaseModel):
@@ -90,6 +90,42 @@ class PublishRequest(BaseModel):
     toggles: Optional[dict] = None
     hook_params: Optional[dict] = None
     subtitle_params: Optional[dict] = None
+
+
+class ViralClip(BaseModel):
+    """A single viral clip candidate emitted by Gemini and validated
+    before it's handed to the reframing pipeline.
+
+    Duration bounds are deliberately a bit wider than the user-facing
+    15-60s target (10-75s) so we don't throw away near-misses that the
+    Smart Cut post-processing can still rescue.
+    """
+    start: float = Field(..., ge=0)
+    end: float = Field(..., gt=0)
+    viral_score: int = Field(..., ge=1, le=100)
+    viral_reason: str = Field(..., min_length=20)
+    video_description_for_tiktok: str = ""
+    video_description_for_instagram: str = ""
+    video_title_for_youtube_short: str = Field("", max_length=120)
+    viral_hook_text: str = Field("", max_length=160)
+
+    @field_validator("end")
+    @classmethod
+    def _duration_in_range(cls, v: float, info) -> float:
+        start = info.data.get("start", 0.0) or 0.0
+        if v <= start:
+            raise ValueError(f"end ({v}) must be strictly greater than start ({start})")
+        duration = v - start
+        if duration < 10 or duration > 75:
+            raise ValueError(
+                f"clip duration {duration:.2f}s outside allowed range [10, 75]"
+            )
+        return v
+
+
+class ViralClipsResponse(BaseModel):
+    """Top-level response shape from the Gemini viral-moment prompt."""
+    shorts: List[ViralClip] = Field(..., min_length=0, max_length=20)
 
 
 class ZernioConfigRequest(BaseModel):

@@ -122,17 +122,45 @@ MODEL_PRICING = {
 }
 
 GEMINI_PROMPT_TEMPLATE = """
-You are a senior short-form video editor. Read the ENTIRE transcript and word-level timestamps to choose the 3–15 MOST VIRAL moments for TikTok/IG Reels/YouTube Shorts. Each clip must be between 15 and 60 seconds long.
+You are a senior short-form video editor specialized in TikTok, IG Reels and YouTube Shorts virality. Read the ENTIRE transcript + word-level timestamps and select the 3–15 MOST VIRAL 15–60s moments.
 
-⚠️ FFMPEG TIME CONTRACT — STRICT REQUIREMENTS:
-- Return timestamps in ABSOLUTE SECONDS from the start of the video (usable in: ffmpeg -ss <start> -to <end> -i <input> ...).
-- Only NUMBERS with decimal point, up to 3 decimals (examples: 0, 1.250, 17.350).
-- Ensure 0 ≤ start < end ≤ VIDEO_DURATION_SECONDS.
-- Each clip between 15 and 60 s (inclusive).
-- Prefer starting 0.2–0.4 s BEFORE the hook and ending 0.2–0.4 s AFTER the payoff.
-- Use silence moments for natural cuts; never cut in the middle of a word or phrase.
-- STRICTLY FORBIDDEN to use time formats other than absolute seconds.
+## VIRAL_SCORE RUBRIC (1–100)
+Score each axis from 1 to 20 and sum (cap at 100):
+- HOOK_STRENGTH: do the first 2s grab attention? (pattern-break, bold claim, surprise)
+- EMOTIONAL_PAYOFF: joy / shock / awe / rage / curiosity delivered?
+- QUOTABILITY: is there a line viewers would screenshot or repeat?
+- SELF_CONTAINED: makes sense without context from the rest of the video?
+- DENSITY: no dead air, no rambling, every second earns its place.
 
+## HARD CONSTRAINTS (violating = clip REJECTED)
+- 15s ≤ duration ≤ 60s
+- start on a complete sentence boundary; end on a natural beat
+- no cold-open ambiguity ("...and then she said" with no setup)
+- 0 ≤ start < end ≤ VIDEO_DURATION_SECONDS
+- Only ABSOLUTE SECONDS with up to 3 decimals (e.g. 12.340)
+- Prefer starting 0.2–0.4s BEFORE the hook and ending 0.2–0.4s AFTER the payoff
+- Never cut in the middle of a word or phrase
+- viral_reason MUST be at least 20 characters and cite the specific hook, payoff or quote
+- No generic intros/outros or pure sponsorship unless they ARE the hook
+
+## LANGUAGE RULE
+Every text field (viral_reason, descriptions, titles, hook_text) MUST be in the SAME LANGUAGE as the transcript.
+
+## FEW-SHOT EXAMPLES
+GOOD (score 87):
+  start=12.340 end=37.900
+  viral_reason="Opens with 'Everyone lies about this' — pattern-break hook, then delivers a counter-intuitive reveal with a clean payoff line at 34s viewers will quote."
+  viral_hook_text="Everyone lies about this"
+
+GOOD (score 78):
+  start=102.500 end=148.200
+  viral_reason="Builds tension with three failed attempts then lands a punchline at 140s — classic rule-of-three payoff structure perfect for Reels."
+  viral_hook_text="I tried 3 times before this worked"
+
+BAD (would score ~30 — DO NOT emit anything like this):
+  viral_reason="Interesting point about the topic"   ← too generic, no hook, no payoff specified
+
+## VIDEO METADATA
 VIDEO_DURATION_SECONDS: {video_duration}
 
 TRANSCRIPT_TEXT (raw):
@@ -141,24 +169,33 @@ TRANSCRIPT_TEXT (raw):
 WORDS_JSON (array of {{w, s, e}} where s/e are seconds):
 {words_json}
 
-STRICT EXCLUSIONS:
-- No generic intros/outros or purely sponsorship segments unless they contain the hook.
-- No clips < 15 s or > 60 s.
-
 {user_instructions_block}
 
-OUTPUT — RETURN ONLY VALID JSON (no markdown, no comments). Order clips by predicted performance (best to worst). In the descriptions, ALWAYS include a CTA like "Follow me and comment X and I'll send you the workflow" (especially if discussing an n8n workflow):
+## OUTPUT CONTRACT (READ CAREFULLY)
+1. First think step-by-step internally about candidate moments.
+2. Then, on its own line, emit the LITERAL delimiter `### JSON ###`.
+3. Then emit ONLY the JSON object — no markdown, no code fences, no prose after.
+
+JSON formatting rules (violating = parse failure):
+- Escape every backslash as \\\\ inside strings
+- Use straight double quotes " only — NO curly/smart quotes
+- No trailing commas before } or ]
+- Strings stay on a single line (no raw \\n mid-string)
+- In the descriptions, ALWAYS include a CTA like "Follow me and comment X and I'll send you the workflow"
+
+Output schema:
+### JSON ###
 {{
   "shorts": [
     {{
-      "start": <number in seconds, e.g., 12.340>,
-      "end": <number in seconds, e.g., 37.900>,
-      "viral_score": <integer 0-100, predicted viral performance>,
-      "viral_reason": "<1 sentence explaining WHY this clip is viral, in the SAME LANGUAGE as the transcript>",
-      "video_description_for_tiktok": "<description for TikTok oriented to get views>",
-      "video_description_for_instagram": "<description for Instagram oriented to get views>",
-      "video_title_for_youtube_short": "<title for YouTube Short oriented to get views 100 chars max>",
-      "viral_hook_text": "<SHORT punchy text overlay (max 10 words). MUST BE IN THE SAME LANGUAGE AS THE VIDEO TRANSCRIPT. Examples: 'POV: You realized...', 'Did you know?', 'Stop doing this!'>"
+      "start": 12.340,
+      "end": 37.900,
+      "viral_score": 87,
+      "viral_reason": "<>=20 chars, cite specific hook/payoff/quote, same language as transcript>",
+      "video_description_for_tiktok": "<TikTok description with CTA>",
+      "video_description_for_instagram": "<Instagram description with CTA>",
+      "video_title_for_youtube_short": "<max 100 chars>",
+      "viral_hook_text": "<max 10 words, same language as transcript>"
     }}
   ]
 }}
@@ -1422,73 +1459,75 @@ def get_viral_clips(transcript_result, video_duration, instructions=None):
     except Exception as e:
         print(f"⚠️ Could not calculate cost: {e}")
 
-    # Parse response JSON
+    # Parse response JSON via the 5-level chain in gemini_parser.
+    # See CLAUDE.md section "Gemini viral detection — parsing chain".
     try:
-        text = response.text
-        if text.startswith("```json"):
-            text = text[7:]
-        if text.endswith("```"):
-            text = text[:-3]
-        text = text.strip()
+        from gemini_parser import parse_gemini_response, validate_and_dedupe
+        from pydantic import ValidationError
 
-        def _repair_gemini_json(raw: str) -> str:
-            # Escape lone backslashes that aren't part of a valid JSON escape
-            # (\" \\ \/ \b \f \n \r \t \uXXXX). Gemini frequently emits \$, \ ,
-            # etc. inside string values which json.loads rejects.
-            raw = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', raw)
-            # Strip ASCII control chars inside the document (except \n\r\t)
-            raw = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', raw)
-            return raw
+        text = response.text or ""
+
+        def _retry_gemini(err_msg: str) -> str:
+            """Level-4 retry: ask Gemini to re-emit JSON only.
+
+            Uses the same ``client.models.generate_content`` call shape
+            as the primary request so it works with the google-genai
+            SDK used by the rest of this module.
+            """
+            retry_prompt = (
+                f"{prompt}\n\n"
+                f"PREVIOUS_RESPONSE_WAS_INVALID_JSON: {err_msg}\n"
+                f"Return ONLY the JSON object after the `### JSON ###` delimiter, "
+                f"no prose, no markdown, no code fences. Match the schema exactly."
+            )
+            try:
+                retry_resp = client.models.generate_content(
+                    model=model_name,
+                    contents=retry_prompt,
+                )
+                return retry_resp.text or ""
+            except Exception as e:
+                print(f"⚠️  Gemini retry failed: {e}")
+                return ""
+
+        parse_result = parse_gemini_response(
+            text,
+            retry_fn=_retry_gemini,
+            request_id=os.urandom(4).hex(),
+        )
+
+        # Structured log line for observability.
+        print(
+            f"📊 gemini_parse path={parse_result.parse_path} "
+            f"duration_ms={parse_result.duration_ms:.1f} "
+            f"error={parse_result.error or 'none'}"
+        )
+
+        if parse_result.data is None:
+            print(f"❌ Failed to parse Gemini response: {parse_result.error}")
+            return None
 
         try:
-            result_json = json.loads(text)
-        except json.JSONDecodeError as first_err:
-            print(f"⚠️  Initial JSON parse failed ({first_err}); attempting repair…")
-            repaired = _repair_gemini_json(text)
-            try:
-                result_json = json.loads(repaired)
-                print("✅ Recovered Gemini JSON after escape repair")
-            except json.JSONDecodeError:
-                # Last resort: json-repair library if installed
-                try:
-                    from json_repair import repair_json  # type: ignore
-                    result_json = json.loads(repair_json(text))
-                    print("✅ Recovered Gemini JSON via json_repair fallback")
-                except Exception:
-                    raise first_err
+            clips = validate_and_dedupe(
+                parse_result.data,
+                video_duration=video_duration,
+                overlap_threshold=0.7,
+            )
+        except ValidationError as e:
+            print(f"❌ Pydantic validation failed: {e}")
+            return None
 
-        # Validate clips schema
-        if 'shorts' in result_json and isinstance(result_json['shorts'], list):
-            valid_clips = []
-            for i, clip in enumerate(result_json['shorts']):
-                if not isinstance(clip, dict):
-                    print(f"⚠️  Skipping clip {i+1}: not a dict")
-                    continue
-                if 'start' not in clip or 'end' not in clip:
-                    print(f"⚠️  Skipping clip {i+1}: missing start/end")
-                    continue
-                try:
-                    clip['start'] = float(clip['start'])
-                    clip['end'] = float(clip['end'])
-                except (ValueError, TypeError):
-                    print(f"⚠️  Skipping clip {i+1}: start/end not numeric")
-                    continue
-                if clip['end'] <= clip['start'] or clip['end'] - clip['start'] < 15:
-                    print(f"⚠️  Skipping clip {i+1}: invalid duration {clip['end'] - clip['start']:.1f}s ({clip['start']}-{clip['end']})")
-                    continue
-                valid_clips.append(clip)
-            result_json['shorts'] = valid_clips
-            if not valid_clips:
-                print("❌ No valid clips found after validation")
-                return None
-            if len(valid_clips) < len(result_json.get('shorts', [])):
-                print(f"⚠️  {len(result_json['shorts'])} clips passed validation out of {len(result_json['shorts']) + (len(result_json['shorts']) - len(valid_clips))}")
+        if not clips:
+            print("❌ No valid clips after Pydantic validation + dedupe")
+            return None
 
+        print(f"✅ {len(clips)} clips passed validation + dedupe")
+        result_json = {"shorts": clips}
         if cost_analysis:
-            result_json['cost_analysis'] = cost_analysis
+            result_json["cost_analysis"] = cost_analysis
         return result_json
-    except (json.JSONDecodeError, AttributeError) as e:
-        print(f"❌ Failed to parse Gemini response: {e}")
+    except Exception as e:
+        print(f"❌ Unexpected error in Gemini response processing: {e}")
         return None
 
 if __name__ == '__main__':

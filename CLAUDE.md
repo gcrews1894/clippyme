@@ -327,6 +327,38 @@ Clips can be published/scheduled directly to TikTok, Instagram and YouTube from 
 
 - **Security note**: the reference script shared by the user lives in `tmp/` and contains a real API key in plaintext. **`tmp/` is gitignored** via `.gitignore` — never commit anything from that directory.
 
+## Gemini viral detection — parsing chain
+
+Gemini occasionally emits JSON the strict `json.loads` decoder rejects: stray backslashes (e.g. `\w+` inside a regex example), curly/smart quotes, trailing commas, code fences, or chain-of-thought reasoning prepended to the JSON body. A single failure used to cascade into "fallback to whole-video conversion" — an entire job lost.
+
+The viral-clip parser now lives in `gemini_parser.py` and applies a **5-level fallback chain**:
+
+| Level | Name | What it does |
+|---|---|---|
+| 1 | `strict` | Extract the section after the literal `### JSON ###` delimiter (or the whole text if absent), strip code fences, `json.loads`. |
+| 2 | `clean` | Deterministic cleanup: smart-quotes → straight quotes, trailing commas removed, lone backslashes doubled, ASCII control chars stripped. Retry `json.loads`. |
+| 3 | `json_repair` | Delegate to the [`json_repair`](https://pypi.org/project/json-repair/) library (now in `requirements.txt`). |
+| 4 | `retry` | ONE round-trip back to Gemini with the decoder error as context: "Your previous response was not valid JSON: <err>. Return ONLY the JSON object after the `### JSON ###` delimiter…" |
+| 5 | `fallback` | All levels failed → return `None`, caller degrades to whole-video mode. |
+
+The new prompt in `main.py:GEMINI_PROMPT_TEMPLATE` co-operates with the parser:
+- Chain-of-thought is emitted BEFORE a literal `### JSON ###` delimiter, so reasoning never contaminates the JSON body.
+- Explicit formatting rules: straight quotes only, no trailing commas, escape every backslash as `\\\\`, strings on a single line.
+- A 5-axis **viral_score rubric** (HOOK_STRENGTH, EMOTIONAL_PAYOFF, QUOTABILITY, SELF_CONTAINED, DENSITY) replaces the vague "predict viral performance".
+- 2 positive + 1 negative **few-shot examples** anchor the model's idea of a "good" vs "bad" `viral_reason`.
+
+Every parse attempt logs one structured line: `📊 gemini_parse path=<strict|clean|json_repair|retry|fallback> duration_ms=<N> error=<...>` — useful for grep-based quality monitoring.
+
+Post-parse, the result flows through **Pydantic validation** (`schemas.py:ViralClip` + `ViralClipsResponse`) which enforces:
+- `10 ≤ duration ≤ 75` (slightly wider than the user-facing 15-60s target so near-misses survive).
+- `start < end`, both clamped to `video_duration`.
+- `viral_score ∈ [1, 100]`.
+- `viral_reason` at least 20 characters (kills generic "interesting point" responses).
+
+Then `validate_and_dedupe` removes clips whose IoU with a higher-scoring neighbour exceeds **0.7**, preventing the "same payoff timestamp emitted with slightly different boundaries 4 times" failure mode.
+
+**Tests**: `tests/test_gemini_parsing.py` covers 6 malformed fixtures (clean, backslash rogue, smart quotes, trailing comma, code fence, reasoning-before-JSON) plus 7 validation/dedupe cases. All 13 tests pass end-to-end via the real parser, not mocks. **Do not break them.**
+
 ## Refactor History (8-round autoresearch pipeline)
 
 `app.py` and `App.jsx` were systematically split into focused modules. **Do not re-merge them.** When adding new logic, prefer extending an existing module or creating a new one over growing the orchestrators.
