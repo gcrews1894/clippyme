@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Download, Youtube, Loader2, Type, Instagram, Copy, Check, Scissors, MessageSquare, Settings, Send, Trash2, Eye, EyeOff } from 'lucide-react';
+import { Download, Youtube, Loader2, Type, Instagram, Copy, Check, Scissors, MessageSquare, Settings, Send, Trash2, Eye, EyeOff, Crop, Square } from 'lucide-react';
 import PublishModal from './PublishModal';
 import { toast } from 'sonner';
 import { getApiUrl } from '../config';
@@ -20,6 +20,11 @@ export default function ResultCard({
 }) {
     const isDisabled = !!clipState.disabled;
     const publishedAt = clipState.publishedAt;
+    // Reframe mode: persisted per-clip. Default to 'auto' — the backend
+    // never sets an explicit mode on the initial clip, so we assume the
+    // pipeline's default (auto / face tracking) was used.
+    const reframeMode = clipState.reframeMode || clip.reframe_mode || 'auto';
+    const isReframing = !!clipState.reframing;
     const [showSubtitleModal, setShowSubtitleModal] = useState(false);
     const [showHookModal, setShowHookModal] = useState(false);
     const videoRef = React.useRef(null);
@@ -148,6 +153,47 @@ export default function ResultCard({
         }
     };
 
+    const handleToggleReframe = async () => {
+        if (isReframing) return;
+        const nextMode = reframeMode === 'auto' ? 'disabled' : 'auto';
+        onUpdateState({ reframing: true });
+        try {
+            const res = await fetch(getApiUrl(`/api/reframe/${jobId}/${index}`), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ reframe_mode: nextMode }),
+            });
+            if (!res.ok) {
+                const errText = await res.text();
+                // 409 = source slice missing (legacy jobs)
+                if (res.status === 409) {
+                    toast.error('Source slice not preserved for this clip — reprocess the video to enable reframe switching.');
+                } else {
+                    toast.error(`Reframe failed: ${errText.slice(0, 200)}`);
+                }
+                onUpdateState({ reframing: false });
+                return;
+            }
+            const data = await res.json();
+            if (data.success && data.new_video_url) {
+                setCurrentVideoUrl(getApiUrl(data.new_video_url));
+                onUpdateState({ reframeMode: nextMode, reframing: false });
+                toast.success(
+                    nextMode === 'disabled'
+                        ? 'Reframe disabled — clip now shows the full 4:3 frame with black bars.'
+                        : 'Auto reframe enabled — face tracking is back on.',
+                );
+            } else {
+                onUpdateState({ reframing: false });
+                toast.error('Reframe returned no video URL');
+            }
+        } catch (err) {
+            console.error('Reframe error:', err);
+            toast.error('Reframe failed — check console for details');
+            onUpdateState({ reframing: false });
+        }
+    };
+
     return (
         <div
             className={`bg-[#0f0f13] border rounded-2xl overflow-hidden animate-fade-in transition-opacity ${
@@ -165,6 +211,30 @@ export default function ResultCard({
                         className="p-1.5 rounded-lg bg-black/50 backdrop-blur-sm text-zinc-300 hover:text-white border border-white/10 transition-colors"
                     >
                         {isDisabled ? <EyeOff size={12} /> : <Eye size={12} />}
+                    </button>
+                    <button
+                        onClick={handleToggleReframe}
+                        disabled={isReframing}
+                        title={
+                            isReframing
+                                ? 'Reframing…'
+                                : reframeMode === 'auto'
+                                    ? 'Reframe: Auto (face tracking) — click to disable'
+                                    : 'Reframe: Disabled (4:3 + black bars) — click to enable auto'
+                        }
+                        className={`p-1.5 rounded-lg backdrop-blur-sm border transition-colors ${
+                            reframeMode === 'auto'
+                                ? 'bg-accent-pink/25 text-accent-pink border-accent-pink/40 hover:bg-accent-pink/35'
+                                : 'bg-black/50 text-zinc-300 hover:text-white border-white/10'
+                        } disabled:opacity-60 disabled:cursor-wait`}
+                    >
+                        {isReframing ? (
+                            <Loader2 size={12} className="animate-spin" />
+                        ) : reframeMode === 'auto' ? (
+                            <Crop size={12} />
+                        ) : (
+                            <Square size={12} />
+                        )}
                     </button>
                     <button
                         onClick={handleDelete}

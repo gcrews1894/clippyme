@@ -198,7 +198,7 @@ SUBTITLE_PRESETS = {
         "shadow": 0,
         "margin_v": 350,
         "uppercase": True,
-        "fontsize": 62,
+        "fontsize": 40,
     },
     "hormozi_bold": {
         "font": "Bangers-Regular",
@@ -210,7 +210,7 @@ SUBTITLE_PRESETS = {
         "shadow": 2,
         "margin_v": 350,
         "uppercase": True,
-        "fontsize": 66,
+        "fontsize": 43,
     },
     "neon_glow": {
         "font": "Montserrat-Black",
@@ -222,7 +222,7 @@ SUBTITLE_PRESETS = {
         "shadow": 3,
         "margin_v": 350,
         "uppercase": True,
-        "fontsize": 62,
+        "fontsize": 40,
     },
     "mrbeast_box": {
         "font": "Poppins-Black",
@@ -234,7 +234,7 @@ SUBTITLE_PRESETS = {
         "shadow": 0,
         "margin_v": 350,
         "uppercase": False,
-        "fontsize": 58,
+        "fontsize": 38,
     },
     "minimal_clean": {
         "font": "Poppins-Medium",
@@ -246,7 +246,7 @@ SUBTITLE_PRESETS = {
         "shadow": 0,
         "margin_v": 350,
         "uppercase": False,
-        "fontsize": 54,
+        "fontsize": 35,
     },
     "fire_impact": {
         "font": "Anton-Regular",
@@ -258,7 +258,7 @@ SUBTITLE_PRESETS = {
         "shadow": 0,
         "margin_v": 350,
         "uppercase": True,
-        "fontsize": 66,
+        "fontsize": 43,
     },
 }
 

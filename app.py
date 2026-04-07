@@ -1,4 +1,5 @@
 import os
+import sys
 import uuid
 import subprocess
 import threading
@@ -35,6 +36,7 @@ from schemas import (
     HookRequest,
     ProcessRequest,
     PublishRequest,
+    ReframeRequest,
     SubtitleRequest,
     ZernioConfigRequest,
 )
@@ -545,6 +547,121 @@ async def smart_cut_clip(job_id: str, clip_index: int):
         metadata_path=metadata_path,
         data=data,
     )
+
+
+@app.post("/api/reframe/{job_id}/{clip_index}")
+async def reframe_clip(job_id: str, clip_index: int, req: ReframeRequest):
+    """Switch a clip between reframe modes (auto ↔ disabled) after generation.
+
+    Requires the per-clip 16:9 source slice (``source_<clip>.mp4``) to still
+    exist on disk. Spawns ``main.py --reframe-only`` as a subprocess to reuse
+    the exact same reframing / zoom / normalize / cover pipeline the initial
+    run used. Updates metadata.json and the in-memory job state so the
+    dashboard picks up the new video URL on the next poll.
+    """
+    if not is_valid_job_id(job_id):
+        raise HTTPException(status_code=400, detail="Invalid job_id")
+    mode = (req.reframe_mode or "auto").strip().lower()
+    if mode not in ("auto", "disabled"):
+        raise HTTPException(status_code=400, detail="reframe_mode must be 'auto' or 'disabled'")
+
+    output_dir = os.path.join(OUTPUT_DIR, job_id)
+    if not os.path.isdir(output_dir):
+        raise HTTPException(status_code=404, detail="Job output dir not found")
+
+    try:
+        metadata_path, data = load_job_metadata(job_id, OUTPUT_DIR)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Metadata not found")
+
+    clips = data.get("shorts", [])
+    if clip_index < 0 or clip_index >= len(clips):
+        raise HTTPException(status_code=404, detail="Clip not found")
+
+    clip_data = clips[clip_index]
+
+    # Resolve the current clip filename (same logic as smartcut / subtitle)
+    clip_url = clip_data.get("video_url", "") or ""
+    filename = clip_url.split("/")[-1] if clip_url else None
+    if not filename:
+        base_name = os.path.basename(metadata_path).replace("_metadata.json", "")
+        filename = f"{base_name}_clip_{clip_index + 1}.mp4"
+
+    # Target path = the ORIGINAL reframed clip path (we overwrite it in place
+    # so all downstream references — subtitle/hook/compose — keep working).
+    base_name = os.path.basename(metadata_path).replace("_metadata.json", "")
+    original_clip_filename = f"{base_name}_clip_{clip_index + 1}.mp4"
+    target_path = os.path.join(output_dir, original_clip_filename)
+    source_path = os.path.join(output_dir, f"source_{original_clip_filename}")
+
+    if not os.path.exists(source_path):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Source slice not available for this clip — this job was "
+                "generated before the post-hoc reframe feature landed. "
+                "Re-process the source to enable mode switching."
+            ),
+        )
+
+    cmd = [
+        sys.executable,
+        "main.py",
+        "--reframe-only",
+        "-i", source_path,
+        "-o", target_path,
+        "--reframe-mode", mode,
+    ]
+
+    logger.info("Reframe subprocess: %s", " ".join(cmd))
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            env=os.environ.copy(),
+        )
+        stdout_data, _ = await proc.communicate()
+    except Exception as e:
+        logger.error("Reframe subprocess launch failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"Failed to launch reframe: {e}")
+
+    output_text = (stdout_data or b"").decode(errors="replace")
+    if proc.returncode != 0:
+        logger.error("Reframe failed (code %s):\n%s", proc.returncode, output_text[-2000:])
+        raise HTTPException(
+            status_code=500,
+            detail=f"Reframe failed (exit {proc.returncode}). Last output: {output_text[-400:]}",
+        )
+
+    # Cache-busting suffix so the <video> element reloads
+    cache_bust = int(time.time())
+    new_video_url = f"/videos/{job_id}/{original_clip_filename}?v={cache_bust}"
+
+    # Update metadata.json and in-memory job state
+    try:
+        clips[clip_index]["video_url"] = new_video_url
+        clips[clip_index]["reframe_mode"] = mode
+        data["shorts"] = clips
+        save_job_metadata(metadata_path, data)
+    except Exception as e:
+        logger.warning("Failed to update metadata.json after reframe: %s", e)
+
+    if (
+        job_id in jobs
+        and "result" in jobs[job_id]
+        and "clips" in jobs[job_id]["result"]
+        and clip_index < len(jobs[job_id]["result"]["clips"])
+    ):
+        jobs[job_id]["result"]["clips"][clip_index]["video_url"] = new_video_url
+        jobs[job_id]["result"]["clips"][clip_index]["reframe_mode"] = mode
+
+    return {
+        "success": True,
+        "new_video_url": new_video_url,
+        "reframe_mode": mode,
+    }
 
 
 @app.post("/api/hook")

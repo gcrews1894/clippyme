@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Loader2, Zap, Type, Palette, Layers } from 'lucide-react';
+import { SUBTITLE_PRESETS, scaleFontToPreview, outlineToTextShadow } from '@/lib/subtitlePresets';
 
 const VIRAL_PRESETS = [
     { id: 'classic_white', label: 'Classic White', desc: 'TikTok standard', colors: ['#FFFFFF', '#FFFF00'] },
@@ -53,8 +54,39 @@ export default function SubtitleModal({ isOpen, onClose, onGenerate, isProcessin
     const [highlightColor, setHighlightColor] = useState('#FFFF00');
     const [fontName, setFontName] = useState('Montserrat-Black');
 
+    // Preview video ref + measured rendered height for faithful font scaling.
+    // The backend burns subtitles at libass fontsize values (px @ 1920 video
+    // height). We mirror the same math on the DOM preview so what the user
+    // sees here matches the final render 1:1.
+    const previewVideoRef = useRef(null);
+    const [renderedVideoHeight, setRenderedVideoHeight] = useState(0);
+    useLayoutEffect(() => {
+        if (!isOpen) return undefined;
+        const update = () => {
+            const el = previewVideoRef.current;
+            if (!el) return;
+            // Video is `object-contain`, so the actual rendered picture
+            // height may be smaller than the <video> element. For 9:16 in a
+            // wider container, the picture height === element height. For a
+            // narrower container the picture is letterboxed. Using
+            // `clientHeight` as an upper bound is close enough for a preview.
+            setRenderedVideoHeight(el.clientHeight || 0);
+        };
+        update();
+        const ro = new ResizeObserver(update);
+        if (previewVideoRef.current) ro.observe(previewVideoRef.current);
+        window.addEventListener('resize', update);
+        return () => {
+            ro.disconnect();
+            window.removeEventListener('resize', update);
+        };
+    }, [isOpen]);
+
     // Classic mode state
-    const fontSize = 24;
+    // Backend burn_subtitles reference: fontsize parameter @ 1920 px video,
+    // then multiplied by 0.85 inside the helper. We expose a slider that
+    // matches 1:1 what ends up on screen.
+    const [fontSize, setFontSize] = useState(42);
     const [classicFontName, setClassicFontName] = useState('Verdana');
     const [fontColor, setFontColor] = useState('#FFFFFF');
     const borderColor = '#000000';
@@ -78,6 +110,10 @@ export default function SubtitleModal({ isOpen, onClose, onGenerate, isProcessin
             onGenerate({
                 position,
                 offset_y: offsetY,
+                // Viral karaoke uses preset fontsize on the backend — this
+                // field is ignored for the preset path but kept for schema
+                // compatibility. The actual rendered size comes from
+                // subtitles.py:SUBTITLE_PRESETS[preset].fontsize.
                 fontSize: 16,
                 fontName,
                 fontColor: '#FFFFFF',
@@ -316,6 +352,22 @@ export default function SubtitleModal({ isOpen, onClose, onGenerate, isProcessin
                                     </div>
                                 </div>
 
+                                {/* Classic: Font size (matches backend 1:1 — value is the
+                                    libass fontsize at 1920 px reference height, rendered
+                                    after a 0.85 scale inside burn_subtitles) */}
+                                <div className="space-y-2">
+                                    <div className="flex justify-between items-center">
+                                        <label className="text-xs font-medium text-zinc-400">Font size</label>
+                                        <span className="text-xs font-mono text-accent-pink">{fontSize}px</span>
+                                    </div>
+                                    <input
+                                        type="range" min="20" max="80" step="1"
+                                        value={fontSize}
+                                        onChange={(e) => setFontSize(parseInt(e.target.value))}
+                                        className="w-full accent-accent-pink h-1 bg-white/5 rounded-full appearance-none cursor-pointer"
+                                    />
+                                </div>
+
                                 {/* Classic: Outline */}
                                 <div className="space-y-2">
                                     <div className="flex justify-between items-center">
@@ -408,7 +460,13 @@ export default function SubtitleModal({ isOpen, onClose, onGenerate, isProcessin
 
                 {/* Right column: Preview */}
                 <div className="flex-1 bg-black relative flex items-center justify-center min-h-[350px]">
-                    <video src={videoUrl} className="w-full h-full object-contain opacity-30 grayscale" muted playsInline />
+                    <video
+                        ref={previewVideoRef}
+                        src={videoUrl}
+                        className="w-full h-full object-contain opacity-30 grayscale"
+                        muted
+                        playsInline
+                    />
 
                     <div className="absolute inset-0 flex flex-col items-center justify-center p-10">
                         <div
@@ -419,39 +477,82 @@ export default function SubtitleModal({ isOpen, onClose, onGenerate, isProcessin
                                 transform: 'translateY(-50%)',
                             }}
                         >
-                            {mode === 'viral' ? (
-                                <div className="text-center">
-                                    <span style={{
-                                        fontFamily: previewFont,
-                                        color: '#FFFFFF',
-                                        fontSize: '20px',
-                                        fontWeight: 900,
-                                        textShadow: '-3px -3px 0 #000, 3px -3px 0 #000, -3px 3px 0 #000, 3px 3px 0 #000',
-                                        textTransform: uppercase ? 'uppercase' : 'none',
-                                    }}>
-                                        AI GENERATED{' '}
-                                        <span style={{ color: previewHighlight }}>VIRAL</span>
-                                        {' '}CAPTIONS
+                            {mode === 'viral' ? (() => {
+                                // Faithful scaling: use the real backend preset values
+                                // (from the shared subtitlePresets spec) and project the
+                                // fontsize into the preview video element's rendered height.
+                                const preset = SUBTITLE_PRESETS[selectedPreset] || SUBTITLE_PRESETS.classic_white;
+                                const scaledFont = scaleFontToPreview(preset.fontsize, renderedVideoHeight);
+                                const scaledOutline = scaleFontToPreview(preset.outlineWidth, renderedVideoHeight);
+                                const textShadow = outlineToTextShadow(scaledOutline, preset.outlineColor);
+                                const isBoxStyle = preset.borderStyle === 3;
+                                const neonGlow = preset.neonGlow
+                                    ? `, 0 0 ${scaledOutline * 2}px ${preset.highlightColor}, 0 0 ${scaledOutline * 4}px ${preset.highlightColor}`
+                                    : '';
+                                const shouldUppercase = uppercase;
+                                return (
+                                    <div className="text-center px-4" style={{ maxWidth: '85%' }}>
+                                        <span
+                                            style={{
+                                                fontFamily: fontName || preset.font,
+                                                color: preset.textColor,
+                                                fontSize: `${scaledFont}px`,
+                                                lineHeight: 1.15,
+                                                fontWeight: 900,
+                                                textShadow: `${textShadow}${neonGlow}`,
+                                                textTransform: shouldUppercase ? 'uppercase' : 'none',
+                                                ...(isBoxStyle ? {
+                                                    backgroundColor: '#000000',
+                                                    padding: `${scaledFont * 0.15}px ${scaledFont * 0.35}px`,
+                                                    borderRadius: `${scaledFont * 0.08}px`,
+                                                    boxDecorationBreak: 'clone',
+                                                    WebkitBoxDecorationBreak: 'clone',
+                                                } : {}),
+                                            }}
+                                        >
+                                            AI GENERATED{' '}
+                                            <span style={{ color: highlightColor || preset.highlightColor }}>VIRAL</span>
+                                            {' '}CAPTIONS
+                                        </span>
+                                    </div>
+                                );
+                            })() : (() => {
+                                // Classic mode: burn_subtitles applies fontsize * 0.85
+                                // at 1920 reference. Mirror that here.
+                                const effectiveBackendSize = Math.max(10, fontSize * 0.85);
+                                const scaledFont = scaleFontToPreview(effectiveBackendSize, renderedVideoHeight);
+                                const scaledBorder = scaleFontToPreview(borderWidth, renderedVideoHeight);
+                                const shadow = scaledBorder > 0
+                                    ? outlineToTextShadow(scaledBorder, borderColor)
+                                    : 'none';
+                                return (
+                                    <span
+                                        style={{
+                                            fontFamily: classicFontName,
+                                            color: fontColor,
+                                            fontSize: `${scaledFont}px`,
+                                            lineHeight: 1.2,
+                                            fontWeight: 'bold',
+                                            textShadow: shadow,
+                                            ...(bgOpacity > 0 ? {
+                                                backgroundColor: `${bgColor}${Math.round(bgOpacity * 255).toString(16).padStart(2, '0')}`,
+                                                padding: `${scaledFont * 0.2}px ${scaledFont * 0.4}px`,
+                                                borderRadius: `${scaledFont * 0.15}px`,
+                                            } : {}),
+                                        }}
+                                    >
+                                        AI Generated<br/>Viral Captions
                                     </span>
-                                </div>
-                            ) : (
-                                <span style={{
-                                    fontFamily: classicFontName,
-                                    color: fontColor,
-                                    fontSize: '18px',
-                                    fontWeight: 'bold',
-                                    textShadow: borderWidth > 0 ? `-${borderWidth}px -${borderWidth}px 0 ${borderColor}, ${borderWidth}px ${borderWidth}px 0 ${borderColor}` : 'none',
-                                    ...(bgOpacity > 0 ? { backgroundColor: `${bgColor}${Math.round(bgOpacity * 255).toString(16).padStart(2, '0')}`, padding: '8px 16px', borderRadius: '8px' } : {}),
-                                }}>
-                                    AI Generated<br/>Viral Captions
-                                </span>
-                            )}
+                                );
+                            })()}
                         </div>
                     </div>
 
                     <div className="absolute top-4 left-4 flex items-center gap-2">
                         <div className="w-1.5 h-1.5 rounded-full bg-accent-pink animate-pulse" />
-                        <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Preview</span>
+                        <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">
+                            1:1 Preview
+                        </span>
                     </div>
                 </div>
             </div>

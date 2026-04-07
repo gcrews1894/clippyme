@@ -4,7 +4,8 @@ import { config } from '../config';
 
 const KEY_TYPES = [
     { id: 'GEMINI_API_KEY', label: 'Gemini API Key', link: 'https://aistudio.google.com/app/apikey', placeholder: 'AIzaSy...', required: true },
-    { id: 'HF_TOKEN', label: 'Hugging Face Token', link: 'https://huggingface.co/settings/tokens', placeholder: 'hf_...', required: false, hint: 'Optional — enables faster Whisper model downloads and avoids rate limits.' }
+    { id: 'HF_TOKEN', label: 'Hugging Face Token', link: 'https://huggingface.co/settings/tokens', placeholder: 'hf_...', required: false, hint: 'Optional — enables faster Whisper model downloads and avoids rate limits.' },
+    { id: 'DEEPGRAM_API_KEY', label: 'Deepgram API Key', link: 'https://console.deepgram.com/signup', placeholder: 'dg_...', required: false, hint: 'Optional — when set and the provider below is "Deepgram", transcription runs on the Deepgram cloud API instead of local Whisper (much faster, no GPU needed).' }
 ];
 
 export default function KeyInput({ onKeySet, onHfTokenSet, onCookiesChange }) {
@@ -22,6 +23,8 @@ export default function KeyInput({ onKeySet, onHfTokenSet, onCookiesChange }) {
     const [models, setModels] = useState([]);
     const [selectedModel, setSelectedModel] = useState('gemini-2.5-flash');
     const [isLoadingModels, setIsLoadingModels] = useState(false);
+
+    const [transcriptionProvider, setTranscriptionProvider] = useState('deepgram');
 
     const fetchModels = useCallback(async (key) => {
         if (!key) return;
@@ -68,6 +71,9 @@ export default function KeyInput({ onKeySet, onHfTokenSet, onCookiesChange }) {
                 if (data.GEMINI_MODEL) {
                     setSelectedModel(data.GEMINI_MODEL);
                     localStorage.setItem('clippyme_model', data.GEMINI_MODEL);
+                }
+                if (data.TRANSCRIPTION_PROVIDER) {
+                    setTranscriptionProvider(data.TRANSCRIPTION_PROVIDER);
                 }
 
                 const geminiKey = data.GEMINI_API_KEY || localStorage.getItem('gemini_key');
@@ -168,6 +174,22 @@ export default function KeyInput({ onKeySet, onHfTokenSet, onCookiesChange }) {
         } finally {
             setIsSavingCookies(false);
             setTimeout(() => setMessage({ type: '', text: '' }), 3000);
+        }
+    };
+
+    const handleProviderChange = async (e) => {
+        const newProvider = e.target.value;
+        setTranscriptionProvider(newProvider);
+        try {
+            await fetch(`${config.API_BASE_URL}/api/config`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ keys: { TRANSCRIPTION_PROVIDER: newProvider } })
+            });
+            setMessage({ type: 'success', text: `Transcription provider set to ${newProvider}.` });
+            setTimeout(() => setMessage({ type: '', text: '' }), 2500);
+        } catch (error) {
+            setMessage({ type: 'error', text: 'Failed to update transcription provider.' });
         }
     };
 
@@ -316,6 +338,33 @@ export default function KeyInput({ onKeySet, onHfTokenSet, onCookiesChange }) {
                     <p className="text-[10px] text-zinc-600 flex items-center gap-1">
                         <AlertCircle size={10} />
                         Save a valid API key to fetch the full list of available models.
+                    </p>
+                )}
+            </div>
+
+            {/* Transcription provider */}
+            <div className="space-y-2 pt-2">
+                <label className="text-sm font-medium text-zinc-300">Transcription Provider</label>
+                <p className="text-[11px] text-zinc-600">
+                    Choose where speech-to-text runs. Deepgram is much faster and works on CPU-only machines but requires an API key above.
+                </p>
+                <div className="relative">
+                    <select
+                        value={transcriptionProvider}
+                        onChange={handleProviderChange}
+                        className="w-full bg-[#0f0f13] border border-white/10 rounded-lg px-4 py-3 text-sm text-white focus:outline-none focus:border-accent-pink/50 appearance-none cursor-pointer"
+                    >
+                        <option value="deepgram" className="bg-[#0f0f13]">Deepgram Nova-3 (cloud, recommended — 30× faster, ~2× more accurate)</option>
+                        <option value="whisper" className="bg-[#0f0f13]">Faster-Whisper (local fallback, no API key needed)</option>
+                    </select>
+                    <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-zinc-500">
+                        <ChevronDown size={14} />
+                    </div>
+                </div>
+                {transcriptionProvider === 'deepgram' && !serverConfig.DEEPGRAM_API_KEY && (
+                    <p className="text-[10px] text-amber-400 flex items-center gap-1">
+                        <AlertCircle size={10} />
+                        Deepgram selected but no API key saved — pipeline will fall back to local Whisper.
                     </p>
                 )}
             </div>

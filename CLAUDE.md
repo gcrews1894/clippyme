@@ -17,7 +17,14 @@ ClippyMe is a self-hosted AI video platform that transforms long-form videos (Yo
   - `security.py` — `is_valid_job_id()`, trusted-origin checks.
   - `schemas.py` — Pydantic request models.
   - `metadata_io.py` — `load_job_metadata()` / `save_job_metadata()` atomic helpers.
-- **Processing pipeline** (`main.py`): Orchestrates download (yt-dlp) → transcription (faster-whisper, with URL-hash cache) → scene detection (PySceneDetect) → viral moment detection (Google Gemini, returns `viral_score`/`viral_reason`) → smart 9:16 reframing (YOLOv8 + MediaPipe face tracking) → audio normalization → auto-zoom → cover frame selection.
+- **Processing pipeline** (`main.py`): Orchestrates download (yt-dlp) → transcription (**Deepgram Nova-3 cloud by default, faster-whisper as automatic fallback**, URL-hash cached) → scene detection (PySceneDetect) → viral moment detection (Google Gemini, returns `viral_score`/`viral_reason`) → smart 9:16 reframing (YOLOv8 + MediaPipe face tracking) → audio normalization → auto-zoom → cover frame selection.
+- **Transcription** (`deepgram_transcribe.py` + `main.transcribe_video`): Provider is selected via the `TRANSCRIPTION_PROVIDER` env var (`deepgram` default, or `whisper`).
+  - **Deepgram path** (`deepgram_transcribe.transcribe_with_deepgram`): Direct REST call to `POST https://api.deepgram.com/v1/listen` via `requests` — **no `deepgram-sdk` dependency**. Uses Nova-3 with `language=multi` (native EN+IT code-switching), `smart_format`, `punctuate`, `paragraphs`, `utterances`, `numerals`, `measurements`. Module is Nova-3-aware: drops `filler_words` (Nova-2 only, Nova-3 rejects it) and only sends `keyterm` entries on Nova-3. Retry/backoff with honoured `Retry-After` headers on 408/409/425/429/5xx. Module-level `requests.Session` for TLS keep-alive across batch jobs. File size guard, request_id logging, speedup-vs-realtime metric in the output. Returns the exact same dict shape as `transcribe_video` (prefers Deepgram `utterances` → falls back to sentence/12s word chunking).
+  - **Whisper path**: Unchanged — faster-whisper with auto CUDA/CPU detection, `large-v3` / `medium` / `small` / `base` selected by VRAM or RAM.
+  - **Fallback semantics**: If `TRANSCRIPTION_PROVIDER=deepgram` and the Deepgram call raises *any* exception (missing key, network, 4xx/5xx after retries, malformed response), `transcribe_video` silently falls back to Faster-Whisper with a warning log. The pipeline never breaks because of a misconfigured Deepgram key.
+  - **Env vars**: `DEEPGRAM_API_KEY` (required for cloud path), `DEEPGRAM_MODEL` (default `nova-3`), `DEEPGRAM_LANGUAGE` (default `multi`), `DEEPGRAM_KEYTERMS` (comma-separated, Nova-3 only — boosts brand/jargon recognition), `DEEPGRAM_HTTP_TIMEOUT` (600s), `DEEPGRAM_MAX_RETRIES` (3), `DEEPGRAM_MAX_FILE_MB` (1900, below Deepgram's 2 GB hard limit).
+  - **Why not the SDK**: `requests` is already a dep; `deepgram-sdk` would add ~5 MB and extra maintenance surface for ~300 LOC of wrapper. Direct REST gives us full control over the segment remapping (utterances → Whisper-shape) needed by the rest of the pipeline.
+  - **MCP docs server**: `.mcp.json` registers `deepgram-docs` (HTTP, `https://api.dx.deepgram.com/kapa/mcp`) so future Claude Code sessions can query the official Deepgram documentation without manual WebFetch.
 - **Subtitles** (`subtitles.py`): ASS karaoke generation (`generate_ass_karaoke()`) with 6 viral presets + legacy SRT support. Burns via `ass` filter with bundled fonts. Supports `offset_y` for vertical positioning.
 - **Smart Cut** (`smartcut.py`): Two-stage post-processing that removes silences and filler words.
   - **Stage 1** — `analyze_silences()` finds keep-segments from Whisper word timestamps (filler words in EN/IT/ES/FR/DE + gaps >0.8s). Renders via `_render_with_auto_editor()` which builds a hand-crafted **auto-editor v3 JSON timeline** and runs `auto-editor plan.json -o out.mp4` for a frame-accurate single-pass render. Falls back to legacy FFmpeg concat demuxer (`_render_with_ffmpeg()`) if the auto-editor binary isn't on PATH.
@@ -39,6 +46,19 @@ ClippyMe is a self-hosted AI video platform that transforms long-form videos (Yo
 - **Fonts** (`fonts/`): Bundled TTF fonts for subtitle and hook rendering (Anton, Bangers, Montserrat-Black/ExtraBold, Poppins-Black/Medium, NotoSerif-Bold). Served via `/fonts` static mount.
 
 Config is persisted in `data/config.json` (git-ignored). Cookies in `data/cookies.txt`. API keys, Gemini model, and cookies are managed via the dashboard UI Settings tab, not env files.
+
+## Post-hoc reframe switching
+
+After a job completes, every clip can be flipped between **`auto`** (face tracking) and **`disabled`** (4:3 + black bars) without re-running the entire pipeline. To enable this the clip generator (`main.py`) now **preserves the 16:9 source slice per clip** on disk as `source_<clip_filename>.mp4` (never deleted at the end of the pipeline). The new endpoint `POST /api/reframe/{job_id}/{clip_index}` spawns `python main.py --reframe-only -i <source> -o <target> --reframe-mode <mode>` which:
+1. Calls `process_video_to_vertical` with the new mode
+2. Re-runs `apply_subtle_zoom` (unless `--no-zoom`), `normalize_audio`, `select_cover_frame`
+3. Overwrites the same clip filename so all downstream references (subtitle/hook/compose) keep working
+
+The endpoint updates metadata.json (`clip.video_url` + `clip.reframe_mode`) and the in-memory `jobs[job_id]['result']['clips'][i]`, and returns a cache-busted `new_video_url` so the `<video>` element reloads.
+
+**Frontend**: `ResultCard.jsx` has a new toolbar button (top-left, next to the eye/trash icons). It cycles between `auto` (pink Crop icon) and `disabled` (zinc Square icon) with a Loader2 spinner while the subprocess runs. State is persisted per-clip via `useClipStates.reframeMode`. Legacy jobs (created before this feature landed and therefore missing the `source_*.mp4` slice) return HTTP 409 and the frontend shows a toast explaining the clip must be reprocessed.
+
+**Why subprocess, not in-process import**: importing `main.py` into the FastAPI worker would eagerly load YOLO + MediaPipe models. We want the reframe endpoint to be latency-tolerant but not pay that startup cost on every API boot. Spawning `main.py --reframe-only` reuses the exact same code path the initial run used (same reframe algorithm, same zoom/normalize/cover) with zero code duplication.
 
 ## Toggle System (Compose-on-Download)
 
@@ -67,7 +87,7 @@ The post-processing workflow uses independent toggles per clip:
 - **MediaInput**: **Two tabs** — `Single` (with internal URL/Upload toggle, paste button, drag-drop zone) and `Batch` (textarea for URLs + multi-file upload zone with removable list, total counter URLs+files / 20). AI instructions collapsible. **Clip Options** collapsible panel: reframe mode (auto/disabled), Smart Cut toggle, Subtitles toggle+config (mode-aware: karaoke shows visual preset grid, classic shows font/color/position), Hook toggle+config (position, size — defaults to **S**). Cookie warning banner when cookies not configured.
 - **ResultCard**: 9:16 aspect ratio video player, viral score badge (color-coded: green 80+, yellow 50-79, orange <50 with tooltip), duration. **Toggle buttons** (Smart Cut, Hook, Subtitles) with pink active state + gear icon for config. Compose-on-download: clicking Download calls `/api/compose` with active toggles, or downloads original clip if no toggles active. YouTube title/TikTok caption fields.
 - **SubtitleModal / HookModal**: Two-column layout (settings left, live preview right; stacks vertically on mobile). Modal backdrop blur, gradient apply buttons, color pickers, preset dropdowns. **Vertical offset slider** (-50% to +50%). Font preview loads actual TTFs via FontFace API.
-- **KeyInput** (Settings): Gemini API key, HuggingFace token, Gemini model selector. **Cookie upload** section: file input (.txt), save/remove buttons, configured status indicator.
+- **KeyInput** (Settings): Gemini API key, HuggingFace token, **Deepgram API key**, Gemini model selector, **Transcription provider selector** (Deepgram Nova-3 / Faster-Whisper). Shows an amber warning if Deepgram is selected without a saved key (pipeline falls back to Whisper). **Cookie upload** section: file input (.txt), save/remove buttons, configured status indicator.
 - **ProcessingAnimation**: Source video container with pulsing gradient border, status badge with animated dots, model/hardware info badges, synced playback indicator.
 - **Landing**: Hero with gradient logo, "ClippyMe" text (pink→purple→blue), feature grid (6 items), "How it works" (3 steps), premium CTAs.
 
@@ -182,6 +202,7 @@ python main.py <url_or_path> [options]
 | GET | `/api/batch/{batch_id}` | Aggregated batch status |
 | POST | `/api/compose/{job_id}/{clip_index}` | Compose final video from active toggles |
 | POST | `/api/smartcut/{job_id}/{clip_index}` | Generate smart-cut version of a clip |
+| POST | `/api/reframe/{job_id}/{clip_index}` | Switch a clip between `auto` / `disabled` reframe mode (requires preserved source slice) |
 | POST | `/api/subtitle` | Generate and burn subtitles |
 | POST | `/api/hook` | Add hook text overlay |
 | GET | `/api/subtitle/presets` | List available subtitle preset names |
@@ -200,7 +221,24 @@ Defined in `subtitles.py:SUBTITLE_PRESETS`. Six built-in presets:
 
 When using ASS karaoke, the `ass` FFmpeg filter is used with `fontsdir` pointing to the `fonts/` directory. For SRT the `subtitles` filter is used with adjustable `MarginV` (default 350, modified by `offset_y`).
 
-**Safe zone defaults**: MarginL/R = **110 px** (≈10% of the 1080px vertical frame → TikTok/Reels safe zone so long captions don't get cropped). Preset fontsize defaults have been reduced (`80→62`, `85→66`, `75→58`, `70→54`) to avoid horizontal overflow.
+**Safe zone defaults**: MarginL/R = **110 px** (≈10% of the 1080px vertical frame → TikTok/Reels safe zone so long captions don't get cropped). Preset fontsize defaults have been reduced twice: first pass (`80→62`, `85→66`, `75→58`, `70→54`) and then a **−35% second pass** for cleaner reading on mobile vertical frames → current values: `classic_white=40`, `hormozi_bold=43`, `neon_glow=40`, `mrbeast_box=38`, `minimal_clean=35`, `fire_impact=43`.
+
+## Faithful modal preview scaling
+
+`SubtitleModal.jsx` and `HookModal.jsx` now render **pixel-faithful previews** of the final burned-in output — what you see in the modal is what you get in the rendered video.
+
+**Shared spec** (`dashboard/src/lib/subtitlePresets.js`):
+- Mirrors `subtitles.py:SUBTITLE_PRESETS` 1:1 (font, fontsize, outline width, colors, border style, uppercase). **This file MUST be kept in sync with the Python side** — when you bump a preset's fontsize on the backend, update the same number here.
+- Exports `REFERENCE_VIDEO_HEIGHT = 1920` (ClippyMe's vertical target resolution) and `scaleFontToPreview(backendFontsize, renderedHeightPx)` — the canonical formula `backendFontsize * (renderedHeightPx / 1920)`.
+- Exports `outlineToTextShadow(width, color)` which builds an 8-way CSS `text-shadow` approximating libass's stroked outline.
+
+**How the modals use it**:
+- Each modal attaches a `ref` to its `<video>` element and measures its rendered `clientHeight` via `ResizeObserver` + `useLayoutEffect`. The measured height feeds `scaleFontToPreview`.
+- **SubtitleModal karaoke path**: reads the selected preset from the shared spec, scales `fontsize` and `outlineWidth` to the video height, applies the real outline color, handles `borderStyle=3` (box background for MrBeast) with padding proportional to the scaled font size, and adds a neon glow for `neon_glow`.
+- **SubtitleModal classic path**: exposes a user-controllable fontsize slider (20–80, default 42) that mirrors `burn_subtitles`'s `fontsize * 0.85` internal scaling, then projects through `scaleFontToPreview` the same way.
+- **HookModal**: replicates `hooks.py:add_hook_to_video`'s formula `video_width * 0.9 * 0.05 * font_scale` with `S=0.8 / M=1.0 / L=1.3` at 1080 px reference width → backend sizes `{S: 38.88, M: 48.6, L: 63.18}`. Same `scaleFontToPreview` pass.
+
+This is a hard requirement: if you ever add a new preset or change font scaling on the backend, **you must update `subtitlePresets.js` in the same commit**. The preview is billed as "1:1 Preview" in the modal header.
 
 ## Unified vertical position slider
 

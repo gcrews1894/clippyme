@@ -7,7 +7,14 @@ logger = logging.getLogger("clippyme")
 
 DATA_DIR = "data"
 CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
-VALID_CONFIG_KEYS = ("GEMINI_API_KEY", "GEMINI_MODEL", "YOUTUBE_COOKIES", "HF_TOKEN")
+VALID_CONFIG_KEYS = (
+    "GEMINI_API_KEY",
+    "GEMINI_MODEL",
+    "YOUTUBE_COOKIES",
+    "HF_TOKEN",
+    "DEEPGRAM_API_KEY",
+    "TRANSCRIPTION_PROVIDER",  # "whisper" (default) or "deepgram"
+)
 
 # Zernio config lives in a separate namespace under the same config.json file
 # so existing config flows aren't disturbed. Stored as a sub-object:
@@ -94,6 +101,8 @@ def load_persistent_config() -> dict:
         "GEMINI_MODEL": os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"),
         "YOUTUBE_COOKIES": os.environ.get("YOUTUBE_COOKIES", ""),
         "HF_TOKEN": os.environ.get("HF_TOKEN", ""),
+        "DEEPGRAM_API_KEY": os.environ.get("DEEPGRAM_API_KEY", ""),
+        "TRANSCRIPTION_PROVIDER": os.environ.get("TRANSCRIPTION_PROVIDER", "deepgram"),
     }
     raw = _read_raw_config()
     filtered = {k: v for k, v in raw.items() if k in VALID_CONFIG_KEYS}

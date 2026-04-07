@@ -1267,6 +1267,23 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
     return True
 
 def transcribe_video(video_path):
+    """Dispatch to the configured transcription provider.
+
+    Provider is selected via the ``TRANSCRIPTION_PROVIDER`` env var:
+      - "deepgram" → call Deepgram REST API (requires DEEPGRAM_API_KEY)
+      - anything else (default) → local Faster-Whisper
+
+    On Deepgram failure we automatically fall back to Faster-Whisper so a
+    misconfigured key never breaks the pipeline.
+    """
+    provider = (os.getenv("TRANSCRIPTION_PROVIDER") or "deepgram").strip().lower()
+    if provider == "deepgram":
+        try:
+            from deepgram_transcribe import transcribe_with_deepgram, DeepgramError
+            return transcribe_with_deepgram(video_path)
+        except Exception as exc:  # noqa: BLE001 — broad catch for safe fallback
+            print(f"⚠️  Deepgram transcription failed ({exc}); falling back to Faster-Whisper.")
+
     from faster_whisper import WhisperModel
 
     device = "cuda" if CUDA_AVAILABLE else "cpu"
@@ -1465,8 +1482,35 @@ if __name__ == '__main__':
     parser.add_argument('--no-zoom', action='store_true', help="Disable subtle auto-zoom effect on clips")
     parser.add_argument('--reframe-mode', choices=['auto', 'disabled'], default='auto',
                         help='Reframe mode: auto (face tracking) or disabled (4:3 crop with black bars)')
+    parser.add_argument('--reframe-only', action='store_true',
+                        help='Skip download/analysis/cutting: take --input (an existing 16:9 '
+                             'source slice) and re-run reframing + zoom/normalize/cover only. '
+                             'Used by POST /api/reframe to switch modes on an already-generated clip.')
 
     args = parser.parse_args()
+
+    # --- Reframe-only fast path: reuse an existing 16:9 slice ----------------
+    if args.reframe_only:
+        if not args.input or not args.output:
+            print("❌ --reframe-only requires both --input (source slice) and --output (target)")
+            exit(2)
+        if not os.path.exists(args.input):
+            print(f"❌ Source slice not found: {args.input}")
+            exit(2)
+        reframe_start = time.time()
+        print(f"🔁 Reframe-only mode ({args.reframe_mode}) on {os.path.basename(args.input)}")
+        success = process_video_to_vertical(args.input, args.output, reframe_mode=args.reframe_mode)
+        if not success:
+            print("❌ Reframe failed.")
+            exit(1)
+        if not args.no_zoom:
+            apply_subtle_zoom(args.output)
+        normalize_audio(args.output)
+        select_cover_frame(args.output)
+        print(f"✅ Reframe-only done in {time.time() - reframe_start:.1f}s → {args.output}")
+        exit(0)
+    # -------------------------------------------------------------------------
+
 
     script_start_time = time.time()
     
@@ -1560,35 +1604,40 @@ if __name__ == '__main__':
                 
                 # Cut clip
                 clip_filename = f"{video_title}_clip_{i+1}.mp4"
-                clip_temp_path = os.path.join(output_dir, f"temp_{clip_filename}")
+                # Keep the 16:9 source slice persistently so the user can
+                # later switch reframe modes from the dashboard without
+                # re-running the entire pipeline. Naming convention:
+                # source_<clip_filename>  (picked up by /api/reframe).
+                clip_source_path = os.path.join(output_dir, f"source_{clip_filename}")
                 clip_final_path = os.path.join(output_dir, clip_filename)
-                
+
                 # ffmpeg cut
                 # Using re-encoding for precision as requested by strict seconds
                 cut_command = [
-                    'ffmpeg', '-y', 
-                    '-ss', str(start), 
-                    '-to', str(end), 
+                    'ffmpeg', '-y',
+                    '-ss', str(start),
+                    '-to', str(end),
                     '-i', input_video,
                     '-c:v', 'libx264', '-crf', '18', '-preset', 'fast',
                     '-c:a', 'aac',
-                    clip_temp_path
+                    clip_source_path
                 ]
                 subprocess.run(cut_command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-                
-                # Process vertical
-                success = process_video_to_vertical(clip_temp_path, clip_final_path, reframe_mode=args.reframe_mode)
-                
+
+                # Process vertical from the preserved source slice
+                success = process_video_to_vertical(clip_source_path, clip_final_path, reframe_mode=args.reframe_mode)
+
                 if success:
                     if not args.no_zoom:
                         apply_subtle_zoom(clip_final_path)
                     normalize_audio(clip_final_path)
                     select_cover_frame(clip_final_path)
                     print(f"   ✅ Clip {i+1} ready: {clip_final_path}")
+                    print(f"      📼 Source slice preserved at: {clip_source_path}")
 
-                # Clean up temp cut
-                if os.path.exists(clip_temp_path):
-                    os.remove(clip_temp_path)
+                # NOTE: we intentionally do NOT delete clip_source_path.
+                # It's needed by POST /api/reframe/{job_id}/{clip_index} to
+                # re-run reframing with a different mode on demand.
 
     # Clean up original if requested
     if args.url and not args.keep_original and os.path.exists(input_video):

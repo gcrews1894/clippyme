@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Sparkles, Loader2 } from 'lucide-react';
+import { scaleFontToPreview } from '@/lib/subtitlePresets';
 
 export default function HookModal({ isOpen, onClose, onGenerate, isProcessing, videoUrl, initialText }) {
     const [text, setText] = useState(initialText || '');
@@ -10,15 +11,45 @@ export default function HookModal({ isOpen, onClose, onGenerate, isProcessing, v
     const [offsetY, setOffsetY] = useState(-35);  // default near top
     const position = 'center';
 
+    // Preview video ref — used to scale the hook font faithfully to the
+    // backend `hooks.py:add_hook_to_video` math (font = video_width * 0.9 *
+    // 0.05 * font_scale). We scale using the rendered video height so the
+    // preview matches the final burned-in overlay.
+    const previewVideoRef = useRef(null);
+    const [renderedVideoHeight, setRenderedVideoHeight] = useState(0);
+    useLayoutEffect(() => {
+        if (!isOpen) return undefined;
+        const update = () => {
+            const el = previewVideoRef.current;
+            if (!el) return;
+            setRenderedVideoHeight(el.clientHeight || 0);
+        };
+        update();
+        const ro = new ResizeObserver(update);
+        if (previewVideoRef.current) ro.observe(previewVideoRef.current);
+        window.addEventListener('resize', update);
+        return () => {
+            ro.disconnect();
+            window.removeEventListener('resize', update);
+        };
+    }, [isOpen]);
+
     if (!isOpen) return null;
 
-    const getSizeStyle = () => {
-        switch (size) {
-            case 'S': return { fontSize: '12px', maxWidth: '80%' };
-            case 'L': return { fontSize: '22px', maxWidth: '95%' };
-            default: return { fontSize: '16px', maxWidth: '90%' };
-        }
-    };
+    // Backend math for 9:16 @ 1080x1920:
+    //   target_box_width = 1080 * 0.9 = 972
+    //   base_font_size   = 972 * 0.05 = 48.6
+    //   S=0.8 → 38.88, M=1.0 → 48.6, L=1.3 → 63.18
+    // These are pixel heights at the 1920 px reference → scale via
+    // scaleFontToPreview(backendSize, renderedHeight).
+    const HOOK_BACKEND_SIZES = { S: 38.88, M: 48.6, L: 63.18 };
+    const backendFontSize = HOOK_BACKEND_SIZES[size] || HOOK_BACKEND_SIZES.M;
+    const previewFontSize = scaleFontToPreview(backendFontSize, renderedVideoHeight);
+
+    const getSizeStyle = () => ({
+        fontSize: `${previewFontSize}px`,
+        maxWidth: '90%',
+    });
 
     return createPortal(
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fade-in" onClick={onClose}>
@@ -134,7 +165,13 @@ export default function HookModal({ isOpen, onClose, onGenerate, isProcessing, v
 
                 {/* Right column: Preview */}
                 <div className="flex-1 bg-black relative flex items-center justify-center min-h-[350px]">
-                    <video src={videoUrl} className="w-full h-full object-contain opacity-30 grayscale" muted playsInline />
+                    <video
+                        ref={previewVideoRef}
+                        src={videoUrl}
+                        className="w-full h-full object-contain opacity-30 grayscale"
+                        muted
+                        playsInline
+                    />
 
                     <div className="absolute inset-0 pointer-events-none">
                         <div

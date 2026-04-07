@@ -26,7 +26,7 @@
 | Layer | Tech |
 |-------|------|
 | Backend | FastAPI, Python 3.11, async job queue |
-| AI | Google Gemini, faster-whisper, YOLOv8, MediaPipe (FaceDetection + FaceMesh) |
+| AI | Google Gemini, Deepgram Nova-3 (default) / faster-whisper (fallback), YOLOv8, MediaPipe (FaceDetection + FaceMesh) |
 | Video | FFmpeg, yt-dlp (Deno JS runtime), PySceneDetect, **auto-editor (Nim, v30.x)** |
 | Publishing | Zernio API (14 social platforms) |
 | Frontend | React 18, Vite 5, Tailwind CSS v4, shadcn/ui, Sonner toasts |
@@ -74,7 +74,9 @@ All settings are managed through the dashboard UI (**Settings** tab):
 | Setting | Required | Description |
 |---------|----------|-------------|
 | Gemini API Key | Yes | Powers viral detection and clip analysis |
-| HuggingFace Token | No | Faster Whisper model downloads |
+| **Deepgram API Key** | Recommended | Cloud transcription via Nova-3 — ~30× faster and ~2× more accurate than local Whisper. Get one at [console.deepgram.com](https://console.deepgram.com/signup) |
+| **Transcription Provider** | No | `deepgram` (default) or `whisper`. Deepgram automatically falls back to local Whisper on failure |
+| HuggingFace Token | No | Faster Whisper model downloads (only used when provider = `whisper`) |
 | YouTube/Twitch Cookies | No | Netscape `.txt` file for bypassing download restrictions |
 | Gemini Model | No | Model selection (default: gemini-2.5-flash) |
 | **Zernio API Key** | No (only for publishing) | Powers one-click multi-platform publishing |
@@ -98,13 +100,19 @@ All settings are managed through the dashboard UI (**Settings** tab):
 | `AE_FILLER_CONFIG` | `data/filler_words.json` | Optional external filler word list (JSON: `{lang: [words...]}`) |
 | `ZERNIO_DEFAULT_TZ` | `Europe/Rome` | Default timezone passed to Zernio |
 | `ZERNIO_MIN_GAP_SECONDS` | `5400` | Smart scheduler: min gap (sec) between scheduled posts |
+| `DEEPGRAM_MODEL` | `nova-3` | Deepgram model (e.g. `nova-3`, `nova-3-general`, `nova-2`). Nova-3 has ~50% lower WER than Whisper |
+| `DEEPGRAM_LANGUAGE` | `multi` | `multi` = auto code-switching across 10 langs incl. Italian + English. Lock to `it` / `en` for single-language videos |
+| `DEEPGRAM_KEYTERMS` | *(unset)* | Comma-separated brand names / jargon to boost recognition (Nova-3 only) |
+| `DEEPGRAM_HTTP_TIMEOUT` | `600` | Per-request timeout (sec) |
+| `DEEPGRAM_MAX_RETRIES` | `3` | Retries with exponential backoff on 429/5xx (honours `Retry-After`) |
+| `DEEPGRAM_MAX_FILE_MB` | `1900` | Safety cap below Deepgram's 2 GB hard limit |
 
 ## How It Works
 
 ```
 Input (URL or file)
   → Download (yt-dlp)
-  → Transcribe (faster-whisper, cached by URL hash)
+  → Transcribe (Deepgram Nova-3 by default, faster-whisper fallback; cached by URL hash)
   → Detect scenes (PySceneDetect, 7 sample frames per scene)
   → Rank viral moments (Gemini)
   → Reframe to 9:16
@@ -122,6 +130,7 @@ Input (URL or file)
 ```
 app.py              FastAPI server, job queue, endpoints (~680 lines)
 main.py             Pipeline: download → transcribe → detect → reframe → normalize
+deepgram_transcribe.py  Deepgram Nova-3 REST client (retry/backoff, keyterm prompting)
 compose.py          Smart Cut → Hook → Subtitles compose pipeline
 subtitle_pipeline.py Subtitle generation + burn helper
 clip_endpoints.py   Smart Cut + history restore endpoint helpers
@@ -174,6 +183,7 @@ tests/                          pytest suite (32 unit tests)
 |--------|------|---------|
 | POST | `/api/compose/{job_id}/{clip_index}` | Compose final video from active toggles |
 | POST | `/api/smartcut/{job_id}/{clip_index}` | Generate smart-cut version |
+| POST | `/api/reframe/{job_id}/{clip_index}` | Switch reframe mode (`auto` ↔ `disabled`) post-hoc |
 | POST | `/api/subtitle` | Generate and burn subtitles |
 | POST | `/api/hook` | Add hook text overlay |
 | GET | `/api/subtitle/presets` | List available subtitle preset names |
@@ -293,5 +303,5 @@ docker compose -f docker-compose.yml -f docker-compose.cpu.yml up --build
 
 - [auto-editor](https://github.com/WyattBlue/auto-editor) — frame-accurate timeline renderer + audio polish
 - [Zernio](https://zernio.com) — multi-platform social publishing API
-- [faster-whisper](https://github.com/SYSTRAN/faster-whisper), [YOLOv8](https://github.com/ultralytics/ultralytics), [MediaPipe](https://github.com/google-ai-edge/mediapipe), [PySceneDetect](https://github.com/Breakthrough/PySceneDetect)
+- [Deepgram Nova-3](https://deepgram.com/learn/introducing-nova-3-speech-to-text-api), [faster-whisper](https://github.com/SYSTRAN/faster-whisper), [YOLOv8](https://github.com/ultralytics/ultralytics), [MediaPipe](https://github.com/google-ai-edge/mediapipe), [PySceneDetect](https://github.com/Breakthrough/PySceneDetect)
 - Originally a fork of OpenShorts

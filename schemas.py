@@ -47,6 +47,15 @@ class HookRequest(BaseModel):
     size: str = "M"
 
 
+class ReframeRequest(BaseModel):
+    """Switch a clip between reframe modes after it has been generated.
+
+    Only valid when the per-clip 16:9 source slice was preserved on disk
+    (i.e. jobs produced after the post-hoc reframe feature landed).
+    """
+    reframe_mode: str = "auto"  # "auto" or "disabled"
+
+
 class ComposeRequest(BaseModel):
     toggles: dict = {}
     hook_params: dict = {}
