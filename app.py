@@ -599,28 +599,22 @@ async def add_hook(req: HookRequest):
 
     clip_data = clips[req.clip_index]
 
-    if req.input_filename:
-        filename = os.path.basename(req.input_filename)
-    else:
-        filename = clip_data.get('video_url', '').split('/')[-1]
-        if not filename:
-            base_name = os.path.basename(metadata_path).replace('_metadata.json', '')
-            filename = f"{base_name}_clip_{req.clip_index+1}.mp4"
-
+    filename = resolve_clip_filename(req, clip_data, metadata_path)
     input_path = os.path.join(output_dir, filename)
     if not os.path.exists(input_path):
         raise HTTPException(status_code=404, detail=f"Video file not found: {input_path}")
 
     output_filename = f"hook_{filename}"
     output_path = os.path.join(output_dir, output_filename)
-
-    size_map = {"S": 0.8, "M": 1.0, "L": 1.3}
-    font_scale = size_map.get(req.size, 1.0)
+    font_scale = {"S": 0.8, "M": 1.0, "L": 1.3}.get(req.size, 1.0)
 
     try:
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(
-            None, lambda: add_hook_to_video(input_path, req.text, output_path, position=req.position, font_scale=font_scale)
+            None,
+            lambda: add_hook_to_video(
+                input_path, req.text, output_path, position=req.position, font_scale=font_scale
+            ),
         )
     except Exception as e:
         logger.error("Hook error: %s", e)
