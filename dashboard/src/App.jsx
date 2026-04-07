@@ -12,6 +12,7 @@ import ProcessingAnimation from './components/ProcessingAnimation';
 import { getApiUrl } from './config';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/sonner';
+import { submitProcessJob, submitBatchJob } from './lib/api';
 import { useHistory } from './hooks/useHistory';
 import { useSessionPersistence } from './hooks/useSessionPersistence';
 import { useJobPolling } from './hooks/useJobPolling';
@@ -129,37 +130,8 @@ function App() {
     }
 
     try {
-      let body;
-      const headers = { 'X-Gemini-Key': apiKey };
-
-      if (data.type === 'url') {
-        headers['Content-Type'] = 'application/json';
-        const jsonBody = { url: data.payload };
-        if (data.instructions) jsonBody.instructions = data.instructions;
-        // Pass reframe_mode to backend if not default
-        if (data.preselections?.reframe_mode && data.preselections.reframe_mode !== 'auto') {
-          jsonBody.reframe_mode = data.preselections.reframe_mode;
-        }
-        body = JSON.stringify(jsonBody);
-      } else {
-        const formData = new FormData();
-        formData.append('file', data.payload);
-        if (data.preselections?.reframe_mode && data.preselections.reframe_mode !== 'auto') {
-          formData.append('reframe_mode', data.preselections.reframe_mode);
-        }
-        body = formData;
-      }
-
-      const res = await fetch(getApiUrl('/api/process'), {
-        method: 'POST',
-        headers,
-        body
-      });
-
-      if (!res.ok) throw new Error(await res.text());
-      const resData = await res.json();
+      const resData = await submitProcessJob(data, apiKey);
       setJobId(resData.job_id);
-
     } catch (e) {
       setStatus('error');
       setLogs(l => [...l, `Error: ${e.message}`]);
@@ -181,18 +153,7 @@ function App() {
     }
 
     try {
-      const batchBody = { urls: data.urls, instructions: data.instructions };
-      if (data.preselections?.reframe_mode && data.preselections.reframe_mode !== 'auto') {
-        batchBody.reframe_mode = data.preselections.reframe_mode;
-      }
-      const res = await fetch(getApiUrl('/api/batch'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Gemini-Key': apiKey },
-        body: JSON.stringify(batchBody)
-      });
-
-      if (!res.ok) throw new Error(await res.text());
-      const resData = await res.json();
+      const resData = await submitBatchJob(data, apiKey);
       setLogs(l => [...l, `Batch ${resData.batch_id}: ${resData.total} jobs queued`]);
 
       // Poll batch status
