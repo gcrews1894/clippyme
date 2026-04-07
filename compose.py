@@ -7,7 +7,6 @@ validation, path resolution and HTTP error mapping.
 import asyncio
 import os
 import shutil
-from typing import Any
 
 from fastapi import HTTPException
 

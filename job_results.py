@@ -2,7 +2,6 @@
 import glob
 import json
 import os
-from typing import Any
 
 
 def build_main_cmd(
