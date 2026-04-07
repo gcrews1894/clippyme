@@ -17,6 +17,7 @@ import IdleHero from './components/IdleHero';
 import ResultsGrid from './components/ResultsGrid';
 import TopNav from './components/TopNav';
 import ApiKeyModal from './components/ApiKeyModal';
+import ProcessingView from './components/ProcessingView';
 import { getApiUrl } from './config';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/sonner';
@@ -277,125 +278,28 @@ function App() {
               />
             )}
 
-            {/* Step 2: Processing */}
-            {(status === 'processing' || status === 'error') && !results?.clips?.length && (
-              <div className="space-y-6">
-                {/* Pulsing gradient border wrapper */}
-                <div className={`rounded-2xl p-[1px] ${status === 'processing' ? 'bg-gradient-to-r from-pink-500 via-purple-500 to-blue-500 animate-pulse' : 'bg-red-500/50'}`}>
-                  <div className="rounded-2xl bg-[#0f0f13] p-6 space-y-6">
-                    {/* Pipeline steps */}
-                    {status === 'processing' && <PipelineSteps currentStep={currentStep} />}
-
-                    {/* Processing animation */}
-                    {processingMedia && (
-                      <ProcessingAnimation
-                        media={processingMedia}
-                        isComplete={status === 'complete'}
-                        syncedTime={syncedTime}
-                        isSyncedPlaying={isSyncedPlaying}
-                        syncTrigger={syncTrigger}
-                      />
-                    )}
-
-                    {/* Error state */}
-                    {status === 'error' && (
-                      <div className="flex flex-col items-center py-8 space-y-4">
-                        <div className="w-14 h-14 rounded-2xl bg-red-500/10 flex items-center justify-center">
-                          <AlertCircle size={28} className="text-red-400" />
-                        </div>
-                        <div className="text-center">
-                          <p className="text-base font-semibold text-red-400">Processing Failed</p>
-                          <p className="text-sm text-zinc-500 mt-1">Check the logs below for details.</p>
-                        </div>
-                        <div className="flex gap-3">
-                          {processingMedia && (
-                            <button
-                              onClick={() => handleProcess(processingMedia)}
-                              className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-pink-500 to-purple-500 text-white text-sm font-semibold hover:opacity-90 transition-all"
-                            >
-                              <RotateCcw size={14} /> Retry
-                            </button>
-                          )}
-                          <button
-                            onClick={handleReset}
-                            className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-zinc-300 text-sm font-medium hover:bg-white/10 transition-all"
-                          >
-                            New Project
-                          </button>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Waiting spinner for processing (no clips yet, no error) */}
-                    {status === 'processing' && (
-                      <div className="flex flex-col items-center py-6 space-y-4">
-                        <div className="relative">
-                          <div className="w-16 h-16 rounded-full border-[3px] border-zinc-800 border-t-blue-400 animate-spin" />
-                          <div className="absolute inset-0 flex items-center justify-center">
-                            <Activity size={20} className="text-blue-400 animate-pulse" />
-                          </div>
-                        </div>
-                        <p className="text-sm text-zinc-500">Waiting for first segment...</p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Logs panel */}
-                <LogsPanel
-                  logs={logs}
-                  visible={logsVisible}
-                  onToggle={() => setLogsVisible(!logsVisible)}
-                  showWaiting={status === 'processing'}
-                />
-              </div>
-            )}
-
-            {/* Step 2b: Processing with partial results */}
-            {status === 'processing' && results?.clips?.length > 0 && (
-              <div className="space-y-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                      <Sparkles size={20} className="text-blue-400" />
-                      Generating Clips...
-                    </h2>
-                    <p className="text-zinc-500 text-sm mt-1">{results.clips.length} segment{results.clips.length !== 1 ? 's' : ''} found so far</p>
-                  </div>
-                  <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20">
-                    <Activity size={14} className="text-blue-400 animate-pulse" />
-                    <span className="text-xs font-medium text-blue-400">Processing</span>
-                  </div>
-                </div>
-
-                {/* Pipeline steps */}
-                <PipelineSteps currentStep={currentStep} />
-
-                {/* Partial results grid */}
-                <div className="grid gap-6 grid-cols-1 lg:grid-cols-2">
-                  {results.clips.map((clip, i) => (
-                    <ResultCard
-                      key={i}
-                      clip={clip}
-                      index={i}
-                      jobId={jobId}
-                      preselections={preselections}
-                      onPlay={(time) => handleClipPlay(time)}
-                      onPause={handleClipPause}
-                    />
-                  ))}
-                </div>
-
-                {/* Collapsible logs */}
-                <LogsPanel
-                  logs={logs}
-                  visible={logsVisible}
-                  onToggle={() => setLogsVisible(!logsVisible)}
-                  maxHeightClass="max-h-48"
-                  showWaiting
-                />
-              </div>
-            )}
+            {/* Step 2: Processing / error (no clips yet) + Step 2b: partial results */}
+            {((status === 'processing' || status === 'error') && !results?.clips?.length) ||
+            (status === 'processing' && results?.clips?.length > 0) ? (
+              <ProcessingView
+                status={status}
+                currentStep={currentStep}
+                processingMedia={processingMedia}
+                results={results}
+                jobId={jobId}
+                preselections={preselections}
+                syncedTime={syncedTime}
+                isSyncedPlaying={isSyncedPlaying}
+                syncTrigger={syncTrigger}
+                logs={logs}
+                logsVisible={logsVisible}
+                onLogsToggle={() => setLogsVisible(!logsVisible)}
+                onClipPlay={handleClipPlay}
+                onClipPause={handleClipPause}
+                onRetry={handleProcess}
+                onReset={handleReset}
+              />
+            ) : null}
 
             {/* Step 3: Results (complete or error with results) */}
             {(status === 'complete' || (status === 'error' && results?.clips?.length > 0)) && (
