@@ -17,6 +17,8 @@ Two-stage pipeline:
 Public API (unchanged): smart_cut(clip_path, transcript, clip_start, clip_end, language)
 """
 
+import contextlib
+import hashlib
 import logging
 import os
 import re
@@ -34,6 +36,11 @@ logger = logging.getLogger(__name__)
 # phrase ("you know", "uh huh"). The matcher below builds an n-gram lookup
 # so multi-word phrases actually match (the previous single-token-only set
 # lookup made all multi-word entries dead config).
+#
+# This dict can be EXTENDED at runtime: if `data/filler_words.json` exists,
+# its entries are merged into FILLER_WORDS via _load_external_filler_config()
+# at first use. Operators can add domain jargon (e.g. company-specific
+# verbal tics) without editing source code.
 FILLER_WORDS = {
     "it": {"ehm", "uhm", "eh", "ah", "mhm", "cioe", "cioè", "tipo", "praticamente",
            "diciamo", "insomma", "ecco", "allora", "niente", "vabbè", "vabbe"},
@@ -43,6 +50,21 @@ FILLER_WORDS = {
     "fr": {"euh", "ben", "genre", "en fait", "du coup", "voilà", "bah"},
     "de": {"ähm", "also", "halt", "sozusagen", "quasi", "na ja"},
 }
+
+# Path to optional external filler config. JSON shape: {"<lang>": ["word1", ...]}
+EXTERNAL_FILLER_CONFIG = os.environ.get(
+    "AE_FILLER_CONFIG", os.path.join("data", "filler_words.json")
+)
+_filler_external_loaded = False
+_filler_external_lock = threading.Lock()
+
+# Concurrency cap for parallel auto-editor invocations. Each invocation is
+# CPU-bound (libav decode + encode); spawning unlimited copies under heavy
+# load can starve the box. Adjustable via env var. 0/negative = unlimited.
+_AE_MAX_PARALLEL = max(0, int(os.environ.get("AE_MAX_PARALLEL", "2")))
+_AE_CONCURRENCY_SEM: Optional[threading.Semaphore] = (
+    threading.Semaphore(_AE_MAX_PARALLEL) if _AE_MAX_PARALLEL > 0 else None
+)
 
 DEFAULT_LANG = "en"
 
@@ -92,12 +114,53 @@ def _normalize_token(text: str) -> str:
     return _NORM_RE.sub("", text).strip().lower()
 
 
+def _load_external_filler_config() -> None:
+    """Merge entries from EXTERNAL_FILLER_CONFIG into FILLER_WORDS once.
+
+    Idempotent + thread-safe. If the file is missing, malformed, or any I/O
+    error occurs, we log a debug message and skip silently — the built-in
+    FILLER_WORDS remain in effect.
+    """
+    global _filler_external_loaded
+    if _filler_external_loaded:
+        return
+    with _filler_external_lock:
+        if _filler_external_loaded:
+            return
+        _filler_external_loaded = True
+        path = EXTERNAL_FILLER_CONFIG
+        if not path or not os.path.exists(path):
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                external = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            logger.debug("smartcut: external filler config %s failed to load: %s", path, e)
+            return
+        if not isinstance(external, dict):
+            logger.debug("smartcut: external filler config %s is not a JSON object", path)
+            return
+        added = 0
+        for lang, entries in external.items():
+            if not isinstance(entries, list):
+                continue
+            bucket = FILLER_WORDS.setdefault(lang, set())
+            for entry in entries:
+                if isinstance(entry, str) and entry.strip():
+                    bucket.add(entry.strip())
+                    added += 1
+        if added:
+            logger.info("smartcut: merged %d external filler entries from %s", added, path)
+
+
 def _build_filler_index(lang: str) -> tuple[set[str], int]:
     """Compile the filler list for a language into (phrase_set, max_ngram).
 
     Returns the set of normalized filler phrases and the maximum number
     of words across all phrases — used to drive the n-gram window size.
+    Side effect: triggers a one-time external config merge.
     """
+    _load_external_filler_config()
     raw = FILLER_WORDS.get(lang, FILLER_WORDS[DEFAULT_LANG])
     phrases: set[str] = set()
     max_n = 1
@@ -108,6 +171,18 @@ def _build_filler_index(lang: str) -> tuple[set[str], int]:
         phrases.add(norm)
         max_n = max(max_n, len(norm.split()))
     return phrases, max_n
+
+
+def _segments_hash(segments: list[tuple[float, float]], lang: str) -> str:
+    """Stable short hash for an output filename. Encodes the actual cut plan
+    + language so a re-run with different params produces a different file
+    (no false-positive cache hit on language change).
+    """
+    payload = json.dumps(
+        {"lang": lang or "", "segs": [(round(s, 3), round(e, 3)) for s, e in segments]},
+        separators=(",", ":"),
+    )
+    return hashlib.sha1(payload.encode()).hexdigest()[:10]
 
 # Audio polish pass: amplitude threshold under which audio is considered silent.
 # 0.04 ≈ -28 dB. Conservative — won't touch normal speech, only true quiet.
@@ -294,6 +369,37 @@ def _auto_editor_version() -> Optional[str]:
     return version
 
 
+def _ae_supports_no_cache() -> bool:
+    """`--no-cache` was added in auto-editor v30.1.0. Detect support so we
+    don't pass an unrecognized flag to older binaries (legacy v29 install).
+    """
+    version = _auto_editor_version()
+    if not version:
+        return False
+    try:
+        parts = [int(p) for p in version.split(".")[:3]]
+        while len(parts) < 3:
+            parts.append(0)
+        return tuple(parts) >= (30, 1, 0)
+    except (ValueError, AttributeError):
+        return False
+
+
+@contextlib.contextmanager
+def _ae_concurrency_slot():
+    """Acquire a slot from the global auto-editor concurrency semaphore.
+    No-op if AE_MAX_PARALLEL <= 0 (unlimited).
+    """
+    if _AE_CONCURRENCY_SEM is None:
+        yield
+        return
+    _AE_CONCURRENCY_SEM.acquire()
+    try:
+        yield
+    finally:
+        _AE_CONCURRENCY_SEM.release()
+
+
 def _probe_video(clip_path: str) -> Optional[dict]:
     """Probe a video file for fps, resolution, and audio sample rate.
     Cached per (path, size, mtime).
@@ -433,9 +539,12 @@ def _render_with_auto_editor(
         with open(timeline_path, "w") as f:
             json.dump(timeline, f)
 
-        rc, _, stderr = _run(
-            ["auto-editor", timeline_path, "-o", output_path, "--no-open"]
-        )
+        cmd = ["auto-editor", timeline_path, "-o", output_path, "--no-open"]
+        if _ae_supports_no_cache():
+            cmd.append("--no-cache")
+
+        with _ae_concurrency_slot():
+            rc, _, stderr = _run(cmd)
         ok = rc == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 0
         if not ok:
             logger.warning("auto-editor render failed (rc=%s): %s", rc, stderr.strip()[:300])
@@ -516,13 +625,17 @@ def _audio_polish_pass(input_path: str) -> tuple[str, float]:
         return input_path, 0.0
 
     polished_path = input_path.replace(".mp4", "_polished.mp4")
-    rc, _, stderr = _run([
+    cmd = [
         "auto-editor", input_path,
         "--edit", f"audio:threshold={AUDIO_POLISH_THRESHOLD}",
         "--margin", AUDIO_POLISH_MARGIN,
         "--no-open",
         "-o", polished_path,
-    ], timeout=min(SUBPROCESS_TIMEOUT_SECONDS, 180))
+    ]
+    if _ae_supports_no_cache():
+        cmd.append("--no-cache")
+    with _ae_concurrency_slot():
+        rc, _, stderr = _run(cmd, timeout=min(SUBPROCESS_TIMEOUT_SECONDS, 180))
 
     if rc != 0 or not os.path.exists(polished_path):
         if rc != 0:
@@ -623,20 +736,33 @@ def _smart_cut_inner(clip_path, transcript, clip_start, clip_end, language=None)
         stats["skipped"] = True
         return None, stats
 
-    output_path = os.path.splitext(clip_path)[0] + "_smartcut.mp4"
-    # Cache hit: a previous run already produced the smartcut for this exact
+    # Hash the cut plan + language so a re-run with different params produces
+    # a different filename — no false-positive cache hit on language change.
+    plan_hash = _segments_hash(segments, language or "")
+    base, _ext = os.path.splitext(clip_path)
+    # Backwards-compat: also accept the legacy `_smartcut.mp4` if present.
+    output_path = f"{base}_smartcut_{plan_hash}.mp4"
+    legacy_path = f"{base}_smartcut.mp4"
+
+    # Cache hit: a previous run already produced this exact plan against this
     # source mtime. Skip re-rendering — the work is identical.
     try:
-        if (os.path.exists(output_path)
-                and os.path.exists(clip_path)
-                and os.path.getmtime(output_path) >= os.path.getmtime(clip_path)
-                and os.path.getsize(output_path) > 0):
-            stats["cached"] = True
-            stats["renderer"] = "cache"
-            stats["new_duration"] = round(_probe_duration(output_path), 1)
-            stats["time_saved"] = round(stats["original_duration"] - stats["new_duration"], 1)
-            logger.info("smartcut cache hit: reusing %s", os.path.basename(output_path))
-            return output_path, stats
+        for candidate in (output_path, legacy_path):
+            if (os.path.exists(candidate)
+                    and os.path.exists(clip_path)
+                    and os.path.getmtime(candidate) >= os.path.getmtime(clip_path)
+                    and os.path.getsize(candidate) > 0):
+                stats["cached"] = True
+                stats["renderer"] = "cache"
+                ver = _auto_editor_version()
+                if ver:
+                    stats["renderer_version"] = ver
+                stats["new_duration"] = round(_probe_duration(candidate), 1)
+                stats["time_saved"] = round(
+                    stats["original_duration"] - stats["new_duration"], 1
+                )
+                logger.info("smartcut cache hit: reusing %s", os.path.basename(candidate))
+                return candidate, stats
     except OSError:
         pass
 
