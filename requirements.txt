@@ -21,6 +21,9 @@ opencv-python==4.13.0.92
 psutil==7.0.0
 # Fallback repair library for Gemini viral-detection JSON parsing
 # (level 3 of the gemini_parser.py chain). Pure Python, no native deps.
+# If throughput becomes a bottleneck, `fast-json-repair` (Rust-based,
+# Python 3.11+, released Oct 2025) is a drop-in faster alternative —
+# swap only if profiling shows the parse step is >5% of request time.
 json-repair>=0.30
 # Note: auto-editor is NOT a pip dep. It's installed as a Nim binary
 # (v30.x track) by the Dockerfile from GitHub releases, and kept up-to-date

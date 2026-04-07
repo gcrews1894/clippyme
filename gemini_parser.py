@@ -38,6 +38,14 @@ logger = logging.getLogger(__name__)
 
 JSON_DELIMITER = "### JSON ###"
 
+# The delimiter in the prompt is canonical, but Gemini (especially flash)
+# occasionally emits tiny variations: different spacing, lowercase, extra
+# hashes, or markdown bold wrapping. Match them all with a single regex.
+_DELIMITER_PATTERN = re.compile(
+    r"(?:\*{0,2})#{2,4}\s*json\s*#{2,4}(?:\*{0,2})",
+    re.IGNORECASE,
+)
+
 _CODE_FENCE_OPEN = re.compile(r"^\s*```(?:json)?\s*", re.IGNORECASE)
 _CODE_FENCE_CLOSE = re.compile(r"\s*```\s*$")
 _TRAILING_COMMA = re.compile(r",(\s*[}\]])")
@@ -61,13 +69,17 @@ class ParseResult:
 def _extract_json_section(text: str) -> str:
     """Isolate the JSON body from reasoning + code fences.
 
-    If the ``### JSON ###`` delimiter is present, everything before it
-    (including chain-of-thought reasoning) is discarded. Then any
-    ``` ```json ... ``` ``` fence is stripped defensively so the rest
-    of the pipeline sees raw JSON whatever the model emits.
+    If a delimiter matching ``_DELIMITER_PATTERN`` is present,
+    everything before the LAST occurrence is discarded (chain-of-
+    thought reasoning). The "last occurrence" rule matters because
+    Gemini occasionally echoes the delimiter inside its own reasoning.
+
+    Then any ``` ```json ... ``` ``` fence is stripped defensively so
+    the rest of the pipeline sees raw JSON whatever the model emits.
     """
-    if JSON_DELIMITER in text:
-        text = text.split(JSON_DELIMITER, 1)[1]
+    matches = list(_DELIMITER_PATTERN.finditer(text))
+    if matches:
+        text = text[matches[-1].end():]
     text = _CODE_FENCE_OPEN.sub("", text)
     text = _CODE_FENCE_CLOSE.sub("", text)
     return text.strip()
@@ -157,10 +169,40 @@ def parse_gemini_response(
     return ParseResult(None, "fallback", (time.time() - t0) * 1000, strict_err)
 
 
+def _viral_reason_is_generic(reason: str) -> bool:
+    """Heuristic: does ``viral_reason`` look like a placeholder?
+
+    We already reject reasons shorter than 20 chars via Pydantic, but
+    a 25-char generic line ("this is a cool moment in the video") can
+    still slip through. Detect the most common hedging phrases and
+    flag them so the caller can either drop the clip or downgrade the
+    score.
+    """
+    lowered = reason.lower().strip()
+    generic_markers = (
+        "interesting point",
+        "cool moment",
+        "great content",
+        "good clip",
+        "this moment",
+        "this part",
+        "nice segment",
+        "important point",
+    )
+    if any(m in lowered for m in generic_markers):
+        return True
+    # A reason with no digits AND no quoted fragment almost never
+    # cites a specific hook or payoff — treat as weak signal.
+    has_digit = any(ch.isdigit() for ch in lowered)
+    has_quote = '"' in reason or "'" in reason
+    return (not has_digit) and (not has_quote) and len(lowered.split()) < 8
+
+
 def validate_and_dedupe(
     data: Dict[str, Any],
     video_duration: Optional[float] = None,
     overlap_threshold: float = 0.7,
+    drop_generic: bool = False,
 ) -> List[Dict[str, Any]]:
     """Pydantic-validate then remove overlapping clips.
 
@@ -181,6 +223,15 @@ def validate_and_dedupe(
     candidates = list(parsed.shorts)
     if video_duration is not None:
         candidates = [c for c in candidates if c.end <= video_duration + 0.5]
+
+    if drop_generic:
+        before = len(candidates)
+        candidates = [c for c in candidates if not _viral_reason_is_generic(c.viral_reason)]
+        dropped = before - len(candidates)
+        if dropped:
+            logger.info(
+                "validate_and_dedupe: dropped %d clip(s) with generic viral_reason", dropped
+            )
 
     candidates.sort(key=lambda c: -c.viral_score)
 

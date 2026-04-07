@@ -229,6 +229,88 @@ def test_rejects_short_viral_reason() -> None:
         validate_and_dedupe(data, video_duration=300)
 
 
+@pytest.mark.parametrize(
+    "delimiter_variant",
+    [
+        "### JSON ###",
+        "###JSON###",
+        "###  JSON  ###",
+        "### json ###",
+        "#### JSON ####",
+        "**### JSON ###**",
+    ],
+)
+def test_delimiter_variants_are_all_recognized(delimiter_variant: str) -> None:
+    """The delimiter regex must tolerate case, spacing, extra hashes
+    and markdown bold wrapping that Gemini occasionally emits."""
+    fixture = (
+        "Internal reasoning goes here.\n"
+        f"{delimiter_variant}\n"
+        '{"shorts":[' + _clip(reason="Robust delimiter test fixture ensuring match") + "]}"
+    )
+    result = parse_gemini_response(fixture)
+    assert result.data is not None, f"delimiter {delimiter_variant!r} not recognized"
+    assert result.parse_path == "strict"
+    assert len(result.data["shorts"]) == 1
+
+
+def test_last_delimiter_wins_when_model_echoes_it() -> None:
+    """If the model mentions the delimiter inside its own reasoning,
+    the parser must use the LAST occurrence as the split point so the
+    real JSON body is the one extracted."""
+    fixture = (
+        "I will emit my answer after the ### JSON ### delimiter.\n"
+        "### JSON ###\n"
+        '{"shorts":[' + _clip(reason="Last delimiter wins when model echoes the marker twice") + "]}"
+    )
+    result = parse_gemini_response(fixture)
+    assert result.data is not None
+    assert result.parse_path == "strict"
+    assert len(result.data["shorts"]) == 1
+
+
+def test_drop_generic_removes_placeholder_reasons() -> None:
+    """When ``drop_generic=True`` we kill clips whose viral_reason
+    looks like a placeholder ('interesting point', etc.), even if
+    they pass the 20-char Pydantic minimum."""
+    data = {
+        "shorts": [
+            {
+                "start": 10,
+                "end": 35,
+                "viral_score": 90,
+                "viral_reason": "This is an interesting point about the topic discussed",
+            },
+            {
+                "start": 100,
+                "end": 130,
+                "viral_score": 85,
+                "viral_reason": "Builds tension with three failed attempts then lands at 125s",
+            },
+        ]
+    }
+    kept = validate_and_dedupe(data, video_duration=300, drop_generic=True)
+    assert len(kept) == 1
+    assert kept[0]["start"] == 100
+
+
+def test_drop_generic_disabled_by_default() -> None:
+    """Existing call sites that don't pass ``drop_generic`` must keep
+    their current behaviour — no silent regression."""
+    data = {
+        "shorts": [
+            {
+                "start": 10,
+                "end": 35,
+                "viral_score": 90,
+                "viral_reason": "This is an interesting point about the topic discussed",
+            }
+        ]
+    }
+    kept = validate_and_dedupe(data, video_duration=300)
+    assert len(kept) == 1
+
+
 def test_clamps_to_video_duration() -> None:
     """Clips ending beyond the video length should be dropped silently,
     not raise. This prevents Gemini hallucinations from crashing."""

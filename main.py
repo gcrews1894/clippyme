@@ -1468,23 +1468,43 @@ def get_viral_clips(transcript_result, video_duration, instructions=None):
         text = response.text or ""
 
         def _retry_gemini(err_msg: str) -> str:
-            """Level-4 retry: ask Gemini to re-emit JSON only.
+            """Level-4 retry: reformat ONLY, using the cheap flash model.
 
-            Uses the same ``client.models.generate_content`` call shape
-            as the primary request so it works with the google-genai
-            SDK used by the rest of this module.
+            The reasoning is already done in the primary call — if it
+            produced text we just failed to parse, the bottleneck is
+            formatting, not understanding. Decouple the two concerns
+            (Gopalan, Google Cloud Community, Oct 2025) and hand the
+            retry to gemini-2.5-flash which is ~10x cheaper than pro
+            and plenty capable of reformatting JSON.
+
+            Crucially, we do NOT resend the full transcript + prompt:
+            we hand the model ONLY the previous broken output and ask
+            it to reformat. That avoids paying the input-token cost of
+            the transcript twice and keeps the retry latency-bounded.
             """
+            retry_model = "gemini-2.5-flash"
             retry_prompt = (
-                f"{prompt}\n\n"
-                f"PREVIOUS_RESPONSE_WAS_INVALID_JSON: {err_msg}\n"
-                f"Return ONLY the JSON object after the `### JSON ###` delimiter, "
-                f"no prose, no markdown, no code fences. Match the schema exactly."
+                "You are a JSON reformatter. The previous response below was not "
+                "valid JSON and failed parsing with this error:\n\n"
+                f"ERROR: {err_msg}\n\n"
+                "PREVIOUS_BROKEN_OUTPUT:\n"
+                f"{text}\n\n"
+                "Return ONLY a valid JSON object matching this exact shape:\n"
+                '{"shorts": [{"start": <float>, "end": <float>, '
+                '"viral_score": <int 1-100>, "viral_reason": "<str min 20 chars>", '
+                '"video_description_for_tiktok": "<str>", '
+                '"video_description_for_instagram": "<str>", '
+                '"video_title_for_youtube_short": "<str>", '
+                '"viral_hook_text": "<str>"}]}\n\n'
+                "Rules: straight double quotes only, no trailing commas, no markdown, "
+                "no code fences, no prose before or after. Escape every backslash as \\\\."
             )
             try:
                 retry_resp = client.models.generate_content(
-                    model=model_name,
+                    model=retry_model,
                     contents=retry_prompt,
                 )
+                print(f"🔁 Retry via {retry_model} (cheap reformatter)")
                 return retry_resp.text or ""
             except Exception as e:
                 print(f"⚠️  Gemini retry failed: {e}")
@@ -1512,6 +1532,7 @@ def get_viral_clips(transcript_result, video_duration, instructions=None):
                 parse_result.data,
                 video_duration=video_duration,
                 overlap_threshold=0.7,
+                drop_generic=True,
             )
         except ValidationError as e:
             print(f"❌ Pydantic validation failed: {e}")
