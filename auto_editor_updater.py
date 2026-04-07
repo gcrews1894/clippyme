@@ -20,6 +20,9 @@ installed at all (smartcut.py has its own FFmpeg fallback).
 """
 
 import asyncio
+import contextlib
+import errno
+import fcntl
 import json
 import logging
 import os
@@ -29,7 +32,7 @@ import subprocess
 import tempfile
 import time
 import urllib.request
-from typing import Optional
+from typing import Iterator, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -139,12 +142,50 @@ def _download_binary(asset_name: str, target_path: str) -> bool:
         return False
 
 
+@contextlib.contextmanager
+def _update_lock() -> Iterator[bool]:
+    """Best-effort exclusive lock so concurrent workers don't double-download.
+
+    Yields True if the caller acquired the lock, False if another process
+    already holds it (in which case the caller should skip the update).
+    Lockfile is non-blocking; on any OS error we fall through and yield True
+    so the updater still tries (failure-tolerant rather than deadlock-prone).
+    """
+    os.makedirs(UPDATE_DIR, exist_ok=True)
+    lock_path = os.path.join(UPDATE_DIR, ".update.lock")
+    fd = None
+    try:
+        fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as e:
+            if e.errno in (errno.EWOULDBLOCK, errno.EAGAIN):
+                logger.debug("auto-editor updater: another worker holds the lock, skipping")
+                yield False
+                return
+            raise
+        yield True
+    except OSError as e:
+        logger.debug("auto-editor updater: lock acquisition fell through (%s)", e)
+        yield True
+    finally:
+        if fd is not None:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            except OSError:
+                pass
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+
 def check_and_update_once() -> dict:
     """Synchronous one-shot update check. Safe to call from any context.
 
     Returns a dict with keys: action, current, latest, message.
     action ∈ {"updated", "up_to_date", "skipped", "unsupported", "no_local",
-              "github_unreachable", "download_failed"}
+              "github_unreachable", "download_failed", "locked"}
     """
     asset = _detect_asset_name()
     if asset is None:
@@ -161,23 +202,35 @@ def check_and_update_once() -> dict:
         return {"action": "up_to_date", "current": current, "latest": latest,
                 "message": f"auto-editor {current} is current"}
 
-    logger.info(
-        "auto-editor updater: %s available (have %s) — downloading %s",
-        latest, current or "none", asset,
-    )
-    ok = _download_binary(asset, UPDATE_BINARY)
-    if not ok:
-        return {"action": "download_failed", "current": current, "latest": latest,
-                "message": "Download or sanity check failed; keeping existing binary"}
+    with _update_lock() as acquired:
+        if not acquired:
+            return {"action": "locked", "current": current, "latest": latest,
+                    "message": "Another worker is already updating"}
 
-    try:
-        with open(VERSION_CACHE, "w") as f:
-            f.write(f"{latest}\n{int(time.time())}\n")
-    except OSError:
-        pass
+        # Re-check version inside the lock — another worker may have updated
+        # while we were blocked at the GitHub API call.
+        current_after = _read_local_version()
+        if current_after and _versions_equal(current_after, latest):
+            return {"action": "up_to_date", "current": current_after, "latest": latest,
+                    "message": f"auto-editor {current_after} is current (after lock)"}
 
-    return {"action": "updated", "current": current, "latest": latest,
-            "message": f"auto-editor updated {current or 'none'} → {latest}"}
+        logger.info(
+            "auto-editor updater: %s available (have %s) — downloading %s",
+            latest, current_after or "none", asset,
+        )
+        ok = _download_binary(asset, UPDATE_BINARY)
+        if not ok:
+            return {"action": "download_failed", "current": current_after, "latest": latest,
+                    "message": "Download or sanity check failed; keeping existing binary"}
+
+        try:
+            with open(VERSION_CACHE, "w") as f:
+                f.write(f"{latest}\n{int(time.time())}\n")
+        except OSError:
+            pass
+
+        return {"action": "updated", "current": current_after, "latest": latest,
+                "message": f"auto-editor updated {current_after or 'none'} → {latest}"}
 
 
 async def background_updater_loop():
