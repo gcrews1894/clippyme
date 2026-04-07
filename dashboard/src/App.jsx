@@ -12,6 +12,7 @@ import ProcessingAnimation from './components/ProcessingAnimation';
 import HistoryTab from './components/HistoryTab';
 import SettingsTab from './components/SettingsTab';
 import PipelineSteps from './components/PipelineSteps';
+import LogsPanel from './components/LogsPanel';
 import { getApiUrl } from './config';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/sonner';
@@ -454,30 +455,12 @@ function App() {
                 </div>
 
                 {/* Logs panel */}
-                <div className="rounded-2xl bg-[#0f0f13] border border-white/5 overflow-hidden">
-                  <button
-                    onClick={() => setLogsVisible(!logsVisible)}
-                    className="w-full px-5 py-3 flex items-center justify-between hover:bg-white/[0.02] transition-all"
-                  >
-                    <span className="text-xs font-medium text-zinc-500 flex items-center gap-2">
-                      <Terminal size={13} /> Live Logs
-                    </span>
-                    <ChevronDown size={14} className={`text-zinc-600 transition-transform ${logsVisible ? '' : 'rotate-180'}`} />
-                  </button>
-                  {logsVisible && (
-                    <div className="border-t border-white/5 p-5 max-h-64 overflow-y-auto font-mono text-[11px] space-y-1.5 text-zinc-500 leading-relaxed">
-                      {logs.map((log, i) => (
-                        <div key={i} className={`flex gap-3 ${log.toLowerCase().includes('error') ? 'text-red-400' : ''} ${log.startsWith('   ✅') || log.startsWith('✅') ? 'text-emerald-400' : ''}`}>
-                          <span className="text-zinc-700 shrink-0 select-none">[{new Date().toLocaleTimeString()}]</span>
-                          <span className="break-words">{log}</span>
-                        </div>
-                      ))}
-                      {status === 'processing' && (
-                        <div className="animate-pulse text-blue-400 font-medium">Waiting for output...</div>
-                      )}
-                    </div>
-                  )}
-                </div>
+                <LogsPanel
+                  logs={logs}
+                  visible={logsVisible}
+                  onToggle={() => setLogsVisible(!logsVisible)}
+                  showWaiting={status === 'processing'}
+                />
               </div>
             )}
 
@@ -517,28 +500,13 @@ function App() {
                 </div>
 
                 {/* Collapsible logs */}
-                <div className="rounded-2xl bg-[#0f0f13] border border-white/5 overflow-hidden">
-                  <button
-                    onClick={() => setLogsVisible(!logsVisible)}
-                    className="w-full px-5 py-3 flex items-center justify-between hover:bg-white/[0.02] transition-all"
-                  >
-                    <span className="text-xs font-medium text-zinc-500 flex items-center gap-2">
-                      <Terminal size={13} /> Live Logs
-                    </span>
-                    <ChevronDown size={14} className={`text-zinc-600 transition-transform ${logsVisible ? '' : 'rotate-180'}`} />
-                  </button>
-                  {logsVisible && (
-                    <div className="border-t border-white/5 p-5 max-h-48 overflow-y-auto font-mono text-[11px] space-y-1.5 text-zinc-500 leading-relaxed">
-                      {logs.map((log, i) => (
-                        <div key={i} className={`flex gap-3 ${log.toLowerCase().includes('error') ? 'text-red-400' : ''} ${log.startsWith('   ✅') || log.startsWith('✅') ? 'text-emerald-400' : ''}`}>
-                          <span className="text-zinc-700 shrink-0 select-none">[{new Date().toLocaleTimeString()}]</span>
-                          <span className="break-words">{log}</span>
-                        </div>
-                      ))}
-                      <div className="animate-pulse text-blue-400 font-medium">Waiting for output...</div>
-                    </div>
-                  )}
-                </div>
+                <LogsPanel
+                  logs={logs}
+                  visible={logsVisible}
+                  onToggle={() => setLogsVisible(!logsVisible)}
+                  maxHeightClass="max-h-48"
+                  showWaiting
+                />
               </div>
             )}
 
