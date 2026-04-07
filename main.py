@@ -173,6 +173,64 @@ model.to(DEVICE)
 mp_face_detection = mp.solutions.face_detection
 face_detection = mp_face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.5)
 
+# FaceMesh is used to extract mouth landmarks for active-speaker detection.
+# We process small ROIs (the face crop), not the full frame, to keep cost low.
+# refine_landmarks=False keeps it fast (478 → 468 landmarks).
+mp_face_mesh = mp.solutions.face_mesh
+face_mesh = mp_face_mesh.FaceMesh(
+    static_image_mode=False,
+    max_num_faces=1,
+    refine_landmarks=False,
+    min_detection_confidence=0.5,
+    min_tracking_confidence=0.5,
+)
+
+# MediaPipe FaceMesh landmark indices for the mouth region
+# Upper lip top, lower lip bottom, left mouth corner, right mouth corner
+_MOUTH_TOP = 13
+_MOUTH_BOTTOM = 14
+_MOUTH_LEFT = 78
+_MOUTH_RIGHT = 308
+
+
+def compute_mouth_aspect_ratio(frame_bgr, face_box) -> float | None:
+    """
+    Crops the face region and runs FaceMesh to extract the Mouth Aspect Ratio
+    (vertical mouth opening / horizontal mouth width).
+
+    Returns a normalized MAR in [0, ~1.5] or None if landmarks couldn't be
+    extracted (e.g. profile view, occlusion). The absolute value matters less
+    than its *variance over time* — a still mouth has near-zero variance, a
+    talking mouth oscillates.
+    """
+    x, y, w, h = face_box
+    H, W = frame_bgr.shape[:2]
+    # Pad the crop a bit so FaceMesh has context
+    pad = int(max(w, h) * 0.2)
+    x1 = max(0, int(x - pad))
+    y1 = max(0, int(y - pad))
+    x2 = min(W, int(x + w + pad))
+    y2 = min(H, int(y + h + pad))
+    if x2 - x1 < 30 or y2 - y1 < 30:
+        return None
+    roi = frame_bgr[y1:y2, x1:x2]
+    rgb = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)
+    rgb.flags.writeable = False
+    res = face_mesh.process(rgb)
+    if not res.multi_face_landmarks:
+        return None
+    lm = res.multi_face_landmarks[0].landmark
+    rh, rw = roi.shape[:2]
+    top = (lm[_MOUTH_TOP].x * rw, lm[_MOUTH_TOP].y * rh)
+    bot = (lm[_MOUTH_BOTTOM].x * rw, lm[_MOUTH_BOTTOM].y * rh)
+    left = (lm[_MOUTH_LEFT].x * rw, lm[_MOUTH_LEFT].y * rh)
+    right = (lm[_MOUTH_RIGHT].x * rw, lm[_MOUTH_RIGHT].y * rh)
+    mouth_h = ((top[0] - bot[0]) ** 2 + (top[1] - bot[1]) ** 2) ** 0.5
+    mouth_w = ((left[0] - right[0]) ** 2 + (left[1] - right[1]) ** 2) ** 0.5
+    if mouth_w < 1:
+        return None
+    return mouth_h / mouth_w
+
 class DetectionSmoother:
     """
     Applies temporal smoothing (rolling average) to face detection bounding boxes.
@@ -368,75 +426,105 @@ class SmoothedCameraman:
 
 class SpeakerTracker:
     """
-    Tracks speakers over time to prevent rapid switching and handle temporary obstructions.
+    Tracks speakers over time to prevent rapid switching and handle temporary
+    obstructions. Uses Mouth Aspect Ratio (MAR) variance as the primary signal
+    for active-speaker detection — a person whose mouth is moving (high MAR
+    variance over the last ~1s window) is far more likely to be speaking than
+    one whose mouth is still, regardless of face size.
     """
+    MAR_WINDOW_SIZE = 25  # ~1s @ 25fps of MAR samples per speaker
+    SIZE_WEIGHT = 0.3     # face size still contributes (proximity to camera)
+    MOUTH_WEIGHT = 1.0    # mouth motion is the dominant signal
+
     def __init__(self, stabilization_frames=15, cooldown_frames=30):
         self.active_speaker_id = None
-        self.speaker_scores = {}  # {id: score}
-        self.last_seen = {}       # {id: frame_number}
-        self.locked_counter = 0   # How long we've been locked on current speaker
-        
+        self.speaker_scores = {}  # {id: smoothed_score}
+        self.mar_history = {}     # {id: [mar0, mar1, ...]} sliding window
+        self.last_seen = {}
+        self.locked_counter = 0
+
         # Hyperparameters
-        self.stabilization_threshold = stabilization_frames # Frames needed to confirm a new speaker
-        self.switch_cooldown = cooldown_frames              # Minimum frames before switching again
+        self.stabilization_threshold = stabilization_frames
+        self.switch_cooldown = cooldown_frames
         self.last_switch_frame = -1000
-        
+
         # ID tracking
         self.next_id = 0
-        self.known_faces = [] # [{'id': 0, 'center': x, 'last_frame': 123}]
+        self.known_faces = []  # [{'id': 0, 'center': x, 'last_frame': 123}]
 
     def get_target(self, face_candidates, frame_number, width):
         """
         Decides which face to focus on.
-        face_candidates: list of {'box': [x,y,w,h], 'score': float}
+
+        face_candidates: list of {'box': [x,y,w,h], 'score': float, 'mar': float|None}
+          - 'score' is face area (legacy, used for size weighting)
+          - 'mar' is mouth aspect ratio at this frame (None if not extractable)
         """
         current_candidates = []
-        
+
         # 1. Match faces to known IDs (simple distance tracking)
         for face in face_candidates:
             x, y, w, h = face['box']
             center_x = x + w / 2
-            
+
             best_match_id = -1
-            min_dist = width * 0.15 # Reduced matching radius to avoid jumping in groups
-            
-            # Try to match with known faces seen recently
+            min_dist = width * 0.15
+
             for kf in self.known_faces:
-                if frame_number - kf['last_frame'] > 30: # Forgot faces older than 1s (was 2s)
+                if frame_number - kf['last_frame'] > 30:
                     continue
-                    
                 dist = abs(center_x - kf['center'])
                 if dist < min_dist:
                     min_dist = dist
                     best_match_id = kf['id']
-            
-            # If no match, assign new ID
+
             if best_match_id == -1:
                 best_match_id = self.next_id
                 self.next_id += 1
-            
-            # Update known face
+
             self.known_faces = [kf for kf in self.known_faces if kf['id'] != best_match_id]
             self.known_faces.append({'id': best_match_id, 'center': center_x, 'last_frame': frame_number})
-            
+
             current_candidates.append({
                 'id': best_match_id,
                 'box': face['box'],
-                'score': face['score']
+                'score': face['score'],
+                'mar': face.get('mar'),
             })
 
-        # 2. Update Scores with decay
-        for pid in list(self.speaker_scores.keys()):
-             self.speaker_scores[pid] *= 0.85 # Faster decay (was 0.9)
-             if self.speaker_scores[pid] < 0.1:
-                 del self.speaker_scores[pid]
-
-        # Add new scores
+        # 2. Update MAR history (sliding window) for each visible face
         for cand in current_candidates:
             pid = cand['id']
-            # Score is purely based on size (proximity) now that we don't have mouth
-            raw_score = cand['score'] / (width * width * 0.05)
-            self.speaker_scores[pid] = self.speaker_scores.get(pid, 0) + raw_score
+            if cand['mar'] is not None:
+                hist = self.mar_history.setdefault(pid, [])
+                hist.append(cand['mar'])
+                if len(hist) > self.MAR_WINDOW_SIZE:
+                    hist.pop(0)
+
+        # Decay smoothed scores; drop stale entries
+        for pid in list(self.speaker_scores.keys()):
+            self.speaker_scores[pid] *= 0.85
+            if self.speaker_scores[pid] < 0.05:
+                del self.speaker_scores[pid]
+                self.mar_history.pop(pid, None)
+
+        # 3. Compute combined score: mouth-motion variance + face size
+        for cand in current_candidates:
+            pid = cand['id']
+            size_norm = cand['score'] / (width * width * 0.05)
+
+            mar_hist = self.mar_history.get(pid, [])
+            if len(mar_hist) >= 5:
+                mean = sum(mar_hist) / len(mar_hist)
+                variance = sum((m - mean) ** 2 for m in mar_hist) / len(mar_hist)
+                # Scale variance to a useful range (0..~3)
+                mouth_motion = min(variance * 200.0, 3.0)
+            else:
+                # Not enough samples yet → fall back to neutral
+                mouth_motion = 0.5
+
+            combined = self.SIZE_WEIGHT * size_norm + self.MOUTH_WEIGHT * mouth_motion
+            self.speaker_scores[pid] = self.speaker_scores.get(pid, 0) + combined
 
         # 3. Determine Best Speaker
         if not current_candidates:
@@ -1085,8 +1173,12 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
                 if frame_number % 2 == 0:
                     candidates = detect_face_candidates(frame)
                     candidates = detection_smoother.smooth(candidates, frame_number)
+                    # Compute mouth aspect ratio for each face (for active-speaker detection)
+                    for cand in candidates:
+                        cand['mar'] = compute_mouth_aspect_ratio(frame, cand['box'])
                     target_box = speaker_tracker.get_target(candidates, frame_number, original_width)
                     if target_box:
+                        # Find the matched candidate to read its face size for zoom
                         cameraman.update_target(target_box)
                     else:
                         person_box = detect_person_yolo(frame)
