@@ -46,6 +46,7 @@ from config_store import (
     save_persistent_config,
 )
 from job_artifacts import relocate_root_job_artifacts
+from job_worker import make_workers
 
 load_dotenv()
 
@@ -77,88 +78,21 @@ concurrency_semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
 
 from google import genai
 
-async def cleanup_jobs():
-    """Background task to remove old jobs and files."""
-    import time
-    logger.info("Cleanup task started")
-    while True:
-        try:
-            await asyncio.sleep(300) # Check every 5 minutes
-            now = time.time()
-            
-            # Simple directory cleanup based on modification time
-            # Check OUTPUT_DIR
-            for job_id in os.listdir(OUTPUT_DIR):
-                job_path = os.path.join(OUTPUT_DIR, job_id)
-                if os.path.isdir(job_path):
-                    if now - os.path.getmtime(job_path) > JOB_RETENTION_SECONDS:
-                        logger.info("Purging old job: %s", job_id)
-                        shutil.rmtree(job_path, ignore_errors=True)
-                        if job_id in jobs:
-                            del jobs[job_id]
-
-            # Cleanup Uploads
-            for filename in os.listdir(UPLOAD_DIR):
-                file_path = os.path.join(UPLOAD_DIR, filename)
-                try:
-                    if now - os.path.getmtime(file_path) > JOB_RETENTION_SECONDS:
-                         os.remove(file_path)
-                except Exception: pass
-
-            # Cleanup transcript cache (older than 7 days)
-            cache_dir = os.path.join(DATA_DIR, "cache")
-            if os.path.isdir(cache_dir):
-                for filename in os.listdir(cache_dir):
-                    cache_path = os.path.join(cache_dir, filename)
-                    try:
-                        if now - os.path.getmtime(cache_path) > 7 * 86400:
-                            os.remove(cache_path)
-                    except Exception: pass
-
-            # Cleanup old batches (older than retention period)
-            for bid in list(batches.keys()):
-                if now - batches[bid].get("created", 0) > JOB_RETENTION_SECONDS:
-                    del batches[bid]
-
-        except Exception as e:
-            logger.warning("Cleanup error: %s", e)
-
-async def process_queue():
-    """Background worker to process jobs from the queue with concurrency limit."""
-    logger.info("Job queue worker started with %d concurrent slots", MAX_CONCURRENT_JOBS)
-    while True:
-        try:
-            # Wait for a job
-            job_id = await job_queue.get()
-            
-            # Acquire semaphore slot (waits if max jobs are running)
-            await concurrency_semaphore.acquire()
-            logger.info("Acquired slot for job: %s", job_id)
-
-            # Process in background task to not block the loop (allowing other slots to fill)
-            asyncio.create_task(run_job_wrapper(job_id))
-            
-        except Exception as e:
-            logger.error("Queue dispatch error: %s", e)
-            await asyncio.sleep(1)
-
-async def run_job_wrapper(job_id):
-    """Wrapper to run job and release semaphore"""
-    try:
-        job = jobs.get(job_id)
-        if job:
-            await run_job(job_id, job)
-    except Exception as e:
-         logger.error("Job wrapper error %s: %s", job_id, e)
-    finally:
-        # Always release semaphore and mark queue task done
-        concurrency_semaphore.release()
-        job_queue.task_done()
-        logger.info("Released slot for job: %s", job_id)
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Start worker and cleanup
+    # run_job is defined later in this module, so we bind workers here.
+    cleanup_jobs, process_queue, _run_job_wrapper = make_workers(
+        jobs=jobs,
+        batches=batches,
+        job_queue=job_queue,
+        concurrency_semaphore=concurrency_semaphore,
+        run_job=run_job,
+        output_dir=OUTPUT_DIR,
+        upload_dir=UPLOAD_DIR,
+        data_dir=DATA_DIR,
+        job_retention_seconds=JOB_RETENTION_SECONDS,
+        max_concurrent_jobs=MAX_CONCURRENT_JOBS,
+    )
     worker_task = asyncio.create_task(process_queue())
     cleanup_task = asyncio.create_task(cleanup_jobs())
     yield
