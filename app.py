@@ -39,6 +39,12 @@ from security import (
     parse_allowed_origins,
     require_trusted_config_request,
 )
+from config_store import (
+    CONFIG_FILE,
+    VALID_CONFIG_KEYS,
+    load_persistent_config,
+    save_persistent_config,
+)
 
 load_dotenv()
 
@@ -46,60 +52,11 @@ load_dotenv()
 UPLOAD_DIR = "uploads"
 OUTPUT_DIR = "output"
 DATA_DIR = "data"
-CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(DATA_DIR, exist_ok=True)
 
-VALID_CONFIG_KEYS = ("GEMINI_API_KEY", "GEMINI_MODEL", "YOUTUBE_COOKIES", "HF_TOKEN")
 ALLOWED_MODEL_PREFIXES = ("gemini-2.5-", "gemini-3")
-
-
-def load_persistent_config():
-    """Load config from JSON file if exists, falling back to environment variables."""
-    config = {
-        "GEMINI_API_KEY": os.environ.get("GEMINI_API_KEY", ""),
-        "GEMINI_MODEL": os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"),
-        "YOUTUBE_COOKIES": os.environ.get("YOUTUBE_COOKIES", ""),
-        "HF_TOKEN": os.environ.get("HF_TOKEN", "")
-    }
-    
-    if os.path.exists(CONFIG_FILE):
-        try:
-            with open(CONFIG_FILE, "r") as f:
-                persistent = json.load(f)
-                # Filter to only keep valid keys
-                filtered = {k: v for k, v in persistent.items() if k in VALID_CONFIG_KEYS}
-                config.update(filtered)
-        except Exception as e:
-            logger.warning("Error loading config.json: %s", e)
-            
-    return config
-
-def save_persistent_config(new_config: dict):
-    """Save new configuration to JSON file."""
-    try:
-        # Load existing first to merge
-        current = {}
-        if os.path.exists(CONFIG_FILE):
-            with open(CONFIG_FILE, "r") as f:
-                current = json.load(f)
-        
-        sanitized = {k: new_config.get(k) for k in VALID_CONFIG_KEYS if k in new_config}
-        for key, value in sanitized.items():
-            if value in (None, ""):
-                current.pop(key, None)
-                os.environ.pop(key, None)
-            else:
-                current[key] = value
-                os.environ[key] = str(value)
-
-        with open(CONFIG_FILE, "w") as f:
-            json.dump(current, f, indent=4)
-        return True
-    except Exception as e:
-        logger.error("Error saving config.json: %s", e)
-        return False
 
 # Initial load to env
 save_persistent_config(load_persistent_config())
