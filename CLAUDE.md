@@ -8,16 +8,25 @@ ClippyMe is a self-hosted AI video platform that transforms long-form videos (Yo
 
 ## Architecture
 
-- **Backend** (`app.py`): FastAPI server on port 8000. Config persistence, API endpoints, async job queue, batch processing, compose endpoint for toggle-based export.
+- **Backend** (`app.py`, ~680 lines): Thin FastAPI layer — endpoint handlers + job queue + worker loop. Heavy logic lives in dedicated modules listed below. Config persistence, async job queue, batch processing.
+- **Backend modules** (extracted from `app.py` during 8-round refactor):
+  - `compose.py` — `compose_layers()` runs the Smart Cut → Hook → Subtitles pipeline for `/api/compose`. Owns intermediate-file cleanup.
+  - `subtitle_pipeline.py` — `run_subtitle_pipeline()` + `resolve_clip_filename()` for `/api/subtitle` and `/api/hook`.
+  - `clip_endpoints.py` — `run_smart_cut()` (for `/api/smartcut`) and `restore_job_from_disk()` (for `/api/history/restore`).
+  - `job_results.py` — `load_partial_result()` / `load_final_result()` (used by the worker loop) and `build_main_cmd()` (shared between `/api/process` and `/api/batch`).
+  - `security.py` — `is_valid_job_id()`, trusted-origin checks.
+  - `schemas.py` — Pydantic request models.
+  - `metadata_io.py` — `load_job_metadata()` / `save_job_metadata()` atomic helpers.
 - **Processing pipeline** (`main.py`): Orchestrates download (yt-dlp) → transcription (faster-whisper, with URL-hash cache) → scene detection (PySceneDetect) → viral moment detection (Google Gemini, returns `viral_score`/`viral_reason`) → smart 9:16 reframing (YOLOv8 + MediaPipe face tracking) → audio normalization → auto-zoom → cover frame selection.
 - **Subtitles** (`subtitles.py`): ASS karaoke generation (`generate_ass_karaoke()`) with 6 viral presets + legacy SRT support. Burns via `ass` filter with bundled fonts. Supports `offset_y` for vertical positioning.
 - **Smart Cut** (`smartcut.py`): Optional post-processing that removes silences (>0.8s) and filler words using FFmpeg concat demuxer. Supports EN, IT, ES, FR, DE.
 - **Hooks** (`hooks.py`): Text overlay generation with Pillow. Supports emoji via NotoColorEmoji font (lazy-downloaded). Configurable position, size, and `offset_y`.
-- **Frontend** (`dashboard/`): React 18 + Vite 5 + Tailwind CSS v4 + shadcn/ui. Toggle-based editing system with compose-on-download. Polls backend at 2s intervals for job status. Served on port 5175 (Docker) or 5173 (dev).
+- **Frontend** (`dashboard/`): React 18 + Vite 5 + Tailwind CSS v4 + shadcn/ui. `App.jsx` (~270 lines) is now a thin orchestrator — wiring + composition only. Toggle-based editing system with compose-on-download. Polls backend at 2s intervals for job status. Served on port 5175 (Docker) or 5173 (dev).
+  - **Custom hooks** (`dashboard/src/hooks/`): `useJobSubmission` (process+batch handlers), `useJobPolling` (status polling loop), `useHistory` (history list state), `useSessionPersistence` (localStorage round-trip), `useBackendStatus` (health check).
   - **Logo**: Custom SVG with multi-color gradient design (`public/logo.svg`)
   - **Color palette**: Dark foundation (#050507, #0f0f13, #16161d, #1e1e28) + brand colors (blue #0a81d9 primary, pink-purple-indigo gradient accent, teal #02c5bf, cyan #00d9ff)
   - **Design tokens**: Glassmorphism with backdrop-blur, gradient borders, glow shadows, ambient noise texture, responsive single-column layout
-  - **Components**: TopNav (logo + tabs), MediaInput (URL/Upload/Batch tabs, pre-selection panel), ResultCard (9:16 video + toggles + compose download), SubtitleModal/HookModal (two-column settings/preview with offset slider), ProcessingAnimation, Landing page
+  - **Components** (`dashboard/src/components/`): `TopNav` (logo + tabs + status + cancel), `IdleHero`, `MediaInput` (URL/Upload/Batch tabs, pre-selection panel), `ResultCard` (9:16 video + toggles + compose download), `ResultsGrid`, `SubtitleModal`/`HookModal` (two-column settings/preview with offset slider), `ProcessingView` (merges processing + error + partial-results states), `ProcessingAnimation`, `PipelineSteps`, `LogsPanel`, `HistoryTab`, `SettingsTab`, `ApiKeyModal`, `ConfettiOverlay`, Landing page
   - **shadcn/ui components** (`dashboard/src/components/ui/`): Button, Badge, Tooltip, Skeleton, Sonner (toasts), Progress, Dialog, Tabs — all using Radix UI primitives via `radix-ui` monorepo
 - **Fonts** (`fonts/`): Bundled TTF fonts for subtitle and hook rendering (Anton, Bangers, Montserrat-Black/ExtraBold, Poppins-Black/Medium, NotoSerif-Bold). Served via `/fonts` static mount.
 
@@ -194,3 +203,16 @@ After `process_video_to_vertical()`:
 1. `apply_subtle_zoom(clip_path)` — Ken Burns 1.0→1.05x zoom via `zoompan`
 2. `normalize_audio(clip_path)` — two-pass EBU R128 loudnorm at -14 LUFS
 3. `select_cover_frame(clip_path)` — scores frames by face presence + sharpness (Laplacian) + exposure; saves `{clip}_cover.jpg`
+
+## Refactor History (8-round autoresearch pipeline)
+
+`app.py` and `App.jsx` were systematically split into focused modules. **Do not re-merge them.** When adding new logic, prefer extending an existing module or creating a new one over growing the orchestrators.
+
+| File | Before | After | Δ |
+|---|---|---|---|
+| `app.py` | 1271 | 678 | −47% |
+| `dashboard/src/App.jsx` | 1068 | 270 | −75% |
+
+**Backend rule of thumb:** if an endpoint handler grows past ~25 lines, extract its body into a helper module (see `compose.py`, `subtitle_pipeline.py`, `clip_endpoints.py`). Endpoints should stay thin: validate → call helper → return JSON.
+
+**Frontend rule of thumb:** `App.jsx` only owns top-level state wiring + JSX composition. Side effects belong in custom hooks (`hooks/`), visual chunks belong in components (`components/`).
