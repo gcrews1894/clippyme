@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 from job_results import load_partial_result, load_final_result, build_main_cmd
 from compose import compose_layers
 from subtitle_pipeline import resolve_clip_filename, run_subtitle_pipeline
+from clip_endpoints import run_smart_cut, restore_job_from_disk
 from schemas import (
     BatchRequest,
     ComposeRequest,
@@ -523,62 +524,18 @@ async def smart_cut_clip(job_id: str, clip_index: int):
     """Generate a smart-cut version of a clip (silences + filler words removed)."""
     if job_id not in jobs:
         raise HTTPException(status_code=404, detail="Job not found")
-
     output_dir = os.path.join(OUTPUT_DIR, job_id)
     try:
         metadata_path, data = load_job_metadata(job_id, OUTPUT_DIR)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Metadata not found")
-
-    transcript = data.get('transcript')
-    if not transcript:
-        raise HTTPException(status_code=400, detail="Transcript not found in metadata.")
-
-    clips = data.get('shorts', [])
-    if clip_index >= len(clips):
-        raise HTTPException(status_code=404, detail="Clip not found")
-
-    clip_data = clips[clip_index]
-    language = transcript.get('language', 'en')
-
-    # Find the clip file
-    clip_url = clip_data.get('video_url', '')
-    filename = clip_url.split('/')[-1] if clip_url else None
-    if not filename:
-        base_name = os.path.basename(metadata_path).replace('_metadata.json', '')
-        filename = f"{base_name}_clip_{clip_index + 1}.mp4"
-
-    clip_path = os.path.join(output_dir, filename)
-    if not os.path.exists(clip_path):
-        raise HTTPException(status_code=404, detail=f"Clip file not found: {filename}")
-
-    try:
-        import asyncio
-        loop = asyncio.get_event_loop()
-        result_path, stats = await loop.run_in_executor(
-            None, smart_cut, clip_path, transcript,
-            clip_data['start'], clip_data['end'], language
-        )
-
-        if result_path is None:
-            return {
-                "success": False,
-                "message": "No significant silences or fillers found to remove.",
-                "stats": stats
-            }
-
-        smartcut_filename = os.path.basename(result_path)
-        new_url = f"/videos/{job_id}/{smartcut_filename}"
-
-        return {
-            "success": True,
-            "new_video_url": new_url,
-            "stats": stats
-        }
-
-    except Exception as e:
-        logger.error("Smart cut error: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+    return await run_smart_cut(
+        job_id=job_id,
+        clip_index=clip_index,
+        output_dir=output_dir,
+        metadata_path=metadata_path,
+        data=data,
+    )
 
 
 @app.post("/api/hook")
@@ -715,32 +672,7 @@ async def restore_job(job_id: str):
     if not is_valid_job_id(job_id):
         raise HTTPException(status_code=400, detail="Invalid job ID")
     job_dir = os.path.join(OUTPUT_DIR, job_id)
-    if not os.path.isdir(job_dir):
-        raise HTTPException(status_code=404, detail="Job not found on disk")
-    meta_files = glob.glob(os.path.join(job_dir, "*_metadata.json"))
-    if not meta_files:
-        raise HTTPException(status_code=404, detail="No metadata found for this job")
-    with open(meta_files[0], 'r') as f:
-        data = json.load(f)
-    clips = data.get('shorts', [])
-    base_name = os.path.basename(meta_files[0]).replace('_metadata.json', '')
-    for i, clip in enumerate(clips):
-        clip_filename = clip.get('video_url', '').split('/')[-1]
-        if not clip_filename:
-            clip_filename = f"{base_name}_clip_{i+1}.mp4"
-        clip['video_url'] = f"/videos/{job_id}/{clip_filename}"
-    cost_analysis = data.get('cost_analysis')
-    jobs[job_id] = {
-        'status': 'completed',
-        'logs': ['Restored from disk.'],
-        'cmd': [],
-        'env': {},
-        'output_dir': job_dir,
-        'result': {'clips': clips, 'cost_analysis': cost_analysis}
-    }
-    logger.info("Restored job %s into memory (%d clips)", job_id, len(clips))
-    return {
-        "success": True,
-        "status": "completed",
-        "result": {'clips': clips, 'cost_analysis': cost_analysis}
-    }
+    job_entry = restore_job_from_disk(job_id, OUTPUT_DIR, job_dir)
+    jobs[job_id] = job_entry
+    logger.info("Restored job %s into memory (%d clips)", job_id, len(job_entry["result"]["clips"]))
+    return {"success": True, "status": "completed", "result": job_entry["result"]}
