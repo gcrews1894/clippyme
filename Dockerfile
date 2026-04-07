@@ -1,10 +1,9 @@
 # ClippyMe — Multi-platform Dockerfile
 #
-# NVIDIA GPU (default):  docker compose up --build
-# CPU / Apple Silicon:   GPU_RUNTIME=cpu docker compose up --build
-#   or: docker compose -f docker-compose.yml -f docker-compose.cpu.yml up --build
+# CPU / Apple Silicon (default):  docker compose up --build
+# NVIDIA GPU:                     docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
 
-ARG GPU_RUNTIME=nvidia
+ARG GPU_RUNTIME=cpu
 
 # ============================================================
 # Stage 2a: NVIDIA CUDA runtime (x86_64 only)
