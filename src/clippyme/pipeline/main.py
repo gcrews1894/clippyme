@@ -1543,15 +1543,46 @@ def get_viral_clips(transcript_result, video_duration, instructions=None):
             print("❌ No valid clips after Pydantic validation + dedupe")
             return None
 
-        # Fallback: if Gemini left viral_hook_text empty, derive a hook from
-        # the first ~8 transcript words inside the clip window so the
-        # frontend always has an auto-filled hook to show.
+        # Fallback: ensure EVERY clip has a viral_hook_text. Strategy:
+        #   1. Keep Gemini's hook if non-empty.
+        #   2. Else use the first ~8 transcript words inside the clip window.
+        #   3. Else widen the window by ±1s (handles off-by-one boundary cases).
+        #   4. Else fall back to the YouTube title (truncated to 10 words).
+        #   5. Else hard-coded "Watch this" so the field is never empty.
+        def _truncate_words(text: str, n: int = 10) -> str:
+            parts = (text or "").strip().split()
+            return " ".join(parts[:n]).strip()
+
         for clip in clips:
-            if not (clip.get("viral_hook_text") or "").strip():
-                cs, ce = clip.get("start", 0.0), clip.get("end", 0.0)
-                hook_words = [w["w"] for w in words if cs <= w["s"] < ce][:8]
-                if hook_words:
-                    clip["viral_hook_text"] = " ".join(hook_words).strip()
+            existing = (clip.get("viral_hook_text") or "").strip()
+            if existing:
+                clip["viral_hook_text"] = _truncate_words(existing, 10)
+                continue
+
+            cs = float(clip.get("start", 0.0) or 0.0)
+            ce = float(clip.get("end", 0.0) or 0.0)
+
+            hook_words = [w.get("w", "") for w in words if cs <= w.get("s", 0.0) < ce][:10]
+            if not hook_words:
+                # widen window ±1s in case of off-by-one boundaries
+                hook_words = [
+                    w.get("w", "")
+                    for w in words
+                    if (cs - 1.0) <= w.get("s", 0.0) < (ce + 1.0)
+                ][:10]
+
+            if hook_words:
+                clip["viral_hook_text"] = " ".join(hook_words).strip()
+                continue
+
+            title_fallback = _truncate_words(
+                clip.get("video_title_for_youtube_short", ""), 10
+            )
+            if title_fallback:
+                clip["viral_hook_text"] = title_fallback
+                continue
+
+            clip["viral_hook_text"] = "Watch this"
 
         print(f"✅ {len(clips)} clips passed validation + dedupe")
         result_json = {"shorts": clips}
