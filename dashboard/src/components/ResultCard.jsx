@@ -163,11 +163,11 @@ export default function ResultCard({
                 setTimeout(() => window.URL.revokeObjectURL(url), 60000);
                 document.body.removeChild(a);
             } else {
-                toast.error(data.detail || 'La composizione non ha restituito un URL video');
+                toast.error(data.detail || 'Compose returned no video URL');
             }
         } catch (err) {
             console.error('Compose failed:', err);
-            toast.error('Composizione fallita — controlla la console per i dettagli');
+            toast.error('Compose failed — check console for details');
         } finally {
             setIsComposing(false);
         }
@@ -229,11 +229,11 @@ export default function ResultCard({
     // principle from the UX brainstorm).
     const handleDelete = () => {
         onUpdateState({ deleted: true });
-        toast(`Clip #${index + 1} rimossa dalla griglia`, {
-            description: 'Il file resta su disco. Hai 6 secondi per annullare.',
+        toast(`Clip #${index + 1} removed from grid`, {
+            description: 'The file stays on disk. You have 6 seconds to undo.',
             duration: 6000,
             action: {
-                label: 'Annulla',
+                label: 'Undo',
                 onClick: () => onUpdateState({ deleted: false }),
             },
         });
@@ -247,11 +247,11 @@ export default function ResultCard({
         const nextDisabled = !isDisabled;
         onUpdateState({ disabled: nextDisabled });
         if (nextDisabled) {
-            toast(`Clip #${index + 1} esclusa dalla pubblicazione`, {
-                description: 'Non verrà inclusa in "Pubblica tutte". Hai 6 secondi per annullare.',
+            toast(`Clip #${index + 1} excluded from publishing`, {
+                description: 'It will not be included in "Publish all". You have 6 seconds to undo.',
                 duration: 6000,
                 action: {
-                    label: 'Annulla',
+                    label: 'Undo',
                     onClick: () => onUpdateState({ disabled: false }),
                 },
             });
@@ -272,9 +272,9 @@ export default function ResultCard({
                 const errText = await res.text();
                 // 409 = source slice missing (legacy jobs)
                 if (res.status === 409) {
-                    toast.error('Source slice non conservata per questa clip. Rielabora il video per poter cambiare il reframe.');
+                    toast.error('Source slice not preserved for this clip — reprocess the video to enable reframe switching.');
                 } else {
-                    toast.error(`Reframe fallito: ${errText.slice(0, 200)}`);
+                    toast.error(`Reframe failed: ${errText.slice(0, 200)}`);
                 }
                 onUpdateState({ reframing: false });
                 return;
@@ -285,16 +285,16 @@ export default function ResultCard({
                 onUpdateState({ reframeMode: nextMode, reframing: false });
                 toast.success(
                     nextMode === 'disabled'
-                        ? 'Reframe disattivato — ora la clip mostra il frame 4:3 completo con bande nere.'
-                        : 'Auto reframe attivato — face tracking di nuovo attivo.',
+                        ? 'Reframe disabled — clip now shows the full 4:3 frame with black bars.'
+                        : 'Auto reframe enabled — face tracking is back on.',
                 );
             } else {
                 onUpdateState({ reframing: false });
-                toast.error('Il reframe non ha restituito un URL video');
+                toast.error('Reframe returned no video URL');
             }
         } catch (err) {
             console.error('Reframe error:', err);
-            toast.error('Reframe fallito — controlla la console per i dettagli');
+            toast.error('Reframe failed — check console for details');
             onUpdateState({ reframing: false });
         }
     };
@@ -315,8 +315,8 @@ export default function ResultCard({
                         32x32 is already ~2.6x the previous hit area. */}
                     <button
                         onClick={handleToggleDisabled}
-                        aria-label={isDisabled ? 'Abilita clip' : 'Disabilita clip (esclusa da Pubblica tutti)'}
-                        title={isDisabled ? 'Abilita clip' : 'Disabilita clip (esclusa da Pubblica tutti)'}
+                        aria-label={isDisabled ? 'Enable clip' : 'Disable clip (excluded from Publish all)'}
+                        title={isDisabled ? 'Enable clip' : 'Disable clip (excluded from Publish all)'}
                         className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/10 text-zinc-300 hover:text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-pink/70"
                     >
                         {isDisabled ? <EyeOff size={14} /> : <Eye size={14} />}
@@ -326,17 +326,17 @@ export default function ResultCard({
                         disabled={isReframing}
                         aria-label={
                             isReframing
-                                ? 'Reframe in corso'
+                                ? 'Reframing in progress'
                                 : reframeMode === 'auto'
-                                    ? 'Reframe automatico attivo — clicca per disabilitare'
-                                    : 'Reframe disabilitato (4:3) — clicca per riattivare'
+                                    ? 'Auto reframe active — click to disable'
+                                    : 'Reframe disabled (4:3) — click to re-enable'
                         }
                         title={
                             isReframing
-                                ? 'Reframe in corso\u2026'
+                                ? 'Reframing\u2026'
                                 : reframeMode === 'auto'
-                                    ? 'Reframe automatico (face tracking) \u2014 clicca per disabilitare'
-                                    : 'Reframe disabilitato (4:3 + bande nere) \u2014 clicca per riattivare'
+                                    ? 'Auto reframe (face tracking) \u2014 click to disable'
+                                    : 'Reframe disabled (4:3 + black bars) \u2014 click to re-enable'
                         }
                         className={`w-8 h-8 flex items-center justify-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-pink/70 ${
                             reframeMode === 'auto'
@@ -355,8 +355,8 @@ export default function ResultCard({
                     <div className="w-px h-3 bg-white/10" />
                     <button
                         onClick={handleDelete}
-                        aria-label="Rimuovi clip dalla griglia"
-                        title="Rimuovi clip dalla griglia"
+                        aria-label="Remove clip from grid"
+                        title="Remove clip from grid"
                         className="w-8 h-8 flex items-center justify-center rounded-full text-red-400 hover:text-red-300 hover:bg-red-500/10 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/70"
                     >
                         <Trash2 size={14} />

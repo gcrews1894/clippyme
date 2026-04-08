@@ -141,12 +141,12 @@ const ProcessingAnimation = ({ media, isComplete, syncedTime, isSyncedPlaying, s
             {isComplete ? (
               <>
                 <CheckCircle size={13} />
-                <span>Pronto</span>
+                <span>Ready</span>
               </>
             ) : (
               <>
                 <div className="w-1.5 h-1.5 rounded-full bg-accent-pink animate-pulse" />
-                <span>Elaborazione in corso{dots}</span>
+                <span>Processing{dots}</span>
               </>
             )}
           </div>

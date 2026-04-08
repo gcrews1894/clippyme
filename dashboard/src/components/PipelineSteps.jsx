@@ -5,10 +5,10 @@ import { Check, Zap } from 'lucide-react';
 // (Idleness Aversion / Operational Transparency): describe WHAT the
 // system is doing, not its technical function names.
 const STEPS = [
-  { key: 'downloading', label: 'Scarico il video' },
-  { key: 'transcribing', label: 'Ascolto l\u2019audio' },
-  { key: 'analyzing', label: 'Cerco i momenti virali' },
-  { key: 'processing', label: 'Monto le clip' },
+  { key: 'downloading', label: 'Downloading video' },
+  { key: 'transcribing', label: 'Listening to audio' },
+  { key: 'analyzing', label: 'Finding viral moments' },
+  { key: 'processing', label: 'Editing clips' },
 ];
 
 const STEP_KEYS = STEPS.map((s) => s.key);
@@ -29,7 +29,7 @@ export default function PipelineSteps({ currentStep }) {
       aria-valuemin={0}
       aria-valuemax={STEPS.length}
       aria-valuenow={Math.max(0, currentIdx + 1)}
-      aria-valuetext={currentLabel ? `Fase ${currentIdx + 1} di ${STEPS.length}: ${currentLabel}` : 'In attesa'}
+      aria-valuetext={currentLabel ? `Step ${currentIdx + 1} of ${STEPS.length}: ${currentLabel}` : 'Waiting'}
       aria-live="polite"
     >
       {STEPS.map((step, i) => {

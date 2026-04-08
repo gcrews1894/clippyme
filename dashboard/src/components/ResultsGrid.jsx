@@ -6,10 +6,10 @@ import LogsPanel from './LogsPanel';
 import BatchPublishModal from './BatchPublishModal';
 
 const SORT_OPTIONS = [
-  { id: 'viral_desc', label: 'Per viral score' },
-  { id: 'order', label: 'Ordine originale' },
-  { id: 'duration_asc', label: 'Più corte prima' },
-  { id: 'duration_desc', label: 'Più lunghe prima' },
+  { id: 'viral_desc', label: 'Highest viral score' },
+  { id: 'order', label: 'Original order' },
+  { id: 'duration_asc', label: 'Shortest first' },
+  { id: 'duration_desc', label: 'Longest first' },
 ];
 
 /**
@@ -107,20 +107,20 @@ export default function ResultsGrid({
             <h2 className="text-2xl font-bold text-white flex items-center gap-2">
               <Sparkles size={22} className="text-purple-400" />
               {clipCount > 0
-                ? `${clipCount} clip pronte${clipCount === 1 ? '' : ''}`
-                : 'Le tue clip'}
+                ? `${clipCount} viral clip${clipCount === 1 ? '' : 's'} ready`
+                : 'Your clips'}
             </h2>
             {clipCount > 0 ? (
               <p className="text-zinc-500 text-xs mt-1.5 flex items-center gap-2 flex-wrap">
-                <span>Ordinate: {SORT_OPTIONS.find((s) => s.id === sortBy)?.label.toLowerCase()}</span>
+                <span>Sorted by {SORT_OPTIONS.find((s) => s.id === sortBy)?.label.toLowerCase()}</span>
                 {stats.published > 0 && (
                   <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-emerald-500/10 text-emerald-300">
-                    <Check size={9} /> {stats.published} pubblicate
+                    <Check size={9} /> {stats.published} published
                   </span>
                 )}
                 {stats.disabled > 0 && (
                   <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-white/[0.04] text-zinc-500">
-                    <EyeOff size={9} /> {stats.disabled} disattivate
+                    <EyeOff size={9} /> {stats.disabled} disabled
                   </span>
                 )}
                 {results?.cost_analysis && (
@@ -133,7 +133,7 @@ export default function ResultsGrid({
                 )}
               </p>
             ) : (
-              <p className="text-zinc-500 text-sm mt-1">Momenti ad alto potenziale virale individuati dall&apos;AI</p>
+              <p className="text-zinc-500 text-sm mt-1">AI-curated high-engagement segments</p>
             )}
           </div>
           <div className="flex items-center gap-2 flex-wrap">
@@ -158,12 +158,12 @@ export default function ResultsGrid({
               <button
                 onClick={() => setBatchPublishOpen(true)}
                 className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-accent-pink to-accent-purple text-white text-xs font-semibold shadow-glow-pink hover:opacity-90 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-pink/60 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0f0f13] min-h-[44px]"
-                title={`Pubblica ${publishableClips.length} clip attive (ignora disattivate e già pubblicate)`}
+                title={`Publish ${publishableClips.length} active clips (ignores disabled and already-published)`}
               >
                 <Send size={13} />
                 {publishableClips.length === 1
-                  ? 'Pubblica 1 clip selezionata'
-                  : `Pubblica ${publishableClips.length} clip selezionate`}
+                  ? 'Publish 1 selected clip'
+                  : `Publish ${publishableClips.length} selected clips`}
               </button>
             )}
           </div>
@@ -188,9 +188,9 @@ export default function ResultsGrid({
         // Tiers inspired by the NotebookLM brainstorm recommendation.
         (() => {
           const tiers = [
-            { id: 'top', label: 'Top virali', hint: 'Score 80+ \u2014 pubblica questi per primi', min: 80, max: 101 },
-            { id: 'mid', label: 'Buone candidate', hint: 'Score 50\u201379 \u2014 ottimizzabili con Smart Cut e hook', min: 50, max: 80 },
-            { id: 'low', label: 'Menzioni', hint: 'Score <50 \u2014 valuta se scartarle', min: 0, max: 50 },
+            { id: 'top', label: 'Top viral', hint: 'Score 80+ \u2014 publish these first', min: 80, max: 101 },
+            { id: 'mid', label: 'Strong candidates', hint: 'Score 50\u201379 \u2014 improve with Smart Cut and hooks', min: 50, max: 80 },
+            { id: 'low', label: 'Honorable mentions', hint: 'Score <50 \u2014 consider skipping', min: 0, max: 50 },
           ];
           const groups = tiers
             .map((tier) => ({
@@ -275,7 +275,7 @@ export default function ResultsGrid({
           <div className="flex items-center gap-3">
             <AlertCircle size={18} className="text-red-400 shrink-0" />
             <p className="text-sm text-red-400">
-              Qualcosa è andato storto durante l&apos;elaborazione. Alcune clip potrebbero essere incomplete.
+              Processing encountered an error. Some clips may be incomplete.
             </p>
           </div>
           {processingMedia && (
@@ -283,7 +283,7 @@ export default function ResultsGrid({
               onClick={() => onRetry(processingMedia)}
               className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-pink-500 to-purple-500 text-white text-xs font-semibold hover:opacity-90 transition-all shrink-0 ml-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-pink/60 min-h-[40px]"
             >
-              <RotateCcw size={12} /> Riprova
+              <RotateCcw size={12} /> Retry
             </button>
           )}
         </div>

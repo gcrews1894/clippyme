@@ -301,7 +301,7 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
                                     {!cookiesConfigured && (
                                         <div className="flex items-start gap-2 px-4 py-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs">
                                             <span className="mt-0.5">⚠</span>
-                                            <span>Cookie non configurati. Senza cookie, il download potrebbe fallire o essere più lento. Configura i cookie nelle <strong>Impostazioni</strong>.</span>
+                                            <span>Cookies not configured. Without cookies, downloads may fail or be slower. Configure cookies in <strong>Settings</strong>.</span>
                                         </div>
                                     )}
                                 </>
@@ -754,15 +754,15 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
                         {isProcessing ? (
                             <>
                                 <Loader2 size={20} className="animate-spin" />
-                                <span>Elaborazione in corso…</span>
+                                <span>Processing…</span>
                             </>
                         ) : (
                             <span>
                                 {mode === 'batch'
                                     ? batchTotal > 0
-                                        ? `Genera clip da ${batchTotal} video`
-                                        : 'Aggiungi video al batch'
-                                    : 'Genera i miei shorts'}
+                                        ? `Generate clips from ${batchTotal} videos`
+                                        : 'Add videos to batch'
+                                    : 'Generate my shorts'}
                             </span>
                         )}
                     </button>
