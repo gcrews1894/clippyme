@@ -231,6 +231,11 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
     const [preSubClassicFont, setPreSubClassicFont] = useState(persisted.preSubClassicFont ?? 'Verdana');
     const [preSubClassicFontColor, setPreSubClassicFontColor] = useState(persisted.preSubClassicFontColor ?? '#FFFFFF');
     const [preSubClassicPosition, setPreSubClassicPosition] = useState(persisted.preSubClassicPosition ?? 'bottom');
+    // Classic subtitles stroke + background (matches backend burn_subtitles params)
+    const [preSubClassicBorderColor, setPreSubClassicBorderColor] = useState(persisted.preSubClassicBorderColor ?? '#000000');
+    const [preSubClassicBorderWidth, setPreSubClassicBorderWidth] = useState(persisted.preSubClassicBorderWidth ?? 2);
+    const [preSubClassicBgColor, setPreSubClassicBgColor] = useState(persisted.preSubClassicBgColor ?? '#000000');
+    const [preSubClassicBgOpacity, setPreSubClassicBgOpacity] = useState(persisted.preSubClassicBgOpacity ?? 0);
     const [preHook, setPreHook] = useState(persisted.preHook ?? false);
     const [preHookPosition, setPreHookPosition] = useState(persisted.preHookPosition ?? 'top');
     const [preHookSize, setPreHookSize] = useState(persisted.preHookSize ?? 'S');
@@ -250,6 +255,10 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
                     preSubClassicFont,
                     preSubClassicFontColor,
                     preSubClassicPosition,
+                    preSubClassicBorderColor,
+                    preSubClassicBorderWidth,
+                    preSubClassicBgColor,
+                    preSubClassicBgOpacity,
                     preHook,
                     preHookPosition,
                     preHookSize,
@@ -267,6 +276,10 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
         preSubClassicFont,
         preSubClassicFontColor,
         preSubClassicPosition,
+        preSubClassicBorderColor,
+        preSubClassicBorderWidth,
+        preSubClassicBgColor,
+        preSubClassicBgOpacity,
         preHook,
         preHookPosition,
         preHookSize,
@@ -289,6 +302,10 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
                         font: preSubClassicFont,
                         font_color: preSubClassicFontColor,
                         position: preSubClassicPosition,
+                        border_color: preSubClassicBorderColor,
+                        border_width: preSubClassicBorderWidth,
+                        bg_color: preSubClassicBgColor,
+                        bg_opacity: preSubClassicBgOpacity,
                       })
                 : null,
             hook: preHook ? { position: preHookPosition, size: preHookSize } : null,
@@ -404,12 +421,6 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
                                         </button>
                                     </div>
 
-                                    {!cookiesConfigured && (
-                                        <div className="flex items-start gap-2.5 px-4 py-3 rounded-[3px] bg-[oklch(80%_0.17_75)]/[0.08] border border-[oklch(80%_0.17_75)]/30 text-[oklch(85%_0.15_75)] text-xs">
-                                            <span className="mt-0.5 type-mono text-[10px]">!</span>
-                                            <span>Cookies not configured. Without cookies, downloads may fail or be slower. Configure cookies in <strong className="text-white">Settings</strong>.</span>
-                                        </div>
-                                    )}
                                 </>
                             ) : (
                                 <div
@@ -728,6 +739,101 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
                                                                 <input type="color" value={preSubClassicFontColor} onChange={(e) => setPreSubClassicFontColor(e.target.value)} className="absolute inset-0 opacity-0 cursor-pointer" />
                                                             </label>
                                                         </div>
+                                                    </div>
+                                                    {/* Stroke (outline) — color + width */}
+                                                    <div className="space-y-2">
+                                                        <div className="flex items-center justify-between">
+                                                            <p className="type-label">Stroke</p>
+                                                            <span className="type-mono text-[10px] text-[oklch(82%_0.16_68)] tabular-nums">
+                                                                {preSubClassicBorderWidth}&nbsp;px
+                                                            </span>
+                                                        </div>
+                                                        <div className="flex items-center gap-3">
+                                                            {/* Color swatch + picker */}
+                                                            <label
+                                                                className="relative w-10 h-10 rounded-[3px] border-2 border-white/[0.15] hover:border-[oklch(74%_0.175_62)]/60 cursor-pointer shrink-0 transition-colors shadow-[0_0_0_1px_oklch(0%_0_0/0.4)_inset]"
+                                                                style={{ backgroundColor: preSubClassicBorderColor }}
+                                                                title="Stroke color"
+                                                            >
+                                                                <input
+                                                                    type="color"
+                                                                    value={preSubClassicBorderColor}
+                                                                    onChange={(e) => setPreSubClassicBorderColor(e.target.value)}
+                                                                    className="absolute inset-0 opacity-0 cursor-pointer"
+                                                                />
+                                                            </label>
+                                                            {/* Width slider */}
+                                                            <input
+                                                                type="range"
+                                                                min={0}
+                                                                max={10}
+                                                                step={1}
+                                                                value={preSubClassicBorderWidth}
+                                                                onChange={(e) => setPreSubClassicBorderWidth(Number(e.target.value))}
+                                                                aria-label="Stroke width"
+                                                                className="flex-1 accent-[oklch(74%_0.175_62)]"
+                                                            />
+                                                        </div>
+                                                        <p className="type-label !normal-case !tracking-normal !text-zinc-600 !text-[10px] !font-sans">
+                                                            Outline around each character. Set to 0 to disable.
+                                                        </p>
+                                                    </div>
+                                                    {/* Background box — toggle + color + opacity */}
+                                                    <div className="space-y-2">
+                                                        <div className="flex items-center justify-between">
+                                                            <p className="type-label">Background</p>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setPreSubClassicBgOpacity(preSubClassicBgOpacity > 0 ? 0 : 0.6)}
+                                                                role="switch"
+                                                                aria-checked={preSubClassicBgOpacity > 0}
+                                                                aria-label="Toggle background box"
+                                                                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/60 ${
+                                                                    preSubClassicBgOpacity > 0
+                                                                        ? 'bg-[oklch(74%_0.175_62)]'
+                                                                        : 'bg-white/[0.1] border border-white/[0.08]'
+                                                                }`}
+                                                            >
+                                                                <span
+                                                                    aria-hidden
+                                                                    className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-[0_1px_2px_rgba(0,0,0,0.4)] transition-transform ${preSubClassicBgOpacity > 0 ? 'translate-x-5' : 'translate-x-1'}`}
+                                                                />
+                                                            </button>
+                                                        </div>
+                                                        {preSubClassicBgOpacity > 0 && (
+                                                            <div className="flex items-center gap-3 animate-fade-in">
+                                                                <label
+                                                                    className="relative w-10 h-10 rounded-[3px] border-2 border-white/[0.15] hover:border-[oklch(74%_0.175_62)]/60 cursor-pointer shrink-0 transition-colors"
+                                                                    style={{ backgroundColor: preSubClassicBgColor }}
+                                                                    title="Background color"
+                                                                >
+                                                                    <input
+                                                                        type="color"
+                                                                        value={preSubClassicBgColor}
+                                                                        onChange={(e) => setPreSubClassicBgColor(e.target.value)}
+                                                                        className="absolute inset-0 opacity-0 cursor-pointer"
+                                                                    />
+                                                                </label>
+                                                                <div className="flex-1 space-y-1">
+                                                                    <div className="flex items-center justify-between">
+                                                                        <span className="type-label !text-[9px]">Opacity</span>
+                                                                        <span className="type-mono text-[10px] text-[oklch(82%_0.16_68)] tabular-nums">
+                                                                            {Math.round(preSubClassicBgOpacity * 100)}%
+                                                                        </span>
+                                                                    </div>
+                                                                    <input
+                                                                        type="range"
+                                                                        min={10}
+                                                                        max={100}
+                                                                        step={5}
+                                                                        value={Math.round(preSubClassicBgOpacity * 100)}
+                                                                        onChange={(e) => setPreSubClassicBgOpacity(Number(e.target.value) / 100)}
+                                                                        aria-label="Background opacity"
+                                                                        className="w-full accent-[oklch(74%_0.175_62)]"
+                                                                    />
+                                                                </div>
+                                                            </div>
+                                                        )}
                                                     </div>
                                                     {/* Position */}
                                                     <div className="space-y-2">

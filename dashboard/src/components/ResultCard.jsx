@@ -125,6 +125,11 @@ export default function ResultCard({
         offset_y: 0,
         font_color: preselections?.subtitles?.font_color || '#FFFFFF',
         position: preselections?.subtitles?.position || 'bottom',
+        // Classic-mode stroke + background (passed through to burn_subtitles)
+        border_color: preselections?.subtitles?.border_color || '#000000',
+        border_width: preselections?.subtitles?.border_width ?? 2,
+        bg_color: preselections?.subtitles?.bg_color || '#000000',
+        bg_opacity: preselections?.subtitles?.bg_opacity ?? 0,
     };
 
     const [toggles, setTogglesLocal] = useState({
@@ -722,7 +727,28 @@ export default function ResultCard({
                 isOpen={showSubtitleModal}
                 onClose={() => setShowSubtitleModal(false)}
                 onGenerate={(params) => {
-                    setSubtitleParams(prev => ({ ...prev, ...params }));
+                    // Normalize camelCase emitted by SubtitleModal into the
+                    // snake_case shape the backend compose endpoint expects.
+                    // Keys the modal doesn't set are left untouched.
+                    const normalized = {
+                        ...(params.position !== undefined && { position: params.position }),
+                        ...(params.offset_y !== undefined && { offset_y: params.offset_y }),
+                        ...(params.fontSize !== undefined && { font_size: params.fontSize }),
+                        ...(params.fontName !== undefined && { font: params.fontName }),
+                        ...(params.fontColor !== undefined && { font_color: params.fontColor }),
+                        ...(params.borderColor !== undefined && { border_color: params.borderColor }),
+                        ...(params.borderWidth !== undefined && { border_width: params.borderWidth }),
+                        ...(params.bgColor !== undefined && { bg_color: params.bgColor }),
+                        ...(params.bgOpacity !== undefined && { bg_opacity: params.bgOpacity }),
+                        ...(params.preset !== undefined && { preset: params.preset }),
+                        ...(params.karaoke_mode !== undefined && { display_mode: params.karaoke_mode }),
+                        ...(params.words_per_group !== undefined && { words_per_group: params.words_per_group }),
+                        ...(params.uppercase !== undefined && { uppercase: params.uppercase }),
+                        ...(params.highlight_color !== undefined && { highlight_color: params.highlight_color }),
+                        // Mode comes from the viral/classic tab in the modal
+                        mode: params.preset !== undefined ? 'karaoke' : 'classic',
+                    };
+                    setSubtitleParams(prev => ({ ...prev, ...normalized }));
                     setToggles(t => ({ ...t, subtitles: true }));
                     setShowSubtitleModal(false);
                 }}

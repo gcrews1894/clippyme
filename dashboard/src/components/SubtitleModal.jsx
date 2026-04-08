@@ -89,9 +89,9 @@ export default function SubtitleModal({ isOpen, onClose, onGenerate, isProcessin
     const [fontSize, setFontSize] = useState(42);
     const [classicFontName, setClassicFontName] = useState('Verdana');
     const [fontColor, setFontColor] = useState('#FFFFFF');
-    const borderColor = '#000000';
+    const [borderColor, setBorderColor] = useState('#000000');
     const [borderWidth, setBorderWidth] = useState(2);
-    const bgColor = '#000000';
+    const [bgColor, setBgColor] = useState('#000000');
     const [bgOpacity, setBgOpacity] = useState(0.0);
 
     useEffect(() => {
@@ -368,49 +368,84 @@ export default function SubtitleModal({ isOpen, onClose, onGenerate, isProcessin
                                     />
                                 </div>
 
-                                {/* Classic: Outline */}
+                                {/* Classic: Stroke (outline) — color + width */}
                                 <div className="space-y-2">
                                     <div className="flex justify-between items-center">
-                                        <label className="text-xs font-medium text-zinc-400">Outline</label>
+                                        <label className="text-xs font-medium text-zinc-400">Stroke</label>
                                         <span className="text-xs font-mono text-accent-pink">{borderWidth}px</span>
                                     </div>
-                                    <input
-                                        type="range" min="0" max="5" step="1"
-                                        value={borderWidth}
-                                        onChange={(e) => setBorderWidth(parseInt(e.target.value))}
-                                        className="w-full accent-accent-pink h-1 bg-white/5 rounded-full appearance-none cursor-pointer"
-                                    />
-                                </div>
-
-                                {/* Classic: Background box toggle */}
-                                <div className="flex items-center justify-between">
-                                    <label className="text-xs font-medium text-zinc-400 flex items-center gap-1.5">
-                                        <Layers size={13} /> Background Box
-                                    </label>
-                                    <button
-                                        onClick={() => setBgOpacity(bgOpacity > 0 ? 0 : 0.6)}
-                                        className={`w-10 h-5 rounded-full transition-all duration-300 relative p-0.5 ${
-                                            bgOpacity > 0 ? 'bg-accent-pink' : 'bg-white/10'
-                                        }`}
-                                    >
-                                        <div className={`w-4 h-4 rounded-full bg-white transition-all duration-300 ${bgOpacity > 0 ? 'translate-x-5' : 'translate-x-0'}`} />
-                                    </button>
-                                </div>
-
-                                {bgOpacity > 0 && (
-                                    <div className="space-y-2">
-                                        <div className="flex justify-between items-center">
-                                            <label className="text-xs font-medium text-zinc-400">Opacity</label>
-                                            <span className="text-xs font-mono text-accent-pink">{Math.round(bgOpacity * 100)}%</span>
-                                        </div>
+                                    <div className="flex items-center gap-3">
+                                        <label
+                                            className="relative w-9 h-9 rounded-[3px] border-2 border-white/15 hover:border-accent-pink/60 cursor-pointer shrink-0 transition-colors"
+                                            style={{ backgroundColor: borderColor }}
+                                            title="Stroke color"
+                                        >
+                                            <input
+                                                type="color"
+                                                value={borderColor}
+                                                onChange={(e) => setBorderColor(e.target.value)}
+                                                className="absolute inset-0 opacity-0 cursor-pointer"
+                                            />
+                                        </label>
                                         <input
-                                            type="range" min="10" max="100" step="10"
-                                            value={Math.round(bgOpacity * 100)}
-                                            onChange={(e) => setBgOpacity(parseInt(e.target.value) / 100)}
-                                            className="w-full accent-accent-pink h-1 bg-white/5 rounded-full appearance-none cursor-pointer"
+                                            type="range" min="0" max="10" step="1"
+                                            value={borderWidth}
+                                            onChange={(e) => setBorderWidth(parseInt(e.target.value))}
+                                            aria-label="Stroke width"
+                                            className="flex-1 accent-accent-pink h-1 bg-white/5 rounded-full appearance-none cursor-pointer"
                                         />
                                     </div>
-                                )}
+                                </div>
+
+                                {/* Classic: Background box — toggle + color + opacity */}
+                                <div className="space-y-2">
+                                    <div className="flex items-center justify-between">
+                                        <label className="text-xs font-medium text-zinc-400 flex items-center gap-1.5">
+                                            <Layers size={13} /> Background box
+                                        </label>
+                                        <button
+                                            type="button"
+                                            onClick={() => setBgOpacity(bgOpacity > 0 ? 0 : 0.6)}
+                                            role="switch"
+                                            aria-checked={bgOpacity > 0}
+                                            className={`w-10 h-5 rounded-full transition-all duration-300 relative p-0.5 ${
+                                                bgOpacity > 0 ? 'bg-accent-pink' : 'bg-white/10'
+                                            }`}
+                                        >
+                                            <div className={`w-4 h-4 rounded-full bg-white transition-all duration-300 ${bgOpacity > 0 ? 'translate-x-5' : 'translate-x-0'}`} />
+                                        </button>
+                                    </div>
+
+                                    {bgOpacity > 0 && (
+                                        <div className="flex items-center gap-3 animate-fade-in">
+                                            <label
+                                                className="relative w-9 h-9 rounded-[3px] border-2 border-white/15 hover:border-accent-pink/60 cursor-pointer shrink-0 transition-colors"
+                                                style={{ backgroundColor: bgColor }}
+                                                title="Background color"
+                                            >
+                                                <input
+                                                    type="color"
+                                                    value={bgColor}
+                                                    onChange={(e) => setBgColor(e.target.value)}
+                                                    className="absolute inset-0 opacity-0 cursor-pointer"
+                                                />
+                                            </label>
+                                            <div className="flex-1 space-y-1">
+                                                <div className="flex items-center justify-between">
+                                                    <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Opacity</span>
+                                                    <span className="text-xs font-mono text-accent-pink">{Math.round(bgOpacity * 100)}%</span>
+                                                </div>
+                                                <input
+                                                    type="range" min="10" max="100" step="5"
+                                                    value={Math.round(bgOpacity * 100)}
+                                                    onChange={(e) => setBgOpacity(parseInt(e.target.value) / 100)}
+                                                    aria-label="Background opacity"
+                                                    className="w-full accent-accent-pink h-1 bg-white/5 rounded-full appearance-none cursor-pointer"
+                                                />
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
                             </>
                         )}
 
