@@ -1405,9 +1405,14 @@ def get_viral_clips(transcript_result, video_duration, instructions=None):
         user_instructions_block=user_instructions_block
     )
 
-    # Retry with exponential backoff for rate limits / transient errors
+    # Retry with exponential backoff for rate limits / transient errors.
+    # 429 (quota) gets a longer base backoff because Google's "wait N
+    # seconds" signal lives in the error message rather than structured
+    # metadata in the python SDK — we can't honor it precisely, but we
+    # can at least slow down instead of retrying immediately.
     response = None
-    for attempt in range(3):
+    max_attempts = int(os.getenv("GEMINI_MAX_RETRIES", "3") or "3")
+    for attempt in range(max_attempts):
         try:
             response = client.models.generate_content(
                 model=model_name,
@@ -1415,12 +1420,25 @@ def get_viral_clips(transcript_result, video_duration, instructions=None):
             )
             break
         except Exception as e:
-            wait = 2 ** attempt * 2  # 2s, 4s, 8s
-            if attempt < 2:
-                print(f"⚠️  Gemini API error (attempt {attempt + 1}/3): {e}. Retrying in {wait}s...")
+            err_str = str(e).lower()
+            is_rate_limit = (
+                "429" in err_str
+                or "rate limit" in err_str
+                or "quota" in err_str
+                or "resource_exhausted" in err_str
+            )
+            # 429 → 10s / 20s / 40s; transient → 2s / 4s / 8s
+            base = 10 if is_rate_limit else 2
+            wait = base * (2 ** attempt)
+            if attempt < max_attempts - 1:
+                reason = "rate-limited" if is_rate_limit else "transient error"
+                print(
+                    f"⚠️  Gemini API {reason} (attempt {attempt + 1}/{max_attempts}): "
+                    f"{e}. Retrying in {wait}s..."
+                )
                 time.sleep(wait)
             else:
-                print(f"❌ Gemini API failed after 3 attempts: {e}")
+                print(f"❌ Gemini API failed after {max_attempts} attempts: {e}")
                 return None
 
     if response is None:
@@ -1463,7 +1481,7 @@ def get_viral_clips(transcript_result, video_duration, instructions=None):
     # Parse response JSON via the 5-level chain in gemini_parser.
     # See CLAUDE.md section "Gemini viral detection — parsing chain".
     try:
-        from clippyme.pipeline.gemini_parser import parse_gemini_response, validate_and_dedupe
+        from clippyme.pipeline.gemini_parser import parse_gemini_response, validate_and_dedupe, backfill_hook_text
         from pydantic import ValidationError
 
         text = response.text or ""
@@ -1483,7 +1501,7 @@ def get_viral_clips(transcript_result, video_duration, instructions=None):
             it to reformat. That avoids paying the input-token cost of
             the transcript twice and keeps the retry latency-bounded.
             """
-            retry_model = "gemini-2.5-flash"
+            retry_model = os.getenv("GEMINI_RETRY_MODEL", "gemini-2.5-flash") or "gemini-2.5-flash"
             retry_prompt = (
                 "You are a JSON reformatter. The previous response below was not "
                 "valid JSON and failed parsing with this error:\n\n"
@@ -1543,46 +1561,11 @@ def get_viral_clips(transcript_result, video_duration, instructions=None):
             print("❌ No valid clips after Pydantic validation + dedupe")
             return None
 
-        # Fallback: ensure EVERY clip has a viral_hook_text. Strategy:
-        #   1. Keep Gemini's hook if non-empty.
-        #   2. Else use the first ~8 transcript words inside the clip window.
-        #   3. Else widen the window by ±1s (handles off-by-one boundary cases).
-        #   4. Else fall back to the YouTube title (truncated to 10 words).
-        #   5. Else hard-coded "Watch this" so the field is never empty.
-        def _truncate_words(text: str, n: int = 10) -> str:
-            parts = (text or "").strip().split()
-            return " ".join(parts[:n]).strip()
-
-        for clip in clips:
-            existing = (clip.get("viral_hook_text") or "").strip()
-            if existing:
-                clip["viral_hook_text"] = _truncate_words(existing, 10)
-                continue
-
-            cs = float(clip.get("start", 0.0) or 0.0)
-            ce = float(clip.get("end", 0.0) or 0.0)
-
-            hook_words = [w.get("w", "") for w in words if cs <= w.get("s", 0.0) < ce][:10]
-            if not hook_words:
-                # widen window ±1s in case of off-by-one boundaries
-                hook_words = [
-                    w.get("w", "")
-                    for w in words
-                    if (cs - 1.0) <= w.get("s", 0.0) < (ce + 1.0)
-                ][:10]
-
-            if hook_words:
-                clip["viral_hook_text"] = " ".join(hook_words).strip()
-                continue
-
-            title_fallback = _truncate_words(
-                clip.get("video_title_for_youtube_short", ""), 10
-            )
-            if title_fallback:
-                clip["viral_hook_text"] = title_fallback
-                continue
-
-            clip["viral_hook_text"] = "Watch this"
+        # Ensure every clip has a viral_hook_text. Logic lives in
+        # gemini_parser.backfill_hook_text so both the main pipeline AND
+        # the metadata-reload path in job_results.py use the exact same
+        # strategy (no drift between live runs and restored jobs).
+        backfill_hook_text(clips, words)
 
         print(f"✅ {len(clips)} clips passed validation + dedupe")
         result_json = {"shorts": clips}

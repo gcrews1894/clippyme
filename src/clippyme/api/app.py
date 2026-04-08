@@ -29,6 +29,7 @@ from clippyme.domain.job_results import load_partial_result, load_final_result, 
 from clippyme.domain.compose import compose_layers
 from clippyme.domain.subtitle_pipeline import resolve_clip_filename, run_subtitle_pipeline
 from clippyme.domain.clip_endpoints import run_smart_cut, restore_job_from_disk
+from clippyme.domain.url_utils import filename_from_video_url
 from clippyme.api.schemas import (
     BatchRequest,
     ComposeRequest,
@@ -619,8 +620,7 @@ async def reframe_clip(job_id: str, clip_index: int, req: ReframeRequest):
     clip_data = clips[clip_index]
 
     # Resolve the current clip filename (same logic as smartcut / subtitle)
-    clip_url = clip_data.get("video_url", "") or ""
-    filename = clip_url.split("/")[-1] if clip_url else None
+    filename = filename_from_video_url(clip_data.get("video_url"))
     if not filename:
         base_name = os.path.basename(metadata_path).replace("_metadata.json", "")
         filename = f"{base_name}_clip_{clip_index + 1}.mp4"
@@ -674,13 +674,20 @@ async def reframe_clip(job_id: str, clip_index: int, req: ReframeRequest):
             detail=f"Reframe failed (exit {proc.returncode}). Last output: {output_text[-400:]}",
         )
 
-    # Cache-busting suffix so the <video> element reloads
+    # Cache-busting suffix so the <video> element reloads.
+    # CRITICAL: the query string MUST NOT end up in the stored video_url —
+    # the publish endpoint (and any future consumer) resolves the clip
+    # file on disk via `video_url.split("/")[-1]`, so a trailing `?v=...`
+    # would produce `clip_1.mp4?v=1234` and a "clip file not found" error
+    # on upload. Keep the clean path in metadata and append cache-bust
+    # only in the HTTP response, which is what the <video> element sees.
     cache_bust = int(time.time())
-    new_video_url = f"/videos/{job_id}/{original_clip_filename}?v={cache_bust}"
+    clean_video_url = f"/videos/{job_id}/{original_clip_filename}"
+    new_video_url = f"{clean_video_url}?v={cache_bust}"
 
-    # Update metadata.json and in-memory job state
+    # Update metadata.json and in-memory job state with the CLEAN url
     try:
-        clips[clip_index]["video_url"] = new_video_url
+        clips[clip_index]["video_url"] = clean_video_url
         clips[clip_index]["reframe_mode"] = mode
         data["shorts"] = clips
         save_job_metadata(metadata_path, data)
@@ -693,7 +700,9 @@ async def reframe_clip(job_id: str, clip_index: int, req: ReframeRequest):
         and "clips" in jobs[job_id]["result"]
         and clip_index < len(jobs[job_id]["result"]["clips"])
     ):
-        jobs[job_id]["result"]["clips"][clip_index]["video_url"] = new_video_url
+        # In-memory state also gets the clean URL — the frontend applies
+        # its own cache-bust via `new_video_url` below on the <video> tag.
+        jobs[job_id]["result"]["clips"][clip_index]["video_url"] = clean_video_url
         jobs[job_id]["result"]["clips"][clip_index]["reframe_mode"] = mode
 
     return {
@@ -803,7 +812,7 @@ async def compose_clip(job_id: str, clip_index: int, req: ComposeRequest):
     clip_info = clips[clip_index]
 
     # Resolve the base clip filename (same logic as other endpoints)
-    clip_filename = clip_info.get("video_url", "").split("/")[-1]
+    clip_filename = filename_from_video_url(clip_info.get("video_url"))
     if not clip_filename:
         base_name = os.path.basename(metadata_files[0]).replace("_metadata.json", "")
         clip_filename = f"{base_name}_clip_{clip_index + 1}.mp4"
@@ -903,8 +912,9 @@ async def publish_clip_endpoint(job_id: str, clip_index: int, req: PublishReques
         raise HTTPException(status_code=400, detail="Invalid clip index")
     clip_info = clips[clip_index]
 
-    # Resolve the source clip
-    base_filename = clip_info.get("video_url", "").split("/")[-1]
+    # Resolve the source clip via the shared helper — safe against
+    # cache-busting query strings left behind by old reframe responses.
+    base_filename = filename_from_video_url(clip_info.get("video_url"))
     if not base_filename:
         base_name = os.path.basename(metadata_files[0]).replace("_metadata.json", "")
         base_filename = f"{base_name}_clip_{clip_index + 1}.mp4"

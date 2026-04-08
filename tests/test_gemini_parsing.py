@@ -22,6 +22,7 @@ if SRC not in sys.path:
 
 from clippyme.pipeline.gemini_parser import (  # noqa: E402
     JSON_DELIMITER,
+    backfill_hook_text,
     parse_gemini_response,
     validate_and_dedupe,
 )
@@ -334,3 +335,100 @@ def test_clamps_to_video_duration() -> None:
     clips = validate_and_dedupe(data, video_duration=300)
     assert len(clips) == 1
     assert clips[0]["start"] == 10
+
+
+# --- backfill_hook_text ----------------------------------------------------
+
+
+def _make_clip(**overrides):
+    base = {
+        "start": 10.0,
+        "end": 30.0,
+        "viral_score": 85,
+        "viral_reason": "Strong hook and clean payoff within the window",
+        "viral_hook_text": "",
+        "video_title_for_youtube_short": "",
+    }
+    base.update(overrides)
+    return base
+
+
+def test_backfill_keeps_existing_hook():
+    clips = [_make_clip(viral_hook_text="Everyone lies about this")]
+    backfill_hook_text(clips, words=[])
+    assert clips[0]["viral_hook_text"] == "Everyone lies about this"
+
+
+def test_backfill_normalizes_and_truncates_existing_hook():
+    """Extra whitespace collapsed and long hooks capped at 10 words."""
+    clips = [_make_clip(viral_hook_text="  one two   three four five six seven eight nine ten eleven  ")]
+    backfill_hook_text(clips, words=[])
+    assert clips[0]["viral_hook_text"] == "one two three four five six seven eight nine ten"
+
+
+def test_backfill_uses_transcript_window():
+    clips = [_make_clip(start=5.0, end=15.0)]
+    words = [
+        {"w": "before", "s": 1.0, "e": 2.0},
+        {"w": "hello", "s": 6.0, "e": 6.5},
+        {"w": "world", "s": 7.0, "e": 7.5},
+        {"w": "after", "s": 20.0, "e": 21.0},
+    ]
+    backfill_hook_text(clips, words)
+    assert clips[0]["viral_hook_text"] == "hello world"
+
+
+def test_backfill_widens_window_by_one_second():
+    """Words just outside the ±0 window (but within ±1s) are still picked."""
+    clips = [_make_clip(start=10.0, end=20.0)]
+    words = [
+        {"w": "edge", "s": 9.5, "e": 9.9},  # just before start
+        {"w": "case", "s": 20.2, "e": 20.5},  # just after end
+    ]
+    backfill_hook_text(clips, words)
+    assert clips[0]["viral_hook_text"] == "edge case"
+
+
+def test_backfill_falls_back_to_title():
+    clips = [_make_clip(
+        start=10.0,
+        end=20.0,
+        video_title_for_youtube_short="This changes everything",
+    )]
+    backfill_hook_text(clips, words=[])
+    assert clips[0]["viral_hook_text"] == "This changes everything"
+
+
+def test_backfill_falls_back_to_fallback_title_param():
+    """fallback_title kwarg used when the clip has no title either."""
+    clips = [_make_clip(start=10.0, end=20.0)]
+    backfill_hook_text(clips, words=[], fallback_title="My Awesome Video")
+    assert clips[0]["viral_hook_text"] == "My Awesome Video"
+
+
+def test_backfill_hard_coded_default():
+    """Last-resort: when everything else fails, we still ship a hook."""
+    clips = [_make_clip(start=10.0, end=20.0)]
+    backfill_hook_text(clips, words=[])
+    assert clips[0]["viral_hook_text"] == "Watch this"
+
+
+def test_backfill_handles_malformed_word_entries():
+    """Defensive: words with non-numeric 's' shouldn't crash the loop."""
+    clips = [_make_clip(start=5.0, end=15.0)]
+    words = [
+        {"w": "bad", "s": "not-a-float"},
+        {"w": "good", "s": 7.0},
+    ]
+    backfill_hook_text(clips, words)
+    assert clips[0]["viral_hook_text"] == "good"
+
+
+def test_backfill_is_idempotent():
+    """Calling backfill twice yields the same result."""
+    clips = [_make_clip(start=5.0, end=15.0)]
+    words = [{"w": "hello", "s": 6.0}, {"w": "world", "s": 7.0}]
+    backfill_hook_text(clips, words)
+    first = clips[0]["viral_hook_text"]
+    backfill_hook_text(clips, words)
+    assert clips[0]["viral_hook_text"] == first

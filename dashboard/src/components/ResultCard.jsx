@@ -34,33 +34,70 @@ export default function ResultCard({
 
     const [copiedField, setCopiedField] = useState(null);
 
-    // Toggle state — initialized from preselections prop
-    const [toggles, setToggles] = useState({
-        smartcut: preselections?.smartcut || false,
-        hook: preselections?.hook ? true : false,
-        subtitles: preselections?.subtitles ? true : false,
-    });
-
-    const [hookParams, setHookParams] = useState({
+    // Layered state seeding: clipState (persisted per-clip) > preselections
+    // (pipeline defaults) > hard-coded defaults. This way a refresh restores
+    // the user's exact choices for this specific clip.
+    const defaultToggles = {
+        smartcut: !!preselections?.smartcut,
+        hook: !!preselections?.hook,
+        subtitles: !!preselections?.subtitles,
+    };
+    const defaultHookParams = {
         text: clip.viral_hook_text || clip.hook_text || '',
         position: preselections?.hook?.position || 'top',
         size: preselections?.hook?.size || 'S',
         offset_y: 0,
-    });
-
-    const [subtitleParams, setSubtitleParams] = useState({
+    };
+    const defaultSubtitleParams = {
         preset: preselections?.subtitles?.preset || 'classic_white',
         mode: preselections?.subtitles?.mode || 'karaoke',
         display_mode: 'word_group',
         highlight_color: null,
-        // Karaoke font default; classic mode overrides via preselections.font below
         font: preselections?.subtitles?.font || 'Montserrat-Black',
         uppercase: true,
         offset_y: 0,
-        // Classic-mode params (only meaningful when mode === 'classic')
         font_color: preselections?.subtitles?.font_color || '#FFFFFF',
         position: preselections?.subtitles?.position || 'bottom',
+    };
+
+    const [toggles, setTogglesLocal] = useState({
+        ...defaultToggles,
+        ...(clipState.toggles || {}),
     });
+    const [hookParams, setHookParamsLocal] = useState({
+        ...defaultHookParams,
+        ...(clipState.hookParams || {}),
+    });
+    const [subtitleParams, setSubtitleParamsLocal] = useState({
+        ...defaultSubtitleParams,
+        ...(clipState.subtitleParams || {}),
+    });
+
+    // Wrapped setters that ALSO persist into per-clip state so reloads and
+    // batch publish both see the user's actual choices. We use refs-less
+    // closure updates — React batches, and onUpdateState writes localStorage
+    // via useClipStates.
+    const setToggles = (updater) => {
+        setTogglesLocal((prev) => {
+            const next = typeof updater === 'function' ? updater(prev) : updater;
+            onUpdateState({ toggles: next });
+            return next;
+        });
+    };
+    const setHookParams = (updater) => {
+        setHookParamsLocal((prev) => {
+            const next = typeof updater === 'function' ? updater(prev) : updater;
+            onUpdateState({ hookParams: next });
+            return next;
+        });
+    };
+    const setSubtitleParams = (updater) => {
+        setSubtitleParamsLocal((prev) => {
+            const next = typeof updater === 'function' ? updater(prev) : updater;
+            onUpdateState({ subtitleParams: next });
+            return next;
+        });
+    };
 
     const [isComposing, setIsComposing] = useState(false);
     const [showPublishModal, setShowPublishModal] = useState(false);
@@ -72,6 +109,11 @@ export default function ResultCard({
     };
 
     const handleDownload = async () => {
+        // Idempotency guard: React sets isComposing asynchronously so a fast
+        // double-click can fire two requests before the first setState lands.
+        // Bail out immediately if a compose is already in flight.
+        if (isComposing) return;
+
         const hasActiveToggles = Object.values(toggles).some(Boolean);
 
         if (!hasActiveToggles) {
@@ -149,11 +191,29 @@ export default function ResultCard({
     const defaultSmartCut = !!preselections?.smartcut;
     const defaultHookOn = !!preselections?.hook;
     const defaultSubsOn = !!preselections?.subtitles;
+    const baselineHookText = clip.viral_hook_text || clip.hook_text || '';
+    const hookDrift =
+        toggles.hook && (
+            hookParams.text !== baselineHookText ||
+            hookParams.position !== (preselections?.hook?.position || 'top') ||
+            hookParams.size !== (preselections?.hook?.size || 'S') ||
+            hookParams.offset_y !== 0
+        );
+    const subtitleDrift =
+        toggles.subtitles && (
+            subtitleParams.mode !== (preselections?.subtitles?.mode || 'karaoke') ||
+            subtitleParams.preset !== (preselections?.subtitles?.preset || 'classic_white') ||
+            subtitleParams.font !== (preselections?.subtitles?.font || 'Montserrat-Black') ||
+            subtitleParams.font_color !== (preselections?.subtitles?.font_color || '#FFFFFF') ||
+            subtitleParams.position !== (preselections?.subtitles?.position || 'bottom') ||
+            subtitleParams.offset_y !== 0
+        );
     const isCustomized =
         toggles.smartcut !== defaultSmartCut ||
         toggles.hook !== defaultHookOn ||
         toggles.subtitles !== defaultSubsOn ||
-        (toggles.hook && hookParams.text && hookParams.text !== (clip.viral_hook_text || clip.hook_text || ''));
+        hookDrift ||
+        subtitleDrift;
 
     const scoreLevel = clip.viral_score >= 80 ? 'high' : clip.viral_score >= 50 ? 'mid' : 'low';
     const viralScoreGradient = {

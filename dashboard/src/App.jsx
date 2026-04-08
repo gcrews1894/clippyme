@@ -39,7 +39,47 @@ function App() {
   const [syncTrigger, setSyncTrigger] = useState(0);
 
   const [showConfetti, setShowConfetti] = useState(false);
-  const [preselections, setPreselections] = useState(null);
+  const [preselections, setPreselectionsRaw] = useState(null);
+
+  // Wrap setPreselections so every time preselections change we also persist
+  // them against the current jobId (if known) — that way History restore and
+  // page reload can rehydrate the exact toggle defaults the user picked.
+  const setPreselections = (value) => {
+    setPreselectionsRaw(value);
+    try {
+      if (jobId && value) {
+        localStorage.setItem(`clippyme_preselections_job_${jobId}`, JSON.stringify(value));
+      }
+    } catch {
+      /* localStorage full/disabled — silent */
+    }
+  };
+
+  // When jobId becomes known AFTER preselections were set (submit flow),
+  // persist the snapshot retroactively so it's recoverable.
+  useEffect(() => {
+    if (jobId && preselections) {
+      try {
+        localStorage.setItem(`clippyme_preselections_job_${jobId}`, JSON.stringify(preselections));
+      } catch {
+        /* silent */
+      }
+    }
+  }, [jobId, preselections]);
+
+  // When we restore a job from history (jobId set without preselections),
+  // try to recover the saved preselection snapshot from localStorage.
+  useEffect(() => {
+    if (jobId && !preselections) {
+      try {
+        const saved = localStorage.getItem(`clippyme_preselections_job_${jobId}`);
+        if (saved) setPreselectionsRaw(JSON.parse(saved));
+      } catch {
+        /* silent */
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobId]);
   const { states: clipStates, updateClip: updateClipState } = useClipStates(jobId);
 
   const handleClipPlay = (startTime) => {
@@ -52,7 +92,7 @@ function App() {
     setIsSyncedPlaying(false);
   };
 
-  useSessionPersistence({ status, jobId, results, processingMedia, activeTab });
+  useSessionPersistence({ status, jobId, results, processingMedia, activeTab, preselections });
 
   useEffect(() => {
     if (apiKey) localStorage.setItem('gemini_key', apiKey);

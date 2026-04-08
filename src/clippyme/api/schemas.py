@@ -115,8 +115,31 @@ class ViralClip(BaseModel):
     viral_reason: str = Field(..., min_length=20)
     video_description_for_tiktok: str = ""
     video_description_for_instagram: str = ""
-    video_title_for_youtube_short: str = Field("", max_length=120)
+    # YouTube Shorts enforces 100 chars; we leave a tiny cushion (10 chars)
+    # because Gemini sometimes appends a stray period or ellipsis that we
+    # trim during normalization anyway.
+    video_title_for_youtube_short: str = Field("", max_length=110)
     viral_hook_text: str = Field("", max_length=160)
+
+    @field_validator(
+        "viral_reason",
+        "video_description_for_tiktok",
+        "video_description_for_instagram",
+        "video_title_for_youtube_short",
+        "viral_hook_text",
+    )
+    @classmethod
+    def _normalize_whitespace(cls, v: str) -> str:
+        """Collapse whitespace runs and strip.
+
+        Gemini occasionally emits multiline values with stray \\n or \\t
+        that break downstream rendering (ASS lines, drawtext, UI cards).
+        Normalize once at the edge so the rest of the pipeline sees clean
+        single-line text for every string field.
+        """
+        if not isinstance(v, str):
+            return v
+        return " ".join(v.split()).strip()
 
     @field_validator("end")
     @classmethod

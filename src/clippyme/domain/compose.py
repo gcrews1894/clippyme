@@ -149,6 +149,27 @@ async def _apply_subtitles(
     return sub_output
 
 
+def _cleanup_intermediates(files: list, keep_path: str) -> None:
+    """Best-effort removal of intermediate files.
+
+    Never raises — cleanup failures must NOT mask the original composition
+    error. ``keep_path`` is the final artifact path; any intermediate
+    matching it is preserved.
+    """
+    keep_abs = os.path.abspath(keep_path) if keep_path else None
+    for temp_file in files:
+        if not temp_file:
+            continue
+        if not os.path.exists(temp_file):
+            continue
+        if keep_abs and os.path.abspath(temp_file) == keep_abs:
+            continue
+        try:
+            os.remove(temp_file)
+        except OSError:
+            pass
+
+
 async def compose_layers(
     *,
     base_clip: str,
@@ -162,48 +183,60 @@ async def compose_layers(
 ) -> str:
     """Run the active layer pipeline. Returns the final composed filename (basename).
 
-    Cleans up intermediate files on success.
+    Cleans up intermediate files on BOTH success and failure. If any layer
+    raises (ffmpeg crash, bad params, HTTPException) we still remove every
+    partial file we created before re-raising the original error.
     """
     active = {k: v for k, v in toggles.items() if v}
     if not active:
         return os.path.basename(base_clip)
 
     current_input = base_clip
-    intermediate_files: list[str] = []
-
-    if active.get("smartcut"):
-        current_input = await _apply_smartcut(current_input, base_clip, metadata, clip_info)
-
-    if active.get("hook") and hook_params.get("text"):
-        current_input = await _apply_hook(
-            current_input, job_dir, clip_index, hook_params, intermediate_files
-        )
-
-    if active.get("subtitles"):
-        current_input = await _apply_subtitles(
-            current_input,
-            job_dir,
-            clip_index,
-            metadata,
-            clip_info,
-            subtitle_params,
-            intermediate_files,
-        )
-
+    intermediate_files: list = []
     composed_filename = f"composed_clip_{clip_index}.mp4"
     composed_path = os.path.join(job_dir, composed_filename)
-    if os.path.abspath(current_input) != os.path.abspath(composed_path):
-        shutil.copy2(current_input, composed_path)
 
-    for temp_file in intermediate_files:
-        if (
-            temp_file
-            and os.path.exists(temp_file)
-            and os.path.abspath(temp_file) != os.path.abspath(composed_path)
-        ):
+    try:
+        if active.get("smartcut"):
+            current_input = await _apply_smartcut(
+                current_input, base_clip, metadata, clip_info
+            )
+
+        # Defensive: strip whitespace from hook text and bail if empty
+        # (otherwise Pillow/drawtext renders an invisible overlay).
+        hook_text = (hook_params or {}).get("text", "")
+        if isinstance(hook_text, str):
+            hook_text = hook_text.strip()
+        if active.get("hook") and hook_text:
+            hp_clean = {**hook_params, "text": hook_text}
+            current_input = await _apply_hook(
+                current_input, job_dir, clip_index, hp_clean, intermediate_files
+            )
+
+        if active.get("subtitles"):
+            current_input = await _apply_subtitles(
+                current_input,
+                job_dir,
+                clip_index,
+                metadata,
+                clip_info,
+                subtitle_params,
+                intermediate_files,
+            )
+
+        if os.path.abspath(current_input) != os.path.abspath(composed_path):
+            shutil.copy2(current_input, composed_path)
+
+        _cleanup_intermediates(intermediate_files, composed_path)
+        return composed_filename
+    except Exception:
+        # Failure path: remove any partial composed output AND every
+        # intermediate we created. Then re-raise the original exception
+        # so the endpoint layer can map it to an HTTP error.
+        _cleanup_intermediates(intermediate_files, "")
+        if os.path.exists(composed_path):
             try:
-                os.remove(temp_file)
+                os.remove(composed_path)
             except OSError:
                 pass
-
-    return composed_filename
+        raise

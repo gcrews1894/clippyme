@@ -40,7 +40,7 @@ services:
     container_name: clippyme-frontend
     image: clippyme-frontend
     ports:
-      - "5175:5173"
+      - "5175:5175"
     volumes:
       - ./dashboard:/app
       - /app/node_modules

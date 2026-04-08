@@ -11,9 +11,10 @@ import { SESSION_KEY } from '../lib/constants';
  *   results: unknown,
  *   processingMedia: { type?: string } | null,
  *   activeTab: string,
+ *   preselections?: object | null,
  * }} params
  */
-export function useSessionPersistence({ status, jobId, results, processingMedia, activeTab }) {
+export function useSessionPersistence({ status, jobId, results, processingMedia, activeTab, preselections }) {
   // Clear any stale session on mount — History tab replaces recovery.
   useEffect(() => {
     localStorage.removeItem(SESSION_KEY);
@@ -31,11 +32,12 @@ export function useSessionPersistence({ status, jobId, results, processingMedia,
         results,
         processingMedia: processingMedia?.type === 'url' ? processingMedia : null,
         activeTab,
+        preselections: preselections || null,
         timestamp: Date.now(),
       };
       localStorage.setItem(SESSION_KEY, JSON.stringify(sessionData));
     } catch (e) {
       console.debug('Skipping session persistence', e);
     }
-  }, [jobId, status, results, activeTab, processingMedia]);
+  }, [jobId, status, results, activeTab, processingMedia, preselections]);
 }

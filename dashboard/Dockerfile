@@ -11,9 +11,9 @@ RUN npm install
 
 COPY --chown=node:node . .
 
-EXPOSE 5173
+EXPOSE 5175
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD wget -q --spider http://localhost:5173/ || exit 1
+  CMD wget -q --spider http://localhost:5175/ || exit 1
 
 CMD ["npm", "run", "dev", "--", "--host"]

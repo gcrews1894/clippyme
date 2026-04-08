@@ -12,13 +12,14 @@ from clippyme.domain.subtitles import (
     burn_subtitles,
     SUBTITLE_PRESETS,
 )
+from clippyme.domain.url_utils import filename_from_video_url
 
 
 def resolve_clip_filename(req: Any, clip_data: dict, metadata_path: str) -> str:
     """Resolve the input clip filename for a subtitle request."""
     if req.input_filename:
         return os.path.basename(req.input_filename)
-    filename = clip_data.get("video_url", "").split("/")[-1]
+    filename = filename_from_video_url(clip_data.get("video_url"))
     if not filename:
         base_name = os.path.basename(metadata_path).replace("_metadata.json", "")
         filename = f"{base_name}_clip_{req.clip_index + 1}.mp4"

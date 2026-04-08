@@ -8,14 +8,14 @@ import os
 from fastapi import HTTPException
 
 from clippyme.domain.smartcut import smart_cut
+from clippyme.domain.url_utils import filename_from_video_url
 
 logger = logging.getLogger(__name__)
 
 
 def _resolve_clip_path(metadata_path: str, clip_data: dict, clip_index: int, output_dir: str) -> tuple[str, str]:
     """Return (filename, full_path) for a clip referenced by metadata."""
-    clip_url = clip_data.get("video_url", "")
-    filename = clip_url.split("/")[-1] if clip_url else None
+    filename = filename_from_video_url(clip_data.get("video_url"))
     if not filename:
         base_name = os.path.basename(metadata_path).replace("_metadata.json", "")
         filename = f"{base_name}_clip_{clip_index + 1}.mp4"
@@ -86,9 +86,12 @@ def restore_job_from_disk(job_id: str, output_dir: str, job_dir: str) -> dict:
     clips = data.get("shorts", [])
     base_name = os.path.basename(meta_files[0]).replace("_metadata.json", "")
     for i, clip in enumerate(clips):
-        clip_filename = clip.get("video_url", "").split("/")[-1]
+        clip_filename = filename_from_video_url(clip.get("video_url"))
         if not clip_filename:
             clip_filename = f"{base_name}_clip_{i+1}.mp4"
+        # Store the clean URL back — strip any stale ?v= cache-bust so
+        # downstream consumers (publish, smartcut, compose) never have to
+        # defensively split on `?` again.
         clip["video_url"] = f"/videos/{job_id}/{clip_filename}"
 
     return {

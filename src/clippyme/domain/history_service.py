@@ -17,7 +17,15 @@ _JOB_ID_RE = re.compile(
 )
 
 
-def is_valid_job_id(job_id: str) -> bool:
+def is_valid_job_id(job_id) -> bool:
+    """Strict UUID v4 check — defensive against None/int/bytes input.
+
+    The regex alone crashes on non-str input because ``re.match`` refuses
+    to accept anything but str/bytes. Wrap the call so every call site
+    can safely use the result as a boolean guard.
+    """
+    if not isinstance(job_id, str) or not job_id:
+        return False
     return bool(_JOB_ID_RE.match(job_id))
 
 
@@ -41,8 +49,9 @@ def scan_history(output_dir: str) -> List[dict]:
                     data = json.load(f)
                 clips = data.get("shorts", [])
                 clip_files = []
+                from clippyme.domain.url_utils import filename_from_video_url
                 for i, clip in enumerate(clips):
-                    clip_filename = clip.get("video_url", "").split("/")[-1]
+                    clip_filename = filename_from_video_url(clip.get("video_url"))
                     if not clip_filename:
                         base_name = os.path.basename(meta_files[0]).replace("_metadata.json", "")
                         clip_filename = f"{base_name}_clip_{i + 1}.mp4"

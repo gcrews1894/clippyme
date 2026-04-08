@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Youtube, Upload, FileVideo, X, Globe, Link2, FileUp, Loader2, ChevronDown, Sparkles, Layers, Clipboard, Settings } from 'lucide-react';
 
 // Visual previews for subtitle preset selection. Each entry mimics the
@@ -82,20 +82,69 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
     const [isDragging, setIsDragging] = useState(false);
     const urlInputRef = useRef(null);
 
-    const [reframeMode, setReframeMode] = useState('auto');
-    const [preSmartCut, setPreSmartCut] = useState(false);
-    const [preSubtitles, setPreSubtitles] = useState(false);
-    const [preSubPreset, setPreSubPreset] = useState('classic_white');
-    const [preSubMode, setPreSubMode] = useState('karaoke');
+    // Pre-selection state persisted to localStorage so users don't lose their
+    // Advanced Options choices when they refocus the window / navigate tabs.
+    const PRESELECT_LS_KEY = 'clippyme_preselections_v1';
+    const loadPersisted = () => {
+        try {
+            const raw = localStorage.getItem(PRESELECT_LS_KEY);
+            return raw ? JSON.parse(raw) : {};
+        } catch {
+            return {};
+        }
+    };
+    const persisted = loadPersisted();
+
+    const [reframeMode, setReframeMode] = useState(persisted.reframeMode ?? 'auto');
+    const [preSmartCut, setPreSmartCut] = useState(persisted.preSmartCut ?? false);
+    const [preSubtitles, setPreSubtitles] = useState(persisted.preSubtitles ?? false);
+    const [preSubPreset, setPreSubPreset] = useState(persisted.preSubPreset ?? 'classic_white');
+    const [preSubMode, setPreSubMode] = useState(persisted.preSubMode ?? 'karaoke');
     const [showSubConfig, setShowSubConfig] = useState(false);
     // Classic-mode pre-selection controls
-    const [preSubClassicFont, setPreSubClassicFont] = useState('Verdana');
-    const [preSubClassicFontColor, setPreSubClassicFontColor] = useState('#FFFFFF');
-    const [preSubClassicPosition, setPreSubClassicPosition] = useState('bottom');
-    const [preHook, setPreHook] = useState(false);
-    const [preHookPosition, setPreHookPosition] = useState('top');
-    const [preHookSize, setPreHookSize] = useState('S');
+    const [preSubClassicFont, setPreSubClassicFont] = useState(persisted.preSubClassicFont ?? 'Verdana');
+    const [preSubClassicFontColor, setPreSubClassicFontColor] = useState(persisted.preSubClassicFontColor ?? '#FFFFFF');
+    const [preSubClassicPosition, setPreSubClassicPosition] = useState(persisted.preSubClassicPosition ?? 'bottom');
+    const [preHook, setPreHook] = useState(persisted.preHook ?? false);
+    const [preHookPosition, setPreHookPosition] = useState(persisted.preHookPosition ?? 'top');
+    const [preHookSize, setPreHookSize] = useState(persisted.preHookSize ?? 'S');
     const [showHookConfig, setShowHookConfig] = useState(false);
+
+    // Persist whenever any pre-selection changes.
+    useEffect(() => {
+        try {
+            localStorage.setItem(
+                PRESELECT_LS_KEY,
+                JSON.stringify({
+                    reframeMode,
+                    preSmartCut,
+                    preSubtitles,
+                    preSubPreset,
+                    preSubMode,
+                    preSubClassicFont,
+                    preSubClassicFontColor,
+                    preSubClassicPosition,
+                    preHook,
+                    preHookPosition,
+                    preHookSize,
+                })
+            );
+        } catch {
+            // localStorage full / disabled — silent fail
+        }
+    }, [
+        reframeMode,
+        preSmartCut,
+        preSubtitles,
+        preSubPreset,
+        preSubMode,
+        preSubClassicFont,
+        preSubClassicFontColor,
+        preSubClassicPosition,
+        preHook,
+        preHookPosition,
+        preHookSize,
+    ]);
 
     const handleSubmit = (e) => {
         e.preventDefault();
@@ -427,28 +476,25 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
                                 {/* Section: Clip Options */}
                                 <div className="space-y-4">
 
-                                {/* Reframe Mode */}
-                                <div className="space-y-2">
-                                    <p className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider">Reframe Mode</p>
-                                    <div className="flex gap-2">
-                                        {[
-                                            { value: 'auto', label: 'Auto Reframe' },
-                                            { value: 'disabled', label: 'Disabled (4:3)' },
-                                        ].map(({ value, label }) => (
-                                            <button
-                                                key={value}
-                                                type="button"
-                                                onClick={() => setReframeMode(value)}
-                                                className={`flex-1 py-2 px-3 rounded-lg text-xs font-medium border transition-all ${
-                                                    reframeMode === value
-                                                        ? 'bg-accent-pink/20 text-accent-pink border-accent-pink/30'
-                                                        : 'bg-white/[0.02] text-zinc-500 border-white/5 hover:text-zinc-300 hover:bg-white/[0.04]'
-                                                }`}
-                                            >
-                                                {label}
-                                            </button>
-                                        ))}
+                                {/* Auto Reframe — single toggle (on = face tracking, off = 4:3 with black bars) */}
+                                <div className="flex items-center justify-between py-1">
+                                    <div className="flex flex-col">
+                                        <span className="text-[12px] font-medium text-zinc-300">Auto Reframe</span>
+                                        <span className="text-[10px] text-zinc-600">
+                                            {reframeMode === 'auto' ? 'Face tracking 9:16' : 'Disabled (4:3 + black bars)'}
+                                        </span>
                                     </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => setReframeMode(reframeMode === 'auto' ? 'disabled' : 'auto')}
+                                        aria-checked={reframeMode === 'auto'}
+                                        role="switch"
+                                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50 ${
+                                            reframeMode === 'auto' ? 'bg-accent-pink/60' : 'bg-white/10'
+                                        }`}
+                                    >
+                                        <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform ${reframeMode === 'auto' ? 'translate-x-4' : 'translate-x-1'}`} />
+                                    </button>
                                 </div>
 
                                 {/* Smart Cut */}
