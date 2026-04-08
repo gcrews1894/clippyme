@@ -279,7 +279,11 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
             smartcut: preSmartCut,
             subtitles: preSubtitles
                 ? (preSubMode === 'karaoke'
-                    ? { preset: preSubPreset, mode: 'karaoke' }
+                    ? {
+                        mode: 'karaoke',
+                        preset: preSubPreset,
+                        position: preSubClassicPosition,
+                      }
                     : {
                         mode: 'classic',
                         font: preSubClassicFont,
@@ -635,10 +639,11 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
 
                                             {/* Preset — only meaningful in karaoke mode */}
                                             {preSubMode === 'karaoke' ? (
-                                                <div className="space-y-2">
-                                                    <p className="type-label">Karaoke preset</p>
-                                                    <div className="grid grid-cols-2 gap-2">
-                                                        {SUBTITLE_PRESETS.map((p) => {
+                                                <div className="space-y-3">
+                                                    <div className="space-y-2">
+                                                        <p className="type-label">Karaoke preset</p>
+                                                        <div className="grid grid-cols-2 gap-2">
+                                                            {SUBTITLE_PRESETS.map((p) => {
                                                             const isActive = preSubPreset === p.id;
                                                             return (
                                                                 <button
@@ -666,6 +671,22 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
                                                                 </button>
                                                             );
                                                         })}
+                                                        </div>
+                                                    </div>
+                                                    {/* Position (shared between karaoke and classic) */}
+                                                    <div className="space-y-2">
+                                                        <p className="type-label">Position</p>
+                                                        <Segmented
+                                                            options={[
+                                                                { id: 'top', label: 'Top' },
+                                                                { id: 'middle', label: 'Middle' },
+                                                                { id: 'bottom', label: 'Bottom' },
+                                                            ]}
+                                                            value={preSubClassicPosition}
+                                                            onChange={setPreSubClassicPosition}
+                                                            size="sm"
+                                                            fullWidth
+                                                        />
                                                     </div>
                                                 </div>
                                             ) : (

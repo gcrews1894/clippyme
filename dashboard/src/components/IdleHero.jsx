@@ -9,6 +9,111 @@ const TikTokIcon = ({ size = 16, className = '' }) => (
 );
 
 /**
+ * Editorial notice banner used for setup warnings above the create box.
+ * Three tones matching the system's semantic oklch colors.
+ *
+ * @param {{
+ *   tone: 'critical' | 'warning' | 'info',
+ *   icon: React.ComponentType<{ size?: number, strokeWidth?: number, className?: string }>,
+ *   label: string,
+ *   title: string,
+ *   description: string,
+ *   onClick?: () => void,
+ *   onDismiss?: () => void,
+ * }} props
+ */
+function NoticeBanner({ tone, icon: Icon, label, title, description, onClick, onDismiss }) {
+  const palette = {
+    critical: {
+      accent: 'oklch(70% 0.2 25)',
+      accentBg: 'oklch(62% 0.22 25 / 0.08)',
+      accentBorder: 'oklch(62% 0.22 25 / 0.35)',
+      accentText: 'oklch(78% 0.2 25)',
+      iconBg: 'oklch(62% 0.22 25 / 0.12)',
+    },
+    warning: {
+      accent: 'oklch(74% 0.175 62)',
+      accentBg: 'oklch(74% 0.175 62 / 0.06)',
+      accentBorder: 'oklch(74% 0.175 62 / 0.35)',
+      accentText: 'oklch(82% 0.16 68)',
+      iconBg: 'oklch(74% 0.175 62 / 0.1)',
+    },
+    info: {
+      accent: 'oklch(68% 0.1 230)',
+      accentBg: 'oklch(68% 0.1 230 / 0.05)',
+      accentBorder: 'oklch(68% 0.1 230 / 0.3)',
+      accentText: 'oklch(78% 0.1 230)',
+      iconBg: 'oklch(68% 0.1 230 / 0.1)',
+    },
+  }[tone];
+
+  const body = (
+    <div className="flex items-start gap-3 text-left">
+      <div
+        className="w-10 h-10 rounded-[3px] flex items-center justify-center shrink-0 border"
+        style={{ backgroundColor: palette.iconBg, borderColor: palette.accentBorder }}
+      >
+        <Icon size={18} strokeWidth={1.6} style={{ color: palette.accentText }} />
+      </div>
+      <div className="flex-1 min-w-0 pt-0.5">
+        <div className="flex items-center gap-2 mb-0.5">
+          <span
+            className="font-mono text-[9px] uppercase tracking-[0.16em] px-1.5 py-0.5 rounded-[2px]"
+            style={{
+              color: palette.accentText,
+              backgroundColor: palette.accentBg,
+              border: `1px solid ${palette.accentBorder}`,
+            }}
+          >
+            {label}
+          </span>
+        </div>
+        <p className="text-[13px] font-medium text-white leading-snug">{title}</p>
+        <p className="text-[11px] text-zinc-500 mt-0.5 leading-relaxed">{description}</p>
+      </div>
+    </div>
+  );
+
+  const baseClass = `relative max-w-md w-full p-4 rounded-[3px] border transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background`;
+  const baseStyle = {
+    backgroundColor: palette.accentBg,
+    borderColor: palette.accentBorder,
+  };
+
+  return (
+    <div className={`relative max-w-md w-full`}>
+      {onClick ? (
+        <button
+          type="button"
+          onClick={onClick}
+          className={`${baseClass} w-full hover:brightness-110`}
+          style={baseStyle}
+        >
+          {body}
+        </button>
+      ) : (
+        <div className={baseClass} style={baseStyle}>
+          {body}
+        </div>
+      )}
+      {onDismiss && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDismiss();
+          }}
+          aria-label="Dismiss"
+          className="absolute top-2 right-2 w-7 h-7 flex items-center justify-center rounded-[2px] text-zinc-500 hover:text-white hover:bg-white/10 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/30"
+        >
+          <X size={12} strokeWidth={2} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+/**
  * Idle state of the Dashboard tab: hero headline, credential
  * warnings, media input, and a platform footer.
  *
@@ -75,72 +180,38 @@ export default function IdleHero({
       </div>
 
       {!apiKey && (
-        <button
+        <NoticeBanner
+          tone="critical"
+          icon={Key}
+          label="Required"
+          title="Gemini API key required"
+          description="Set your Gemini API key in Settings to start processing videos."
           onClick={onOpenSettings}
-          className="max-w-md w-full p-4 bg-amber-500/10 border border-amber-500/20 rounded-2xl flex items-center gap-3 text-left hover:bg-amber-500/15 transition-all"
-        >
-          <div className="w-10 h-10 rounded-xl bg-amber-500/20 flex items-center justify-center shrink-0">
-            <Key size={20} className="text-amber-400" />
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-amber-400">API Key Required</p>
-            <p className="text-xs text-zinc-400 mt-0.5">
-              Set your Gemini API key in Settings to start.
-            </p>
-          </div>
-        </button>
+        />
       )}
 
       {!hfTokenSet && !dismissedWarnings.hf && (
-        <div className="max-w-md w-full p-3 bg-blue-500/10 border border-blue-500/20 rounded-2xl flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-blue-500/20 flex items-center justify-center shrink-0">
-            <AlertCircle size={18} className="text-blue-400" />
-          </div>
-          <button
-            type="button"
-            onClick={onOpenSettings}
-            className="flex-1 text-left hover:opacity-80 transition-opacity"
-          >
-            <p className="text-xs font-semibold text-blue-400">Hugging Face Token Not Set</p>
-            <p className="text-[11px] text-zinc-400 mt-0.5">
-              Optional. Speeds up Whisper model downloads.
-            </p>
-          </button>
-          <button
-            type="button"
-            onClick={() => dismiss('hf')}
-            aria-label="Dismiss"
-            className="p-1.5 rounded-lg text-zinc-500 hover:text-white hover:bg-white/5 transition-colors"
-          >
-            <X size={14} />
-          </button>
-        </div>
+        <NoticeBanner
+          tone="info"
+          icon={AlertCircle}
+          label="Optional"
+          title="Hugging Face token not set"
+          description="Optional. Speeds up Whisper model downloads and removes rate limits."
+          onClick={onOpenSettings}
+          onDismiss={() => dismiss('hf')}
+        />
       )}
 
       {apiKey && !cookiesConfigured && !dismissedWarnings.cookies && (
-        <div className="max-w-md w-full p-3 bg-amber-500/10 border border-amber-500/20 rounded-2xl flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-amber-500/20 flex items-center justify-center shrink-0">
-            <Cookie size={18} className="text-amber-400" />
-          </div>
-          <button
-            type="button"
-            onClick={onOpenSettings}
-            className="flex-1 text-left hover:opacity-80 transition-opacity"
-          >
-            <p className="text-xs font-semibold text-amber-400">YouTube Cookies Not Configured</p>
-            <p className="text-[11px] text-zinc-400 mt-0.5">
-              Recommended. Avoids rate limits on YouTube downloads.
-            </p>
-          </button>
-          <button
-            type="button"
-            onClick={() => dismiss('cookies')}
-            aria-label="Dismiss"
-            className="p-1.5 rounded-lg text-zinc-500 hover:text-white hover:bg-white/5 transition-colors"
-          >
-            <X size={14} />
-          </button>
-        </div>
+        <NoticeBanner
+          tone="warning"
+          icon={Cookie}
+          label="Recommended"
+          title="YouTube cookies not configured"
+          description="Recommended. Avoids rate limits and age-gate failures on YouTube downloads."
+          onClick={onOpenSettings}
+          onDismiss={() => dismiss('cookies')}
+        />
       )}
 
       <div className="max-w-xl w-full">
