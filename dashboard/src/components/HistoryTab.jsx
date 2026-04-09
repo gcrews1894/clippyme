@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Activity, ChevronDown, History, X } from 'lucide-react';
+import { Activity, ChevronDown, History, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { getApiUrl } from '../config';
 
@@ -111,7 +111,7 @@ export default function HistoryTab({ onRestore, onJobDeleted, onAllCleared }) {
             onClick={handleDeleteAll}
             className="flex items-center gap-2 text-xs font-semibold text-zinc-400 hover:text-red-400 px-4 py-2 rounded-[3px] bg-white/5 border border-white/10 hover:border-red-500/30 transition-all"
           >
-            <X size={14} /> Clear All
+            <Trash2 size={14} strokeWidth={2} /> Clear All
           </button>
         )}
       </div>
@@ -195,10 +195,10 @@ export default function HistoryTab({ onRestore, onJobDeleted, onAllCleared }) {
                     </button>
                     <button
                       onClick={() => handleDelete(entry.jobId)}
-                      className="w-8 h-8 flex items-center justify-center rounded-[3px] border border-white/8 text-zinc-500 hover:text-[oklch(82%_0.2_25)] hover:border-[oklch(62%_0.22_25)]/40 hover:bg-[oklch(62%_0.22_25)]/10 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(62%_0.22_25)]/50"
+                      className="w-8 h-8 flex items-center justify-center rounded-[3px] border border-[oklch(62%_0.22_25)]/35 text-[oklch(70%_0.2_25)] hover:text-[oklch(82%_0.2_25)] hover:border-[oklch(62%_0.22_25)]/70 hover:bg-[oklch(62%_0.22_25)]/12 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(62%_0.22_25)]/60"
                       title="Delete this project and all its clip files"
                     >
-                      <X size={14} strokeWidth={2} />
+                      <Trash2 size={14} strokeWidth={2} />
                     </button>
                   </div>
                 </div>

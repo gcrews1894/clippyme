@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { AlertCircle, RotateCcw, Sparkles, Send, ArrowUpDown, Check, CheckSquare, Square, Download, Trash2, ChevronDown, ChevronUp } from 'lucide-react';
+import { AlertCircle, RotateCcw, Sparkles, Send, ArrowUpDown, Check, CheckSquare, Square, Download, Trash2, ChevronDown, ChevronUp, Scissors, MessageSquare, Type, SlidersHorizontal } from 'lucide-react';
 import ResultCard from './ResultCard';
 import ProcessingAnimation from './ProcessingAnimation';
 import LogsPanel from './LogsPanel';
@@ -53,6 +53,7 @@ export default function ResultsGrid({
 }) {
   const [batchPublishOpen, setBatchPublishOpen] = useState(false);
   const [sortBy, setSortBy] = useState('viral_desc');
+  const [bulkEditOpen, setBulkEditOpen] = useState(false);
   // Collapse the source-video preview once the job is complete — users
   // want the clips grid, not a big player of the original 1h video.
   const [sourcePreviewOpen, setSourcePreviewOpen] = useState(status !== 'complete');
@@ -115,8 +116,9 @@ export default function ResultsGrid({
     isClipSelected(clipStates[originalIndex] || {}),
   );
   // Only clips that are selected AND not yet published — the subset
-  // Publish-all acts on (republishing an already-published clip goes
-  // through the single-clip Publish button on the card).
+  // Publish-all acts on. The per-card Publish button was removed — if
+  // the user wants to republish a single clip, they tick its checkbox
+  // and hit 'Publish 01' in the sticky rail (same flow, one entry point).
   const publishableClips = selectedClips.filter(({ originalIndex }) =>
     !clipStates[originalIndex]?.publishedAt,
   );
@@ -140,6 +142,28 @@ export default function ResultsGrid({
       onUpdateClipState(originalIndex, { deleted: true, selected: false }),
     );
   };
+  // Bulk toggle helpers — flip a single `toggles` key across all
+  // selected clips in one shot. Used by the 'Bulk edit' popover.
+  const bulkSetToggle = (key, value) => {
+    selectedClips.forEach(({ originalIndex }) => {
+      const prev = clipStates[originalIndex]?.toggles || {};
+      onUpdateClipState(originalIndex, {
+        toggles: { ...prev, [key]: value },
+      });
+    });
+  };
+  // Apply a whole param dict (e.g. subtitleParams or hookParams) to
+  // every selected clip, shallow-merging over each clip's existing
+  // params so unrelated fields are preserved.
+  const bulkPatchParams = (paramKey, patch) => {
+    selectedClips.forEach(({ originalIndex }) => {
+      const prev = clipStates[originalIndex]?.[paramKey] || {};
+      onUpdateClipState(originalIndex, {
+        [paramKey]: { ...prev, ...patch },
+      });
+    });
+  };
+
   const downloadSelected = async () => {
     if (selectedClips.length === 0) return;
     for (const { clip, originalIndex } of selectedClips) {
@@ -220,39 +244,11 @@ export default function ResultsGrid({
             )}
           </div>
 
-          {/* Control rail */}
-          <div className="flex items-stretch gap-2 flex-wrap">
-            {clipCount > 1 && (
-              <div className="relative">
-                <select
-                  value={sortBy}
-                  onChange={(e) => setSortBy(e.target.value)}
-                  className="appearance-none bg-white/[0.02] border border-white/10 hover:border-white/25 text-zinc-200 text-[11px] font-mono uppercase tracking-[0.12em] px-3.5 pr-9 h-11 rounded-[3px] cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/50"
-                  title="Sort clips"
-                >
-                  {SORT_OPTIONS.map((opt) => (
-                    <option key={opt.id} value={opt.id} className="bg-background text-white">
-                      {opt.label}
-                    </option>
-                  ))}
-                </select>
-                <ArrowUpDown size={12} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" />
-              </div>
-            )}
-            {publishableClips.length > 0 && (
-              <button
-                onClick={() => setBatchPublishOpen(true)}
-                className="group flex items-center gap-2.5 h-11 px-4 rounded-[3px] bg-[oklch(74%_0.175_62)] hover:bg-[oklch(78%_0.175_65)] text-[oklch(12%_0.01_260)] text-[11px] font-mono uppercase tracking-[0.16em] font-semibold border border-[oklch(70%_0.18_62)] shadow-[0_1px_0_0_oklch(100%_0_0/0.3)_inset,0_10px_24px_-14px_oklch(74%_0.175_62/0.55)] active:translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)] focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-                title={`Publish ${publishableClips.length} active clips (ignores disabled and already-published)`}
-              >
-                <Send size={13} strokeWidth={2.2} />
-                Publish&nbsp;
-                <span className="tabular-nums">
-                  {String(publishableClips.length).padStart(2, '0')}
-                </span>
-              </button>
-            )}
-          </div>
+          {/* Masthead Publish + Sort removed — they used to live here as
+              big hero controls, but with the sticky action rail below
+              they were a duplicate of the bulk Publish / Sort that the
+              user always has access to while scrolling. Deleted to stop
+              the 'double publish button' UX complaint. */}
         </div>
       </header>
 
@@ -351,6 +347,72 @@ export default function ResultsGrid({
                   <ArrowUpDown size={11} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" />
                 </div>
               )}
+              {/* Bulk edit popover — lets the user flip Smart Cut / Hook
+                  / Subtitles on all selected clips in one click. Params
+                  (hook text, subtitle preset) can be tweaked per-clip via
+                  the card toggles; this rail only handles on/off state. */}
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setBulkEditOpen((v) => !v)}
+                  disabled={selectedClips.length === 0}
+                  aria-expanded={bulkEditOpen}
+                  className="flex items-center gap-1.5 h-9 px-3 rounded-[3px] border border-white/10 hover:border-white/25 text-zinc-300 hover:text-white type-mono text-[10px] uppercase tracking-[0.12em] transition-colors disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/50"
+                  title={`Bulk-edit layers on ${selectedClips.length} selected clip(s)`}
+                >
+                  <SlidersHorizontal size={11} strokeWidth={2.2} />
+                  Edit&nbsp;<span className="tabular-nums">{String(selectedClips.length).padStart(2, '0')}</span>
+                  <ChevronDown size={10} className={`transition-transform ${bulkEditOpen ? 'rotate-180' : ''}`} />
+                </button>
+                {bulkEditOpen && selectedClips.length > 0 && (
+                  <div
+                    role="menu"
+                    className="absolute right-0 top-full mt-2 w-64 rounded-[3px] border border-white/10 bg-[oklch(11%_0.008_260)] shadow-[0_20px_60px_-20px_oklch(0%_0_0/0.9)] backdrop-blur-lg p-3 space-y-2.5 z-50"
+                  >
+                    <div className="type-label text-[9px] text-zinc-600 px-1 pb-1 border-b border-white/5">
+                      Apply to {String(selectedClips.length).padStart(2, '0')} selected
+                    </div>
+                    {[
+                      { key: 'smartcut', label: 'Smart Cut', Icon: Scissors, hint: 'silences + filler words' },
+                      { key: 'hook', label: 'Hook', Icon: MessageSquare, hint: 'text overlay' },
+                      { key: 'subtitles', label: 'Subtitles', Icon: Type, hint: 'burned captions' },
+                    ].map(({ key, label, Icon, hint }) => (
+                      <div key={key} className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0 flex-1">
+                          <Icon size={12} strokeWidth={2} className="text-zinc-400 shrink-0" />
+                          <div className="min-w-0">
+                            <div className="text-[11px] text-zinc-200 font-semibold leading-tight">{label}</div>
+                            <div className="text-[9px] text-zinc-600 truncate">{hint}</div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => bulkSetToggle(key, true)}
+                            className="px-2 h-6 rounded-[2px] border border-[oklch(74%_0.175_62)]/40 hover:border-[oklch(74%_0.175_62)]/80 hover:bg-[oklch(74%_0.175_62)]/12 text-[oklch(82%_0.16_68)] type-mono text-[9px] uppercase tracking-[0.1em] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/50"
+                            title={`Turn ${label} ON for all selected clips`}
+                          >
+                            On
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => bulkSetToggle(key, false)}
+                            className="px-2 h-6 rounded-[2px] border border-white/10 hover:border-white/25 text-zinc-500 hover:text-zinc-200 type-mono text-[9px] uppercase tracking-[0.1em] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30"
+                            title={`Turn ${label} OFF for all selected clips`}
+                          >
+                            Off
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                    <div className="border-t border-white/5 pt-2 text-[9px] text-zinc-600 leading-snug">
+                      Style (preset, font, colors, hook text) is still edited
+                      per-clip via the gear icon on each card. Bulk mode here
+                      controls only the on/off state of each layer.
+                    </div>
+                  </div>
+                )}
+              </div>
               <button
                 onClick={downloadSelected}
                 disabled={selectedClips.length === 0}
