@@ -372,8 +372,8 @@ export default function ResultCard({
                 onUpdateState({ reframeMode: nextMode, reframing: false });
                 toast.success(
                     nextMode === 'disabled'
-                        ? 'Reframe disabled — clip now shows the full 4:3 frame with black bars.'
-                        : 'Auto reframe enabled — face tracking is back on.',
+                        ? 'Auto reframe OFF — clip now shows letterbox (black bars top & bottom).'
+                        : 'Auto reframe ON — face tracking is back on.',
                 );
             } else {
                 onUpdateState({ reframing: false });
