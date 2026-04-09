@@ -1,9 +1,12 @@
 import React, { useMemo, useState } from 'react';
 import { AlertCircle, RotateCcw, Sparkles, Send, ArrowUpDown, Check, CheckSquare, Square, Download, Trash2, ChevronDown, ChevronUp, Scissors, MessageSquare, Type, SlidersHorizontal } from 'lucide-react';
+import { toast } from 'sonner';
 import ResultCard from './ResultCard';
 import ProcessingAnimation from './ProcessingAnimation';
 import LogsPanel from './LogsPanel';
 import BatchPublishModal from './BatchPublishModal';
+import HookModal from './HookModal';
+import SubtitleModal from './SubtitleModal';
 
 const SORT_OPTIONS = [
   { id: 'viral_desc', label: 'Highest viral score' },
@@ -54,6 +57,8 @@ export default function ResultsGrid({
   const [batchPublishOpen, setBatchPublishOpen] = useState(false);
   const [sortBy, setSortBy] = useState('viral_desc');
   const [bulkEditOpen, setBulkEditOpen] = useState(false);
+  const [bulkHookModalOpen, setBulkHookModalOpen] = useState(false);
+  const [bulkSubModalOpen, setBulkSubModalOpen] = useState(false);
   // Collapse the source-video preview once the job is complete — users
   // want the clips grid, not a big player of the original 1h video.
   const [sourcePreviewOpen, setSourcePreviewOpen] = useState(status !== 'complete');
@@ -154,7 +159,11 @@ export default function ResultsGrid({
   };
   // Apply a whole param dict (e.g. subtitleParams or hookParams) to
   // every selected clip, shallow-merging over each clip's existing
-  // params so unrelated fields are preserved.
+  // params so unrelated fields are preserved. Used by the bulk style
+  // editors below — the user opens the familiar HookModal /
+  // SubtitleModal in bulk mode, tweaks the preset + font + colors on
+  // the live preview, and on 'Apply' the resulting params are written
+  // to every selected card in one shot.
   const bulkPatchParams = (paramKey, patch) => {
     selectedClips.forEach(({ originalIndex }) => {
       const prev = clipStates[originalIndex]?.[paramKey] || {};
@@ -373,42 +382,55 @@ export default function ResultsGrid({
                       Apply to {String(selectedClips.length).padStart(2, '0')} selected
                     </div>
                     {[
-                      { key: 'smartcut', label: 'Smart Cut', Icon: Scissors, hint: 'silences + filler words' },
-                      { key: 'hook', label: 'Hook', Icon: MessageSquare, hint: 'text overlay' },
-                      { key: 'subtitles', label: 'Subtitles', Icon: Type, hint: 'burned captions' },
-                    ].map(({ key, label, Icon, hint }) => (
-                      <div key={key} className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-2 min-w-0 flex-1">
-                          <Icon size={12} strokeWidth={2} className="text-zinc-400 shrink-0" />
-                          <div className="min-w-0">
-                            <div className="text-[11px] text-zinc-200 font-semibold leading-tight">{label}</div>
-                            <div className="text-[9px] text-zinc-600 truncate">{hint}</div>
+                      { key: 'smartcut', label: 'Smart Cut', Icon: Scissors, hint: 'silences + filler words', styleOpener: null },
+                      { key: 'hook', label: 'Hook', Icon: MessageSquare, hint: 'text overlay', styleOpener: () => { setBulkEditOpen(false); setBulkHookModalOpen(true); } },
+                      { key: 'subtitles', label: 'Subtitles', Icon: Type, hint: 'burned captions', styleOpener: () => { setBulkEditOpen(false); setBulkSubModalOpen(true); } },
+                    ].map(({ key, label, Icon, hint, styleOpener }) => (
+                      <div key={key} className="space-y-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 min-w-0 flex-1">
+                            <Icon size={12} strokeWidth={2} className="text-zinc-400 shrink-0" />
+                            <div className="min-w-0">
+                              <div className="text-[11px] text-zinc-200 font-semibold leading-tight">{label}</div>
+                              <div className="text-[9px] text-zinc-600 truncate">{hint}</div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => bulkSetToggle(key, true)}
+                              className="px-2 h-6 rounded-[2px] border border-[oklch(74%_0.175_62)]/40 hover:border-[oklch(74%_0.175_62)]/80 hover:bg-[oklch(74%_0.175_62)]/12 text-[oklch(82%_0.16_68)] type-mono text-[9px] uppercase tracking-[0.1em] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/50"
+                              title={`Turn ${label} ON for all selected clips`}
+                            >
+                              On
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => bulkSetToggle(key, false)}
+                              className="px-2 h-6 rounded-[2px] border border-white/10 hover:border-white/25 text-zinc-500 hover:text-zinc-200 type-mono text-[9px] uppercase tracking-[0.1em] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30"
+                              title={`Turn ${label} OFF for all selected clips`}
+                            >
+                              Off
+                            </button>
                           </div>
                         </div>
-                        <div className="flex items-center gap-1 shrink-0">
+                        {styleOpener && (
                           <button
                             type="button"
-                            onClick={() => bulkSetToggle(key, true)}
-                            className="px-2 h-6 rounded-[2px] border border-[oklch(74%_0.175_62)]/40 hover:border-[oklch(74%_0.175_62)]/80 hover:bg-[oklch(74%_0.175_62)]/12 text-[oklch(82%_0.16_68)] type-mono text-[9px] uppercase tracking-[0.1em] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/50"
-                            title={`Turn ${label} ON for all selected clips`}
+                            onClick={styleOpener}
+                            className="ml-5 text-[9px] font-mono uppercase tracking-[0.1em] text-zinc-500 hover:text-[oklch(82%_0.16_68)] transition-colors underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/50 rounded-[2px]"
+                            title={`Open the ${label} style editor and apply to all selected clips on save`}
                           >
-                            On
+                            Edit style → apply to {String(selectedClips.length).padStart(2, '0')}
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => bulkSetToggle(key, false)}
-                            className="px-2 h-6 rounded-[2px] border border-white/10 hover:border-white/25 text-zinc-500 hover:text-zinc-200 type-mono text-[9px] uppercase tracking-[0.1em] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30"
-                            title={`Turn ${label} OFF for all selected clips`}
-                          >
-                            Off
-                          </button>
-                        </div>
+                        )}
                       </div>
                     ))}
                     <div className="border-t border-white/5 pt-2 text-[9px] text-zinc-600 leading-snug">
-                      Style (preset, font, colors, hook text) is still edited
-                      per-clip via the gear icon on each card. Bulk mode here
-                      controls only the on/off state of each layer.
+                      On/Off flips the layer for every selected clip. Use
+                      'Edit style' to open the hook or subtitle editor and
+                      apply the chosen preset, font, colors and position
+                      to all selected clips in one save.
                     </div>
                   </div>
                 )}
@@ -485,6 +507,47 @@ export default function ResultsGrid({
         clips={publishableClips}
         clipStates={clipStates}
         onPublished={(originalIndex) => onUpdateClipState(originalIndex, { publishedAt: Date.now() })}
+      />
+
+      {/* Bulk style editors — reuse the existing HookModal and
+          SubtitleModal with a preview video from the FIRST selected
+          clip (so the live preview shows the user what they'll be
+          applying). On save, bulkPatchParams flushes the resulting
+          params across every selected clip AND auto-enables the
+          corresponding toggle (there's no point applying a style if
+          the layer is off). */}
+      <HookModal
+        isOpen={bulkHookModalOpen}
+        onClose={() => setBulkHookModalOpen(false)}
+        videoUrl={selectedClips[0]?.clip?.video_url || ''}
+        initialText={selectedClips[0]?.clip?.viral_hook_text || ''}
+        initialValues={clipStates[selectedClips[0]?.originalIndex]?.hookParams || {}}
+        onGenerate={(params) => {
+          bulkPatchParams('hookParams', params);
+          // Auto-enable the hook layer for every selected clip so the
+          // applied style is actually visible at compose time.
+          selectedClips.forEach(({ originalIndex }) => {
+            const prev = clipStates[originalIndex]?.toggles || {};
+            onUpdateClipState(originalIndex, { toggles: { ...prev, hook: true } });
+          });
+          setBulkHookModalOpen(false);
+          toast.success(`Hook style applied to ${selectedClips.length} clip${selectedClips.length === 1 ? '' : 's'}`);
+        }}
+      />
+      <SubtitleModal
+        isOpen={bulkSubModalOpen}
+        onClose={() => setBulkSubModalOpen(false)}
+        videoUrl={selectedClips[0]?.clip?.video_url || ''}
+        initialValues={clipStates[selectedClips[0]?.originalIndex]?.subtitleParams || {}}
+        onGenerate={(params) => {
+          bulkPatchParams('subtitleParams', params);
+          selectedClips.forEach(({ originalIndex }) => {
+            const prev = clipStates[originalIndex]?.toggles || {};
+            onUpdateClipState(originalIndex, { toggles: { ...prev, subtitles: true } });
+          });
+          setBulkSubModalOpen(false);
+          toast.success(`Subtitle style applied to ${selectedClips.length} clip${selectedClips.length === 1 ? '' : 's'}`);
+        }}
       />
 
       {status === 'error' && (
