@@ -1574,7 +1574,15 @@ def transcribe_video(video_path):
     compute_type = "float16" if device == "cuda" else "int8"
     print(f"🎙️  Transcribing with Faster-Whisper [{WHISPER_MODEL}] ({device.upper()} mode)...")
     model = WhisperModel(WHISPER_MODEL, device=device, compute_type=compute_type)
-    segments, info = model.transcribe(video_path, word_timestamps=True)
+    # Honor per-job language override (set by main.py --language → CLIPPYME_LANGUAGE).
+    # 'multi' / '' / unset → let Faster-Whisper auto-detect.
+    _lang_override = (os.getenv("CLIPPYME_LANGUAGE") or "").strip().lower()
+    _whisper_lang = _lang_override if _lang_override and _lang_override != "multi" else None
+    if _whisper_lang:
+        print(f"   🌐 Whisper language override: {_whisper_lang}")
+    segments, info = model.transcribe(
+        video_path, word_timestamps=True, language=_whisper_lang
+    )
     segments = list(segments)
 
     print(f"   Detected language '{info.language}' with probability {info.language_probability:.2f}")
