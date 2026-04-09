@@ -304,6 +304,7 @@ class DetectionSmoother:
         from collections import deque
         self.window_size = window_size
         self.histories = {}  # face_id -> deque of (x, y, w, h)
+        self.last_seen_frame: dict[int, int] = {}
 
     def smooth(self, candidates, frame_number):
         """
@@ -331,6 +332,7 @@ class DetectionSmoother:
                 from collections import deque
                 self.histories[best_id] = deque(maxlen=self.window_size)
             self.histories[best_id].append((x, y, w, h))
+            self.last_seen_frame[best_id] = frame_number
             # Average
             hist = self.histories[best_id]
             avg_x = int(sum(b[0] for b in hist) / len(hist))
@@ -338,8 +340,12 @@ class DetectionSmoother:
             avg_w = int(sum(b[2] for b in hist) / len(hist))
             avg_h = int(sum(b[3] for b in hist) / len(hist))
             smoothed.append({**cand, 'box': [avg_x, avg_y, avg_w, avg_h]})
-        # Prune old tracks (not seen in a while)
-        active_ids = {id(c) for c in smoothed}  # not perfect but tracks get re-matched
+        # Prune tracks not seen in the last 60 frames (~2s @ 30 fps).
+        stale = [fid for fid, last in self.last_seen_frame.items()
+                 if frame_number - last > 60]
+        for fid in stale:
+            self.histories.pop(fid, None)
+            self.last_seen_frame.pop(fid, None)
         return smoothed
 
 

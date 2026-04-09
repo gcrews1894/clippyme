@@ -62,3 +62,13 @@ def test_bug5_cooldown_blocks_switch_even_when_old_speaker_offscreen():
     st.get_target([box_b], frame_number=5, width=1920)
     assert st.active_speaker_id == active_before, \
         "cooldown was bypassed when old speaker left the frame"
+
+
+def test_bug6_detection_smoother_prunes_stale_tracks():
+    from clippyme.pipeline.main import DetectionSmoother
+    s = DetectionSmoother(window_size=5)
+    s.smooth([{'box': [0, 0, 100, 100], 'score': 10000}], frame_number=0)
+    assert len(s.histories) == 1
+    s.smooth([{'box': [800, 0, 100, 100], 'score': 10000}], frame_number=200)
+    assert len(s.histories) == 1, \
+        f"old track should be pruned, got {list(s.histories.keys())}"
