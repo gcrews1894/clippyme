@@ -544,49 +544,60 @@ export default function ResultCard({
                     to hover the player) and they sit next to the other
                     clip-level controls. Editorial flat toolbar: mono label,
                     LED indicator for reframe state, amber accent on hover. */}
-                {/* Clip action rail — reframe segmented control (text) grows
-                    to fill available width, clip-level utility buttons
-                    (mute / remove) collapse to 36px icon-only squares on
-                    the right. This layout survives narrow 3-column grids
-                    where the previous 3-button text row overflowed. */}
+                {/* Clip action rail — single reframe toggle (ON = face
+                    tracking, OFF = letterbox with black bars) grows to
+                    fill the row; mute / remove utility buttons stay as
+                    36px icon-only squares on the right. The toggle pill
+                    mimics an iOS switch so non-technical users instantly
+                    grasp the ON/OFF semantics — calling the disabled
+                    state '4:3' confused people into thinking the output
+                    was a crop rather than a 9:16 frame with letterbox. */}
                 <div className="flex items-stretch gap-1.5 border border-white/[0.07] bg-white/[0.02] rounded-[3px] overflow-hidden">
-                    <div
-                        role="group"
-                        aria-label="Reframe mode"
-                        className="flex flex-1 min-w-0 items-stretch"
+                    <button
+                        type="button"
+                        onClick={() => { if (!isReframing) handleToggleReframe(); }}
+                        disabled={isReframing}
+                        role="switch"
+                        aria-checked={reframeMode === 'auto'}
+                        aria-label={reframeMode === 'auto' ? 'Auto reframe is ON — click to turn OFF' : 'Auto reframe is OFF — click to turn ON'}
+                        title={
+                            isReframing
+                                ? 'Reframing\u2026'
+                                : reframeMode === 'auto'
+                                    ? 'Auto reframe ON — face tracking in a 9:16 vertical frame'
+                                    : 'Auto reframe OFF — clip is shown with letterbox (black bars top & bottom)'
+                        }
+                        className="flex flex-1 min-w-0 items-center gap-2.5 h-9 px-3 text-left transition-colors border-r border-white/[0.07] hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/55 focus-visible:ring-inset disabled:opacity-60 disabled:cursor-wait"
                     >
-                        {[
-                            { id: 'auto', label: '9:16', Icon: Crop, title: 'Auto 9:16 vertical with face tracking' },
-                            { id: 'disabled', label: '4:3', Icon: Square, title: '4:3 centre crop with black bars' },
-                        ].map(({ id, label, Icon, title }) => {
-                            const active = reframeMode === id;
-                            return (
-                                <button
-                                    key={id}
-                                    type="button"
-                                    onClick={() => {
-                                        if (active || isReframing) return;
-                                        handleToggleReframe();
-                                    }}
-                                    disabled={isReframing}
-                                    aria-pressed={active}
-                                    title={isReframing ? 'Reframing\u2026' : title}
-                                    className={`flex-1 min-w-0 h-9 px-2.5 flex items-center justify-center gap-1.5 type-mono text-[10.5px] uppercase tracking-[0.14em] tabular-nums transition-colors border-r border-white/[0.05] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/55 focus-visible:ring-inset disabled:opacity-60 disabled:cursor-wait whitespace-nowrap ${
-                                        active
-                                            ? 'bg-[oklch(74%_0.175_62)]/18 text-[oklch(82%_0.16_68)]'
-                                            : 'text-zinc-500 hover:text-zinc-200 hover:bg-white/[0.04]'
-                                    }`}
-                                >
-                                    {isReframing && active ? (
-                                        <Loader2 size={11} className="animate-spin shrink-0" strokeWidth={2.2} />
-                                    ) : (
-                                        <Icon size={11} strokeWidth={2} className="shrink-0" />
-                                    )}
-                                    <span className="truncate">{label}</span>
-                                </button>
-                            );
-                        })}
-                    </div>
+                        <span
+                            aria-hidden
+                            className={`relative shrink-0 w-8 h-[18px] rounded-full border transition-colors ${
+                                reframeMode === 'auto'
+                                    ? 'bg-[oklch(74%_0.175_62)] border-[oklch(70%_0.18_62)] shadow-[0_0_8px_-1px_oklch(74%_0.175_62/0.55)]'
+                                    : 'bg-white/[0.05] border-white/15'
+                            }`}
+                        >
+                            <span
+                                className={`absolute top-[1px] w-[14px] h-[14px] rounded-full bg-white shadow-sm transition-[left] duration-200 ease-out ${
+                                    reframeMode === 'auto' ? 'left-[15px]' : 'left-[1px]'
+                                }`}
+                            >
+                                {isReframing && (
+                                    <Loader2 size={10} className="animate-spin text-zinc-800 m-0.5" strokeWidth={2.4} />
+                                )}
+                            </span>
+                        </span>
+                        <span className="flex flex-col min-w-0 leading-tight">
+                            <span className="type-mono text-[10px] uppercase tracking-[0.14em] text-zinc-400 truncate">
+                                Auto&nbsp;reframe
+                            </span>
+                            <span className={`type-mono text-[9px] uppercase tracking-[0.12em] tabular-nums ${
+                                reframeMode === 'auto' ? 'text-[oklch(82%_0.16_68)]' : 'text-zinc-600'
+                            }`}>
+                                {reframeMode === 'auto' ? 'ON · face track' : 'OFF · letterbox'}
+                            </span>
+                        </span>
+                    </button>
                     <button
                         type="button"
                         onClick={handleToggleDisabled}
