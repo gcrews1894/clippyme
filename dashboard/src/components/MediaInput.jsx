@@ -647,7 +647,7 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
                                         className="w-full bg-white/[0.02] border border-white/[0.08] hover:border-white/[0.16] focus:border-[oklch(74%_0.175_62)]/55 text-zinc-200 text-[12px] font-mono uppercase tracking-[0.1em] px-3 h-9 rounded-[3px] cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/45 appearance-none"
                                     >
                                         <option value="multi" className="bg-[oklch(9%_0.006_260)]">
-                                            Multi — auto / EN+IT code-switching
+                                            Multi-language
                                         </option>
                                         <option value="en" className="bg-[oklch(9%_0.006_260)]">English (en)</option>
                                         <option value="it" className="bg-[oklch(9%_0.006_260)]">Italiano (it)</option>

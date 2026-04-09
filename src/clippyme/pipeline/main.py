@@ -850,7 +850,7 @@ def download_youtube_video(url, output_dir=".", cookies_file_path=None):
         # Detect YouTube's per-fragment throttling and re-fetch the slow
         # segment. Threshold is bytes/sec — 100 KB/s catches the 16-23h
         # evening throttle window without tripping on legit slow networks.
-        'throttledratelimit': int(os.environ.get('YTDLP_THROTTLED_RATE', 100 * 1024)),
+        'throttledratelimit': int((os.environ.get('YTDLP_THROTTLED_RATE') or '').strip() or 100 * 1024),
         'cachedir': False,
         'remote_components': ['ejs:github'],
         'http_headers': {
