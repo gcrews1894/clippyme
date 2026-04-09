@@ -35,6 +35,8 @@ export async function submitProcessJob(data, apiKey) {
   // Forward reframe_mode unconditionally so the backend echoes the user's
   // pre-selection instead of relying on its own default (which could drift).
   const reframeMode = data.preselections?.reframe_mode;
+  const noZoom = data.preselections?.no_zoom === true;
+  const skipAnalysis = data.preselections?.skip_analysis === true;
 
   if (data.type === 'url') {
     headers['Content-Type'] = 'application/json';
@@ -42,12 +44,16 @@ export async function submitProcessJob(data, apiKey) {
     if (data.instructions) jsonBody.instructions = data.instructions;
     if (reframeMode) jsonBody.reframe_mode = reframeMode;
     if (language) jsonBody.language = language;
+    if (noZoom) jsonBody.no_zoom = true;
+    if (skipAnalysis) jsonBody.skip_analysis = true;
     body = JSON.stringify(jsonBody);
   } else {
     const formData = new FormData();
     formData.append('file', data.payload);
     if (reframeMode) formData.append('reframe_mode', reframeMode);
     if (language) formData.append('language', language);
+    if (noZoom) formData.append('no_zoom', 'true');
+    if (skipAnalysis) formData.append('skip_analysis', 'true');
     body = formData;
   }
 
@@ -70,6 +76,8 @@ export async function submitBatchJob(data, apiKey) {
   }
   const language = pickLanguage(data.preselections);
   if (language) batchBody.language = language;
+  if (data.preselections?.no_zoom === true) batchBody.no_zoom = true;
+  if (data.preselections?.skip_analysis === true) batchBody.skip_analysis = true;
   const res = await fetch(getApiUrl('/api/batch'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Gemini-Key': apiKey },

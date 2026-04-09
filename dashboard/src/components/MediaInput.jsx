@@ -261,6 +261,17 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
     // 'en' or 'it' explicitly doesn't have to re-select on every mount.
     const [preLanguage, setPreLanguage] = useState(persisted.preLanguage ?? 'multi');
 
+    // Subtle Ken Burns zoom (1.0→1.05x) applied to each clip. Default ON
+    // because it noticeably improves retention on static-shot content.
+    // The UI toggles the positive sense; the backend receives `no_zoom`
+    // (negated) via the `preselections.no_zoom` field.
+    const [preSubtleZoom, setPreSubtleZoom] = useState(persisted.preSubtleZoom ?? true);
+    // AI viral-clip detection (Gemini). Default ON. When OFF the pipeline
+    // skips analysis and converts the whole input video to 9:16
+    // (main.py --skip-analysis). Useful when the user already has a
+    // pre-trimmed clip and just wants the reframe + post-processing.
+    const [preAiDetection, setPreAiDetection] = useState(persisted.preAiDetection ?? true);
+
     // Persist whenever any pre-selection changes.
     useEffect(() => {
         try {
@@ -283,6 +294,8 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
                     preHookPosition,
                     preHookSize,
                     preLanguage,
+                    preSubtleZoom,
+                    preAiDetection,
                 })
             );
         } catch {
@@ -305,6 +318,8 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
         preHookPosition,
         preHookSize,
         preLanguage,
+        preSubtleZoom,
+        preAiDetection,
     ]);
 
     const handleSubmit = (e) => {
@@ -332,6 +347,9 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
                 : null,
             hook: preHook ? { position: preHookPosition, size: preHookSize } : null,
             language: preLanguage && preLanguage !== 'multi' ? preLanguage : undefined,
+            // Backend flags — inverted from the positive UI labels.
+            no_zoom: !preSubtleZoom,
+            skip_analysis: !preAiDetection,
         };
         const opts = { instructions: instructions.trim() || undefined, preselections };
         if (mode === 'batch') {
@@ -639,6 +657,31 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
                                     }
                                     checked={reframeMode === 'auto'}
                                     onChange={(next) => setReframeMode(next ? 'auto' : 'disabled')}
+                                />
+
+                                {/* AI clip detection (Gemini). OFF → --skip-analysis
+                                    turns the whole video into a single 9:16 clip. */}
+                                <SwitchRow
+                                    label="AI clip detection"
+                                    description={
+                                        preAiDetection
+                                            ? 'ON · Gemini picks the viral moments'
+                                            : 'OFF · convert the entire video (skip analysis)'
+                                    }
+                                    checked={preAiDetection}
+                                    onChange={setPreAiDetection}
+                                />
+
+                                {/* Subtle Ken Burns zoom (1.0→1.05x). OFF → --no-zoom. */}
+                                <SwitchRow
+                                    label="Subtle zoom"
+                                    description={
+                                        preSubtleZoom
+                                            ? 'ON · gentle Ken Burns (1.0→1.05x)'
+                                            : 'OFF · static frames, no motion added'
+                                    }
+                                    checked={preSubtleZoom}
+                                    onChange={setPreSubtleZoom}
                                 />
 
                                 {/* Spoken language override — default 'multi' uses Nova-3
