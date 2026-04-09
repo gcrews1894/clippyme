@@ -307,7 +307,7 @@ export default function ResultsGrid({
            triggers bulk actions here. 'Select all / Deselect all' at
            the far left, bulk Publish / Download / Delete on the right.
            All four scale their labels with the selected count. */
-        <div className="sticky top-[56px] z-40 -mx-4 px-4 py-2 backdrop-blur-md bg-[oklch(9%_0.006_260)]/82 border-y border-white/[0.06]">
+        <div className="sticky top-[100px] z-40 -mx-4 px-4 py-2 backdrop-blur-md bg-[oklch(9%_0.006_260)]/82 border-y border-white/[0.06]">
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div className="flex items-center gap-2 type-label text-zinc-500">
               <button

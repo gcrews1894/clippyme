@@ -260,25 +260,31 @@ function App() {
           <div className="animate-fade-in">
             {status === 'complete' && jobId && results?.clips?.length > 0 ? (
               <div className="space-y-5">
-                <button
-                  type="button"
-                  onClick={() => {
-                    // Release the currently viewed job and fall back to
-                    // the list. State is wiped so reopening the Create
-                    // tab gives a clean IdleHero.
-                    setStatus('idle');
-                    setJobId(null);
-                    setResults(null);
-                    setLogs([]);
-                    setProcessingMedia(null);
-                    setCurrentStep(null);
-                    setPreselectionsRaw(null);
-                    try { localStorage.removeItem('clippyme_session'); } catch { /* silent */ }
-                  }}
-                  className="flex items-center gap-2 h-9 px-3 rounded-[3px] border border-white/10 hover:border-white/25 text-zinc-400 hover:text-white type-mono text-[10px] uppercase tracking-[0.14em] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/50"
-                >
-                  ← Back&nbsp;to&nbsp;history
-                </button>
+                {/* Sticky back-to-history bar — pinned right under the
+                    TopNav (56px tall) so it stays reachable no matter
+                    how far the user has scrolled into a long clip grid.
+                    The ResultsGrid's own sticky action rail sits at
+                    top-[100px] below this bar (see ResultsGrid.jsx).
+                    Background blur + hairline keep it legible over any
+                    content scrolling behind it. */}
+                <div className="sticky top-[56px] z-50 -mx-4 px-4 py-2 backdrop-blur-md bg-[oklch(9%_0.006_260)]/85 border-b border-white/[0.06]">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setStatus('idle');
+                      setJobId(null);
+                      setResults(null);
+                      setLogs([]);
+                      setProcessingMedia(null);
+                      setCurrentStep(null);
+                      setPreselectionsRaw(null);
+                      try { localStorage.removeItem('clippyme_session'); } catch { /* silent */ }
+                    }}
+                    className="flex items-center gap-2 h-9 px-3 rounded-[3px] border border-white/10 hover:border-white/25 text-zinc-400 hover:text-white type-mono text-[10px] uppercase tracking-[0.14em] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/50"
+                  >
+                    ← Back&nbsp;to&nbsp;history
+                  </button>
+                </div>
                 <ResultsGrid
                   results={results}
                   status={status}
