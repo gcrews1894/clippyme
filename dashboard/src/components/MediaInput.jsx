@@ -213,7 +213,7 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
 
     // Pre-selection state persisted to localStorage so users don't lose their
     // Advanced Options choices when they refocus the window / navigate tabs.
-    const PRESELECT_LS_KEY = 'clippyme_preselections_v2';
+    const PRESELECT_LS_KEY = 'clippyme_preselections_v3';
     const loadPersisted = () => {
         try {
             const raw = localStorage.getItem(PRESELECT_LS_KEY);
@@ -233,26 +233,29 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
     // Classic-mode pre-selection controls
     const [preSubClassicFont, setPreSubClassicFont] = useState(persisted.preSubClassicFont ?? 'Verdana');
     const [preSubClassicFontColor, setPreSubClassicFontColor] = useState(persisted.preSubClassicFontColor ?? '#FFFFFF');
-    // Position defaults are NOT restored from localStorage — we always force
-    // subtitles='bottom' and hook='top' on a fresh mount so the pre-selection
-    // panel starts in the intended state regardless of prior sessions.
-    const [preSubClassicPosition, setPreSubClassicPosition] = useState('bottom');
+    // Subtitle position default is 'bottom' (standard caption placement).
+    // We DO restore it from localStorage v3+ so user choices persist across
+    // sessions — earlier versions force-overrode on mount to flush stale
+    // data that leaked from an obsolete LS schema.
+    const [preSubClassicPosition, setPreSubClassicPosition] = useState(persisted.preSubClassicPosition ?? 'bottom');
     // Classic subtitles stroke + background (matches backend burn_subtitles params)
     const [preSubClassicBorderColor, setPreSubClassicBorderColor] = useState(persisted.preSubClassicBorderColor ?? '#000000');
     const [preSubClassicBorderWidth, setPreSubClassicBorderWidth] = useState(persisted.preSubClassicBorderWidth ?? 2);
     const [preSubClassicBgColor, setPreSubClassicBgColor] = useState(persisted.preSubClassicBgColor ?? '#000000');
     const [preSubClassicBgOpacity, setPreSubClassicBgOpacity] = useState(persisted.preSubClassicBgOpacity ?? 0);
     const [preHook, setPreHook] = useState(persisted.preHook ?? false);
-    const [preHookPosition, setPreHookPosition] = useState('top');
+    // Hook position default is 'top' (the teaser sits above the action).
+    const [preHookPosition, setPreHookPosition] = useState(persisted.preHookPosition ?? 'top');
     const [preHookSize, setPreHookSize] = useState(persisted.preHookSize ?? 'S');
     const [showHookConfig, setShowHookConfig] = useState(false);
     // Per-job ASR language override. Default 'multi' uses Deepgram Nova-3
     // code-switching. When the user knows the video is single-language,
     // picking an explicit code boosts accuracy AND makes diarization
     // reliable — 'multi' has known edge cases on speaker counting.
-    // Language default is NOT restored from localStorage — always start on
-    // 'multi' since ClippyMe targets a global audience, not IT-only users.
-    const [preLanguage, setPreLanguage] = useState('multi');
+    // Language default is 'multi' (Deepgram Nova-3 code-switching) for
+    // global audiences. Restored from localStorage v3+ so a user who picks
+    // 'en' or 'it' explicitly doesn't have to re-select on every mount.
+    const [preLanguage, setPreLanguage] = useState(persisted.preLanguage ?? 'multi');
 
     // Persist whenever any pre-selection changes.
     useEffect(() => {

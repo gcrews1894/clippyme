@@ -86,7 +86,7 @@ The post-processing workflow uses independent toggles per clip:
 - **Karaoke**: visual 2×3 grid of the 6 `SUBTITLE_PRESETS` (Classic, Hormozi, Neon, MrBeast, Minimal, Fire) — each rendered with its actual font/color/shadow style.
 - **Classic**: font dropdown (Verdana, Montserrat-Black, Anton, Bangers, Poppins-Black/Medium) + font color swatches + position (top/middle/bottom). These params are propagated via `preselections.subtitles.{font, font_color, position}` and seeded into each `ResultCard`'s `subtitleParams` so the compose endpoint receives them per-clip without manual reconfiguration.
 
-**Auto Edit was removed** — the `/api/edit` endpoint and `VideoEditor` class are no longer used.
+**Persistence**: pre-selections (reframe mode, smart-cut toggle, subtitle mode+preset+font+colors+position, hook text/size/position, ASR language) are persisted in `localStorage` under `clippyme_preselections_v3`. Per-clip toggle overrides (smartcut/hook/subtitles + their params) are persisted per jobId via `useClipStates` under `clippyme_clip_states_{jobId}` — so user choices survive page reloads without a backend round-trip.
 
 ## Frontend Design & Components
 

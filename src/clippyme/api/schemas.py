@@ -38,7 +38,7 @@ class ReframeRequest(BaseModel):
     Only valid when the per-clip 16:9 source slice was preserved on disk
     (i.e. jobs produced after the post-hoc reframe feature landed).
     """
-    reframe_mode: str = "auto"  # "auto" or "disabled"
+    reframe_mode: Optional[str] = Field(None, pattern=r"^(auto|disabled)$")
 
 
 class ComposeRequest(BaseModel):
