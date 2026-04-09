@@ -127,6 +127,38 @@ export default function BatchPublishModal({ isOpen, onClose, jobId, clips, clipS
         // clips in the batch instead of blindly hammering the rate limit.
         const activePlatforms = { ...enabled };
         const exhausted = new Set();
+
+        // --- TikTok daily-API-call workaround ---
+        // Zernio/TikTok enforces a hard 5 POST/day limit per account on the
+        // create-post endpoint, counting API calls (not scheduled posts).
+        // Even if every clip is scheduled for a DIFFERENT future day, call
+        // #6 still 429s with "Daily limit reached: 5/5 posts today". We
+        // pre-count how many TikTok creates we've already made today and
+        // skip TikTok preventively when the local counter reaches 5 —
+        // saves a round-trip to Zernio and keeps the batch progressing
+        // on Instagram + YouTube without error spam.
+        const todayLocalKey = todayLocalISO();
+        const tiktokCounterKey = `clippyme_tiktok_daily_count_${accounts.tiktok || 'noaccount'}_${todayLocalKey}`;
+        const readTikTokCount = () => {
+            try {
+                const v = Number(localStorage.getItem(tiktokCounterKey) || '0');
+                return Number.isFinite(v) ? v : 0;
+            } catch { return 0; }
+        };
+        const incTikTokCount = () => {
+            try {
+                const next = readTikTokCount() + 1;
+                localStorage.setItem(tiktokCounterKey, String(next));
+                return next;
+            } catch { return 0; }
+        };
+        const TIKTOK_DAILY_CAP = 5;
+        if (readTikTokCount() >= TIKTOK_DAILY_CAP && activePlatforms.tiktok) {
+            activePlatforms.tiktok = false;
+            exhausted.add('tiktok');
+            toast.info('TikTok daily limit (5/day) already reached — this batch will publish only to Instagram / YouTube.');
+        }
+
         setPublishing(true);
 
         let ok = 0;
@@ -145,6 +177,18 @@ export default function BatchPublishModal({ isOpen, onClose, jobId, clips, clipS
                 : startDate;
             batchIdx += 1;
             setResults((prev) => ({ ...prev, [originalIndex]: 'pending' }));
+
+            // Pre-check TikTok local counter right before emitting each
+            // target list — if we've already issued 5 create-post calls
+            // for TikTok today across ANY batch run, drop it now so we
+            // don't waste a round-trip on a guaranteed 429.
+            if (activePlatforms.tiktok && readTikTokCount() >= TIKTOK_DAILY_CAP) {
+                activePlatforms.tiktok = false;
+                if (!exhausted.has('tiktok')) {
+                    exhausted.add('tiktok');
+                    toast.info(`TikTok daily cap (${TIKTOK_DAILY_CAP}/day) reached mid-batch — remaining clips publish only to Instagram / YouTube.`);
+                }
+            }
 
             // Rebuild target list per-clip from the current active set so
             // exhausted platforms drop out for the rest of the batch.
@@ -333,6 +377,12 @@ export default function BatchPublishModal({ isOpen, onClose, jobId, clips, clipS
                 setResults((prev) => ({ ...prev, [originalIndex]: 'ok' }));
                 onPublished(originalIndex);
                 ok += 1;
+                // Track TikTok API-call count for the preventive daily cap.
+                // We only increment on successful create-post responses so
+                // a transient network error doesn't falsely burn quota.
+                if (platformTargets.some((p) => p.platform === 'tiktok')) {
+                    incTikTokCount();
+                }
             } catch (e) {
                 setResults((prev) => ({ ...prev, [originalIndex]: 'error' }));
                 fail += 1;
