@@ -683,10 +683,11 @@ def detect_person_yolo(frame):
             
             if area > max_area:
                 max_area = area
-                # Focus on the top 40% of the person (head/chest) for framing
-                # This approximates where the face is if we can't detect it directly
-                face_h = int(h * 0.4)
-                best_box = [x1, y1, w, face_h]
+                # Return the full person bbox. SmoothedCameraman.update_target
+                # applies the head-zone offset itself when is_person_box=True
+                # (y_center = y + h*0.15). Previously we truncated here AND
+                # there, which stacked the offsets and aimed above the head.
+                best_box = [x1, y1, w, h]
                 
     return best_box
 

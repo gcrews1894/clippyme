@@ -39,3 +39,14 @@ def test_bug1_cookie_none_when_nothing_configured(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("YOUTUBE_COOKIES", raising=False)
     assert _resolve_cookies_path(explicit=None) is None
+
+
+def test_bug2_person_box_targets_head_zone_not_above_head():
+    """Bug #2: full person bbox fed to cameraman must center Y at
+    y + 0.15*h, not at y + 0.15*0.4*h."""
+    from clippyme.pipeline.main import SmoothedCameraman
+    cam = SmoothedCameraman(output_width=1080, output_height=1920,
+                            video_width=1920, video_height=1080)
+    cam.update_target([800, 200, 300, 800], is_person_box=True)
+    # Head zone = y + h*0.15 = 200 + 120 = 320 px
+    assert cam.target_center_y == pytest.approx(320, abs=1)
