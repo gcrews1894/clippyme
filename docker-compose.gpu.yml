@@ -2,6 +2,12 @@
 #
 # Usage:
 #   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
+#
+# Env vars and ENABLE_WHISPER_DIARIZE are inherited from the base
+# compose file — this override only flips GPU_RUNTIME and attaches
+# the GPU device. On GPU, pyannote.audio diarization runs ~10-15×
+# faster than CPU, so enabling ENABLE_WHISPER_DIARIZE=1 here is
+# significantly more practical than on the CPU image.
 
 name: clippyme
 
@@ -10,6 +16,8 @@ services:
     build:
       args:
         GPU_RUNTIME: nvidia
+        # Inherit user preference; default 0 if not set.
+        ENABLE_WHISPER_DIARIZE: ${ENABLE_WHISPER_DIARIZE:-0}
     deploy:
       resources:
         reservations:

@@ -18,6 +18,10 @@ services:
       context: .
       args:
         GPU_RUNTIME: ${GPU_RUNTIME:-cpu}
+        # Set ENABLE_WHISPER_DIARIZE=1 in your shell/.env to bake
+        # pyannote.audio into the image and enable speaker diarization on
+        # the Faster-Whisper fallback path. Adds ~500 MB to the image.
+        ENABLE_WHISPER_DIARIZE: ${ENABLE_WHISPER_DIARIZE:-0}
     container_name: clippyme-backend
     image: clippyme-backend
     ports:
@@ -26,7 +30,31 @@ services:
       - 8.8.8.8
       - 8.8.4.4
     environment:
+      # HuggingFace token — required for pyannote diarization + Whisper
+      # model downloads without rate limits. Both names are accepted.
       - HF_TOKEN=${HF_TOKEN:-}
+      - HUGGINGFACE_TOKEN=${HUGGINGFACE_TOKEN:-${HF_TOKEN:-}}
+      # ASR provider + credentials. TRANSCRIPTION_PROVIDER=deepgram|whisper.
+      - TRANSCRIPTION_PROVIDER=${TRANSCRIPTION_PROVIDER:-deepgram}
+      - DEEPGRAM_API_KEY=${DEEPGRAM_API_KEY:-}
+      - DEEPGRAM_MODEL=${DEEPGRAM_MODEL:-nova-3}
+      # Default 'multi' enables Nova-3 native EN+IT code-switching.
+      # Users can override per-job from the Create tab dropdown.
+      - DEEPGRAM_LANGUAGE=${DEEPGRAM_LANGUAGE:-multi}
+      - DEEPGRAM_DIARIZE=${DEEPGRAM_DIARIZE:-true}
+      # Whisper fallback diarization. Requires ENABLE_WHISPER_DIARIZE=1
+      # at build time AND HF_TOKEN set at runtime.
+      - WHISPER_DIARIZE=${WHISPER_DIARIZE:-true}
+      # Gemini key is normally passed per-request via the X-Gemini-Key
+      # header, but can also be set here for CLI runs that shell into the
+      # container directly.
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
+      # yt-dlp hardening. NOCHECKCERT=1 disables SSL verification only in
+      # trusted sandboxes; THROTTLED_RATE is the bytes/sec floor below
+      # which yt-dlp re-fetches a slow segment (default 102400 = 100 KB/s).
+      - YTDLP_NOCHECKCERT=${YTDLP_NOCHECKCERT:-}
+      - YTDLP_THROTTLED_RATE=${YTDLP_THROTTLED_RATE:-}
     volumes:
       - .:/app
       - /app/__pycache__

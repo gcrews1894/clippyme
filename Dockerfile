@@ -85,7 +85,14 @@ ENV PATH=/app/data/bin:$PATH
 
 # Install Python deps. CUDA pip wheels (nvidia-cublas-cu12, cudnn) are only
 # needed on the GPU path — skipping them on CPU saves ~500 MB per image.
+#
+# Speaker diarization on the Whisper path is OPT-IN via ENABLE_WHISPER_DIARIZE.
+# pyannote.audio pulls ~500 MB of deps (pytorch-lightning, speechbrain,
+# torchaudio extras) and requires accepting the pyannote/speaker-diarization-3.1
+# license on HuggingFace, so we keep it out of the default image.
+# Build with:   docker compose build --build-arg ENABLE_WHISPER_DIARIZE=1
 ARG GPU_RUNTIME
+ARG ENABLE_WHISPER_DIARIZE=0
 COPY requirements.txt .
 RUN pip install --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt && \
@@ -95,6 +102,9 @@ RUN pip install --upgrade pip && \
         echo "$SITE/nvidia/cublas/lib" > /etc/ld.so.conf.d/nvidia-pip.conf && \
         echo "$SITE/nvidia/cudnn/lib" >> /etc/ld.so.conf.d/nvidia-pip.conf && \
         ldconfig 2>/dev/null || true; \
+    fi && \
+    if [ "$ENABLE_WHISPER_DIARIZE" = "1" ]; then \
+        pip install --no-cache-dir 'pyannote.audio>=3.1'; \
     fi && \
     pip install --upgrade --no-cache-dir yt-dlp
 
