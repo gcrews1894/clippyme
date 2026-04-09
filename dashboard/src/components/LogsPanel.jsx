@@ -9,11 +9,21 @@ import { ChevronDown, Terminal, Copy, Check } from 'lucide-react';
  * @returns {'ok'|'warn'|'err'|'step'|'info'}
  */
 function classify(line) {
-  // Structured key=value observability fields like "error=none" /
-  // "error=null" / "error=0" / "error=false" are NOT errors — strip them
-  // before the keyword scan so a successful parse log doesn't light up
-  // the gutter red.
-  const scan = line.replace(/\berror=(none|null|0|false)\b/gi, '');
+  // yt-dlp / ffmpeg [debug] lines are verbose diagnostics, never errors.
+  // Skip the keyword scan entirely for them so 'error utf-8' (the encoding
+  // field in '[debug] Encodings: ... error utf-8 (No ANSI) ...') doesn't
+  // trip the /error/ regex.
+  if (/^\s*\[debug\]/i.test(line)) return 'info';
+
+  // Strip benign key=value / key:value observability fields where the
+  // 'error' keyword labels a STATUS rather than an error. Covers:
+  //   error=none / error=null / error=0 / error=false
+  //   error utf-8 / error: utf-8 / error: none / error stream
+  // Only after stripping these do we look for real error keywords.
+  const scan = line
+    .replace(/\berror\s*[=:]\s*(none|null|0|false)\b/gi, '')
+    .replace(/\berror\s+(utf-?8|no\s+ansi|stream|reader|writer)\b/gi, '');
+
   if (/\b(error|failed|exception|traceback)\b/i.test(scan)) return 'err';
   if (/^\s*(⚠️|warning|⚠)/i.test(line) || /\b(deprecated|warn)\b/i.test(line)) return 'warn';
   if (/^\s*(✅|✔|success|done|complete)/i.test(line)) return 'ok';
