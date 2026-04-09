@@ -224,7 +224,11 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
     };
     const persisted = loadPersisted();
 
-    const [reframeMode, setReframeMode] = useState(persisted.reframeMode ?? 'disabled');
+    // Auto Reframe default is 'auto' (ON) to match the backend argparse
+    // default AND the name of the feature itself — a toggle labeled
+    // "Auto Reframe" should start enabled, or users wonder why the
+    // flagship AI feature is off by default.
+    const [reframeMode, setReframeMode] = useState(persisted.reframeMode ?? 'auto');
     const [preSmartCut, setPreSmartCut] = useState(persisted.preSmartCut ?? false);
     const [preSubtitles, setPreSubtitles] = useState(persisted.preSubtitles ?? false);
     const [preSubPreset, setPreSubPreset] = useState(persisted.preSubPreset ?? 'classic_white');
