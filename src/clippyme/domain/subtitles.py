@@ -263,7 +263,15 @@ SUBTITLE_PRESETS = {
     },
 }
 
-FONTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
+# Bundled TTF fonts live at repo-root `fonts/` and are also mounted by
+# the FastAPI static handler at /fonts. Use the same CWD-relative path so
+# libass picks up Anton / Bangers / Montserrat / Poppins instead of
+# silently falling back to system fonts. The `__file__`-relative path
+# used before the src-layout refactor resolved to
+# `src/clippyme/domain/fonts` (which doesn't exist) — libass then
+# defaulted to Fontconfig and every karaoke preset rendered in the wrong
+# face without any error. Override via env var for alternate layouts.
+FONTS_DIR = os.environ.get("CLIPPYME_FONTS_DIR") or os.path.abspath("fonts")
 
 
 def generate_ass_karaoke(transcript, clip_start, clip_end, output_path,
