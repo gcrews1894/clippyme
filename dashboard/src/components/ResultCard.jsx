@@ -402,61 +402,6 @@ export default function ResultCard({
 
             {/* Video player - 9:16 container */}
             <div className="relative w-full aspect-[9/16] bg-black overflow-hidden">
-                {/* Card action row (top-left) — flat editorial toolbar */}
-                <div className="absolute top-2 left-2 z-20 flex items-center bg-black/75 backdrop-blur-sm rounded-[2px] border border-white/[0.12] shadow-lg">
-                    {/* Larger target areas (min 32x32, touch-friendly).
-                        Full 44x44 isn't practical inside a 9:16 thumbnail but
-                        32x32 is already ~2.6x the previous hit area. */}
-                    <button
-                        onClick={handleToggleDisabled}
-                        aria-label={isDisabled ? 'Enable clip' : 'Disable clip (excluded from Publish all)'}
-                        title={isDisabled ? 'Enable clip' : 'Disable clip (excluded from Publish all)'}
-                        className="w-8 h-8 flex items-center justify-center rounded-none hover:bg-white/10 text-zinc-300 hover:text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/70"
-                    >
-                        {isDisabled ? <EyeOff size={14} /> : <Eye size={14} />}
-                    </button>
-                    <button
-                        onClick={handleToggleReframe}
-                        disabled={isReframing}
-                        aria-label={
-                            isReframing
-                                ? 'Reframing in progress'
-                                : reframeMode === 'auto'
-                                    ? 'Auto reframe active — click to disable'
-                                    : 'Reframe disabled (4:3) — click to re-enable'
-                        }
-                        title={
-                            isReframing
-                                ? 'Reframing\u2026'
-                                : reframeMode === 'auto'
-                                    ? 'Auto reframe (face tracking) \u2014 click to disable'
-                                    : 'Reframe disabled (4:3 + black bars) \u2014 click to re-enable'
-                        }
-                        className={`w-8 h-8 flex items-center justify-center rounded-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/70 ${
-                            reframeMode === 'auto'
-                                ? 'text-[oklch(78%_0.175_65)] hover:bg-[oklch(74%_0.175_62)]/20'
-                                : 'text-zinc-300 hover:text-white hover:bg-white/10'
-                        } disabled:opacity-60 disabled:cursor-wait`}
-                    >
-                        {isReframing ? (
-                            <Loader2 size={14} className="animate-spin" />
-                        ) : reframeMode === 'auto' ? (
-                            <Crop size={14} />
-                        ) : (
-                            <Square size={14} />
-                        )}
-                    </button>
-                    <div className="w-px h-5 bg-white/[0.12]" />
-                    <button
-                        onClick={handleDelete}
-                        aria-label="Remove clip from grid"
-                        title="Remove clip from grid"
-                        className="w-8 h-8 flex items-center justify-center rounded-none text-[oklch(70%_0.2_25)] hover:text-[oklch(78%_0.2_25)] hover:bg-[oklch(62%_0.22_25)]/15 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(62%_0.22_25)]/70"
-                    >
-                        <Trash2 size={14} />
-                    </button>
-                </div>
-
                 {/* Top-right stack: rank + viral score + published (vertical) */}
                 <div className="absolute top-2 right-2 z-20 flex flex-col items-end gap-1.5">
                     {rank && totalClips > 1 && (
@@ -587,6 +532,83 @@ export default function ResultCard({
                         </p>
                     </div>
                 )}
+
+                {/* Clip actions — Reframe / Disable / Delete. Moved out of
+                    the video overlay so they're always reachable (no need
+                    to hover the player) and they sit next to the other
+                    clip-level controls. Editorial flat toolbar: mono label,
+                    LED indicator for reframe state, amber accent on hover. */}
+                <div className="flex items-stretch gap-1.5 border border-white/[0.07] bg-white/[0.02] rounded-[3px] overflow-hidden">
+                    <button
+                        type="button"
+                        onClick={handleToggleReframe}
+                        disabled={isReframing}
+                        aria-label={
+                            isReframing
+                                ? 'Reframing in progress'
+                                : reframeMode === 'auto'
+                                    ? 'Auto reframe active — click to disable'
+                                    : 'Reframe disabled (4:3) — click to re-enable'
+                        }
+                        title={
+                            isReframing
+                                ? 'Reframing\u2026'
+                                : reframeMode === 'auto'
+                                    ? 'Auto reframe (face tracking) — click to switch to 4:3 + black bars'
+                                    : 'Reframe disabled (4:3 + black bars) — click to switch to auto face tracking'
+                        }
+                        className={`flex-1 h-9 flex items-center justify-center gap-2 type-mono text-[10px] uppercase tracking-[0.14em] transition-colors border-r border-white/[0.07] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/55 focus-visible:ring-inset disabled:opacity-60 disabled:cursor-wait ${
+                            reframeMode === 'auto'
+                                ? 'text-[oklch(82%_0.16_68)] hover:bg-[oklch(74%_0.175_62)]/15'
+                                : 'text-zinc-500 hover:text-zinc-200 hover:bg-white/[0.04]'
+                        }`}
+                    >
+                        {isReframing ? (
+                            <Loader2 size={12} className="animate-spin" strokeWidth={2.2} />
+                        ) : (
+                            <>
+                                <span
+                                    aria-hidden
+                                    className={`w-1.5 h-1.5 rounded-full ${
+                                        reframeMode === 'auto'
+                                            ? 'bg-[oklch(74%_0.175_62)] shadow-[0_0_5px_oklch(74%_0.175_62/0.8)]'
+                                            : 'bg-zinc-700'
+                                    }`}
+                                />
+                                {reframeMode === 'auto' ? <Crop size={12} strokeWidth={2} /> : <Square size={12} strokeWidth={2} />}
+                            </>
+                        )}
+                        {reframeMode === 'auto' ? 'Reframe' : 'No\u00a0reframe'}
+                    </button>
+                    <button
+                        type="button"
+                        onClick={handleToggleDisabled}
+                        aria-label={isDisabled ? 'Enable clip' : 'Disable clip (excluded from Publish all)'}
+                        title={
+                            isDisabled
+                                ? 'Re-enable this clip — it will be included in Publish all again'
+                                : 'Disable this clip — it will be skipped by Publish all'
+                        }
+                        className={`flex-1 h-9 flex items-center justify-center gap-2 type-mono text-[10px] uppercase tracking-[0.14em] border-r border-white/[0.07] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/55 focus-visible:ring-inset ${
+                            isDisabled
+                                ? 'text-zinc-500 hover:text-zinc-200 hover:bg-white/[0.04]'
+                                : 'text-zinc-300 hover:text-white hover:bg-white/[0.04]'
+                        }`}
+                    >
+                        {isDisabled ? <EyeOff size={12} strokeWidth={2} /> : <Eye size={12} strokeWidth={2} />}
+                        {isDisabled ? 'Muted' : 'Active'}
+                    </button>
+                    <button
+                        type="button"
+                        onClick={handleDelete}
+                        aria-label="Remove clip from grid"
+                        title="Remove this clip from the grid — the file stays on disk, undo available in the toast"
+                        className="flex-1 h-9 flex items-center justify-center gap-2 type-mono text-[10px] uppercase tracking-[0.14em] text-[oklch(70%_0.2_25)] hover:text-[oklch(82%_0.2_25)] hover:bg-[oklch(62%_0.22_25)]/12 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(62%_0.22_25)]/55 focus-visible:ring-inset"
+                    >
+                        <Trash2 size={12} strokeWidth={2} />
+                        Remove
+                    </button>
+                </div>
 
                 {/* Toggle row — three segmented buttons with LED indicator,
                     mono label, and a gear settings affordance that only

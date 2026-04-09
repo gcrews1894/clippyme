@@ -243,6 +243,11 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
     const [preHookPosition, setPreHookPosition] = useState(persisted.preHookPosition ?? 'top');
     const [preHookSize, setPreHookSize] = useState(persisted.preHookSize ?? 'S');
     const [showHookConfig, setShowHookConfig] = useState(false);
+    // Per-job ASR language override. Default 'multi' uses Deepgram Nova-3
+    // code-switching. When the user knows the video is single-language,
+    // picking an explicit code boosts accuracy AND makes diarization
+    // reliable — 'multi' has known edge cases on speaker counting.
+    const [preLanguage, setPreLanguage] = useState(persisted.preLanguage ?? 'multi');
 
     // Persist whenever any pre-selection changes.
     useEffect(() => {
@@ -265,6 +270,7 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
                     preHook,
                     preHookPosition,
                     preHookSize,
+                    preLanguage,
                 })
             );
         } catch {
@@ -286,6 +292,7 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
         preHook,
         preHookPosition,
         preHookSize,
+        preLanguage,
     ]);
 
     const handleSubmit = (e) => {
@@ -312,6 +319,7 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
                       })
                 : null,
             hook: preHook ? { position: preHookPosition, size: preHookSize } : null,
+            language: preLanguage && preLanguage !== 'multi' ? preLanguage : undefined,
         };
         const opts = { instructions: instructions.trim() || undefined, preselections };
         if (mode === 'batch') {
@@ -614,6 +622,60 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
                                     checked={reframeMode === 'auto'}
                                     onChange={(next) => setReframeMode(next ? 'auto' : 'disabled')}
                                 />
+
+                                {/* Spoken language override — default 'multi' uses Nova-3
+                                    code-switching (EN+IT native). Pick a single language
+                                    for better accuracy AND reliable speaker diarization. */}
+                                <div className="space-y-1.5">
+                                    <div className="flex items-center justify-between gap-3">
+                                        <label
+                                            htmlFor="clip-language"
+                                            className="type-label !text-zinc-300"
+                                        >
+                                            Spoken language
+                                        </label>
+                                        <span className="type-mono text-[9px] text-zinc-600 normal-case tracking-normal">
+                                            {preLanguage === 'multi'
+                                                ? 'Auto (code-switching)'
+                                                : `Forced · ${preLanguage}`}
+                                        </span>
+                                    </div>
+                                    <select
+                                        id="clip-language"
+                                        value={preLanguage}
+                                        onChange={(e) => setPreLanguage(e.target.value)}
+                                        className="w-full bg-white/[0.02] border border-white/[0.08] hover:border-white/[0.16] focus:border-[oklch(74%_0.175_62)]/55 text-zinc-200 text-[12px] font-mono uppercase tracking-[0.1em] px-3 h-9 rounded-[3px] cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/45 appearance-none"
+                                    >
+                                        <option value="multi" className="bg-[oklch(9%_0.006_260)]">
+                                            Multi — auto / EN+IT code-switching
+                                        </option>
+                                        <option value="en" className="bg-[oklch(9%_0.006_260)]">English (en)</option>
+                                        <option value="it" className="bg-[oklch(9%_0.006_260)]">Italiano (it)</option>
+                                        <option value="es" className="bg-[oklch(9%_0.006_260)]">Español (es)</option>
+                                        <option value="fr" className="bg-[oklch(9%_0.006_260)]">Français (fr)</option>
+                                        <option value="de" className="bg-[oklch(9%_0.006_260)]">Deutsch (de)</option>
+                                        <option value="pt" className="bg-[oklch(9%_0.006_260)]">Português (pt)</option>
+                                        <option value="nl" className="bg-[oklch(9%_0.006_260)]">Nederlands (nl)</option>
+                                        <option value="pl" className="bg-[oklch(9%_0.006_260)]">Polski (pl)</option>
+                                        <option value="tr" className="bg-[oklch(9%_0.006_260)]">Türkçe (tr)</option>
+                                        <option value="ru" className="bg-[oklch(9%_0.006_260)]">Русский (ru)</option>
+                                        <option value="ja" className="bg-[oklch(9%_0.006_260)]">日本語 (ja)</option>
+                                        <option value="ko" className="bg-[oklch(9%_0.006_260)]">한국어 (ko)</option>
+                                        <option value="zh" className="bg-[oklch(9%_0.006_260)]">中文 (zh)</option>
+                                        <option value="hi" className="bg-[oklch(9%_0.006_260)]">हिन्दी (hi)</option>
+                                        <option value="uk" className="bg-[oklch(9%_0.006_260)]">Українська (uk)</option>
+                                        <option value="sv" className="bg-[oklch(9%_0.006_260)]">Svenska (sv)</option>
+                                        <option value="da" className="bg-[oklch(9%_0.006_260)]">Dansk (da)</option>
+                                        <option value="nb" className="bg-[oklch(9%_0.006_260)]">Norsk (nb)</option>
+                                        <option value="fi" className="bg-[oklch(9%_0.006_260)]">Suomi (fi)</option>
+                                        <option value="el" className="bg-[oklch(9%_0.006_260)]">Ελληνικά (el)</option>
+                                    </select>
+                                    <p className="text-[10px] text-zinc-600 leading-snug">
+                                        Leave on <span className="text-zinc-400">Multi</span> for mixed-language videos.
+                                        Pick a single language when you know the video is only in one —
+                                        it improves transcription accuracy and speaker diarization.
+                                    </p>
+                                </div>
 
                                 {/* Smart Cut */}
                                 <SwitchRow

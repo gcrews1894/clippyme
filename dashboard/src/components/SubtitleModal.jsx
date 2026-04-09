@@ -47,9 +47,10 @@ export default function SubtitleModal({ isOpen, onClose, onGenerate, isProcessin
     const initialMode = iv.mode === 'classic' ? 'classic' : 'viral';
 
     const [mode, setMode] = useState(initialMode);
-    // Single vertical position slider: -50 = top, 0 = center, +50 = bottom.
-    const [offsetY, setOffsetY] = useState(iv.offset_y ?? 35);
-    const position = 'center';
+    // Discrete vertical position — replaces the continuous -50/+50 slider.
+    // Subtitles default to 'bottom' (standard caption placement).
+    const normalizePos = (p) => (p === 'top' || p === 'center' || p === 'bottom' ? p : 'bottom');
+    const [position, setPosition] = useState(normalizePos(iv.position));
 
     // Viral mode state
     const [selectedPreset, setSelectedPreset] = useState(iv.preset || 'classic_white');
@@ -107,7 +108,7 @@ export default function SubtitleModal({ isOpen, onClose, onGenerate, isProcessin
         if (!isOpen) return;
         const v = initialValues || {};
         setMode(v.mode === 'classic' ? 'classic' : 'viral');
-        setOffsetY(v.offset_y ?? 35);
+        setPosition(normalizePos(v.position));
         setSelectedPreset(v.preset || 'classic_white');
         setKaraokeMode(v.display_mode || 'word_group');
         setWordsPerGroup(v.words_per_group ?? 3);
@@ -142,7 +143,7 @@ export default function SubtitleModal({ isOpen, onClose, onGenerate, isProcessin
             onGenerate({
                 mode: 'karaoke',
                 position,
-                offset_y: offsetY,
+                offset_y: 0,
                 // Viral karaoke uses preset fontsize on the backend — this
                 // field is ignored for the preset path but kept for schema
                 // compatibility. The actual rendered size comes from
@@ -164,7 +165,7 @@ export default function SubtitleModal({ isOpen, onClose, onGenerate, isProcessin
             onGenerate({
                 mode: 'classic',
                 position,
-                offset_y: offsetY,
+                offset_y: 0,
                 fontSize,
                 fontName: classicFontName,
                 fontColor,
@@ -182,13 +183,13 @@ export default function SubtitleModal({ isOpen, onClose, onGenerate, isProcessin
     return createPortal(
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fade-in" onClick={onClose}>
             <div
-                className="bg-[#0f0f13] border border-white/10 rounded-2xl w-full max-w-4xl shadow-elevated relative flex flex-col md:flex-row overflow-hidden max-h-[90vh]"
+                className="bg-[oklch(9%_0.006_260)] border border-white/10 rounded-[3px] w-full max-w-4xl shadow-elevated relative flex flex-col md:flex-row overflow-hidden max-h-[90vh]"
                 onClick={(e) => e.stopPropagation()}
             >
                 {/* Close button */}
                 <button
                     onClick={onClose}
-                    className="absolute top-4 right-4 z-30 p-1.5 rounded-lg bg-white/5 hover:bg-white/10 transition-colors"
+                    className="absolute top-4 right-4 z-30 p-1.5 rounded-[3px] bg-white/5 hover:bg-white/10 transition-colors"
                 >
                     <X size={18} className="text-zinc-400" />
                 </button>
@@ -202,10 +203,10 @@ export default function SubtitleModal({ isOpen, onClose, onGenerate, isProcessin
 
                     {/* Karaoke / Classic toggle */}
                     <div className="px-6 pb-4">
-                        <div className="flex bg-black/40 p-1 rounded-xl">
+                        <div className="flex bg-black/40 p-1 rounded-[3px]">
                             <button
                                 onClick={() => setMode('viral')}
-                                className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold transition-all ${
+                                className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-[3px] text-xs font-semibold transition-all ${
                                     mode === 'viral'
                                         ? 'bg-gradient-to-r from-accent-pink to-accent-purple text-white shadow-glow-pink'
                                         : 'text-zinc-500 hover:text-zinc-300'
@@ -215,7 +216,7 @@ export default function SubtitleModal({ isOpen, onClose, onGenerate, isProcessin
                             </button>
                             <button
                                 onClick={() => setMode('classic')}
-                                className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold transition-all ${
+                                className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-[3px] text-xs font-semibold transition-all ${
                                     mode === 'classic'
                                         ? 'bg-gradient-to-r from-accent-pink to-accent-purple text-white shadow-glow-pink'
                                         : 'text-zinc-500 hover:text-zinc-300'
@@ -240,7 +241,7 @@ export default function SubtitleModal({ isOpen, onClose, onGenerate, isProcessin
                                                     setSelectedPreset(p.id);
                                                     setHighlightColor(p.colors[1]);
                                                 }}
-                                                className={`p-3 rounded-xl border text-left transition-all ${
+                                                className={`p-3 rounded-[3px] border text-left transition-all ${
                                                     selectedPreset === p.id
                                                         ? 'bg-white/[0.06] border-accent-pink/40'
                                                         : 'bg-white/[0.02] border-white/[0.06] hover:border-white/10'
@@ -268,7 +269,7 @@ export default function SubtitleModal({ isOpen, onClose, onGenerate, isProcessin
                                     <div className="grid grid-cols-2 gap-2">
                                         <button
                                             onClick={() => setKaraokeMode('word_group')}
-                                            className={`p-2.5 rounded-xl border text-center transition-all ${
+                                            className={`p-2.5 rounded-[3px] border text-center transition-all ${
                                                 karaokeMode === 'word_group'
                                                     ? 'bg-white/[0.06] border-accent-pink/40'
                                                     : 'bg-white/[0.02] border-white/[0.06] hover:border-white/10'
@@ -279,7 +280,7 @@ export default function SubtitleModal({ isOpen, onClose, onGenerate, isProcessin
                                         </button>
                                         <button
                                             onClick={() => setKaraokeMode('full_line')}
-                                            className={`p-2.5 rounded-xl border text-center transition-all ${
+                                            className={`p-2.5 rounded-[3px] border text-center transition-all ${
                                                 karaokeMode === 'full_line'
                                                     ? 'bg-white/[0.06] border-accent-pink/40'
                                                     : 'bg-white/[0.02] border-white/[0.06] hover:border-white/10'
@@ -336,10 +337,10 @@ export default function SubtitleModal({ isOpen, onClose, onGenerate, isProcessin
                                     <select
                                         value={fontName}
                                         onChange={(e) => setFontName(e.target.value)}
-                                        className="w-full bg-[#0f0f13] border border-white/10 rounded-lg px-4 py-3 text-sm text-white focus:outline-none focus:border-accent-pink/50 appearance-none cursor-pointer"
+                                        className="w-full bg-[oklch(9%_0.006_260)] border border-white/10 rounded-[3px] px-4 py-3 text-sm text-white focus:outline-none focus:border-[oklch(74%_0.175_62)]/55 appearance-none cursor-pointer"
                                     >
                                         {FONT_OPTIONS.filter(f => f.value !== 'Verdana').map((f) => (
-                                            <option key={f.value} value={f.value} className="bg-[#0f0f13]">{f.label}</option>
+                                            <option key={f.value} value={f.value} className="bg-[oklch(9%_0.006_260)]">{f.label}</option>
                                         ))}
                                     </select>
                                 </div>
@@ -367,10 +368,10 @@ export default function SubtitleModal({ isOpen, onClose, onGenerate, isProcessin
                                     <select
                                         value={classicFontName}
                                         onChange={(e) => setClassicFontName(e.target.value)}
-                                        className="w-full bg-[#0f0f13] border border-white/10 rounded-lg px-4 py-3 text-sm text-white focus:outline-none focus:border-accent-pink/50 appearance-none cursor-pointer"
+                                        className="w-full bg-[oklch(9%_0.006_260)] border border-white/10 rounded-[3px] px-4 py-3 text-sm text-white focus:outline-none focus:border-[oklch(74%_0.175_62)]/55 appearance-none cursor-pointer"
                                     >
                                         {FONT_OPTIONS.map((f) => (
-                                            <option key={f.value} value={f.value} className="bg-[#0f0f13]">{f.label}</option>
+                                            <option key={f.value} value={f.value} className="bg-[oklch(9%_0.006_260)]">{f.label}</option>
                                         ))}
                                     </select>
                                 </div>
@@ -493,26 +494,28 @@ export default function SubtitleModal({ isOpen, onClose, onGenerate, isProcessin
                             </>
                         )}
 
-                        {/* Vertical Position (single unified slider) */}
+                        {/* Vertical Position — 3-way segmented control */}
                         <div className="space-y-2">
-                            <div className="flex items-center justify-between">
-                                <label className="text-xs font-medium text-zinc-400">Vertical Position</label>
-                                <span className="text-xs text-zinc-500">
-                                    {offsetY < -15 ? 'Top' : offsetY > 15 ? 'Bottom' : 'Center'}
-                                </span>
-                            </div>
-                            <input
-                                type="range"
-                                min="-50"
-                                max="50"
-                                value={offsetY}
-                                onChange={(e) => setOffsetY(Number(e.target.value))}
-                                className="w-full h-1 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-accent-pink"
-                            />
-                            <div className="flex justify-between text-[9px] text-zinc-600">
-                                <span>Top</span>
-                                <span>Center</span>
-                                <span>Bottom</span>
+                            <label className="text-xs font-medium text-zinc-400">Vertical Position</label>
+                            <div className="flex gap-2">
+                                {[
+                                    { id: 'top', label: 'Top' },
+                                    { id: 'center', label: 'Center' },
+                                    { id: 'bottom', label: 'Bottom' },
+                                ].map((p) => (
+                                    <button
+                                        key={p.id}
+                                        onClick={() => setPosition(p.id)}
+                                        aria-pressed={position === p.id}
+                                        className={`flex-1 py-2 rounded-[3px] border text-xs font-medium transition-all ${
+                                            position === p.id
+                                                ? 'bg-white/[0.06] border-[oklch(74%_0.175_62)]/55 text-white'
+                                                : 'bg-white/[0.02] border-white/[0.06] text-zinc-500 hover:border-white/10'
+                                        }`}
+                                    >
+                                        {p.label}
+                                    </button>
+                                ))}
                             </div>
                         </div>
                     </div>
@@ -550,8 +553,7 @@ export default function SubtitleModal({ isOpen, onClose, onGenerate, isProcessin
                         <div
                             className="w-full flex items-center justify-center transition-all duration-200 absolute left-0 right-0"
                             style={{
-                                // offsetY -50 → 0% from top, 0 → 50% (center), +50 → 100%
-                                top: `${50 + offsetY}%`,
+                                top: position === 'top' ? '15%' : position === 'bottom' ? '85%' : '50%',
                                 transform: 'translateY(-50%)',
                             }}
                         >

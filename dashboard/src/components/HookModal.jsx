@@ -7,9 +7,10 @@ export default function HookModal({ isOpen, onClose, onGenerate, isProcessing, v
     const iv = initialValues || {};
     const [text, setText] = useState(iv.text || initialText || '');
     const [size, setSize] = useState(iv.size || 'S');
-    // Single vertical slider -50 (top) → +50 (bottom).
-    const [offsetY, setOffsetY] = useState(iv.offset_y ?? -35);
-    const position = 'center';
+    // Discrete vertical position — replaces the continuous -50/+50 slider.
+    // Hooks default to 'top' (the teaser sits above the action).
+    const normalizePos = (p) => (p === 'top' || p === 'center' || p === 'bottom' ? p : 'top');
+    const [position, setPosition] = useState(normalizePos(iv.position));
 
     // Re-seed state when the modal opens so subsequent opens reflect the
     // parent's latest hookParams (including pre-selection defaults).
@@ -18,7 +19,7 @@ export default function HookModal({ isOpen, onClose, onGenerate, isProcessing, v
         const v = initialValues || {};
         setText(v.text || initialText || '');
         setSize(v.size || 'S');
-        setOffsetY(v.offset_y ?? -35);
+        setPosition(normalizePos(v.position));
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isOpen]);
 
@@ -65,13 +66,13 @@ export default function HookModal({ isOpen, onClose, onGenerate, isProcessing, v
     return createPortal(
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fade-in" onClick={onClose}>
             <div
-                className="bg-[#0f0f13] border border-white/10 rounded-2xl w-full max-w-4xl shadow-elevated relative flex flex-col md:flex-row overflow-hidden max-h-[90vh]"
+                className="bg-[oklch(9%_0.006_260)] border border-white/10 rounded-[3px] w-full max-w-4xl shadow-elevated relative flex flex-col md:flex-row overflow-hidden max-h-[90vh]"
                 onClick={(e) => e.stopPropagation()}
             >
                 {/* Close button */}
                 <button
                     onClick={onClose}
-                    className="absolute top-4 right-4 z-30 p-1.5 rounded-lg bg-white/5 hover:bg-white/10 transition-colors"
+                    className="absolute top-4 right-4 z-30 p-1.5 rounded-[3px] bg-white/5 hover:bg-white/10 transition-colors"
                 >
                     <X size={18} className="text-zinc-400" />
                 </button>
@@ -93,31 +94,33 @@ export default function HookModal({ isOpen, onClose, onGenerate, isProcessing, v
                                 value={text}
                                 onChange={(e) => setText(e.target.value)}
                                 rows={3}
-                                className="w-full bg-[#0f0f13] border border-white/10 rounded-lg px-4 py-3 text-white text-sm focus:outline-none focus:border-accent-pink/50 resize-none placeholder:text-zinc-600"
+                                className="w-full bg-[oklch(9%_0.006_260)] border border-white/10 rounded-[3px] px-4 py-3 text-white text-sm focus:outline-none focus:border-[oklch(74%_0.175_62)]/55 resize-none placeholder:text-zinc-600"
                                 placeholder="POV: You just discovered..."
                             />
                         </div>
 
-                        {/* Vertical Position (single slider) */}
+                        {/* Vertical Position — 3-way segmented control */}
                         <div className="space-y-2">
-                            <div className="flex items-center justify-between">
-                                <label className="text-xs font-medium text-zinc-400">Vertical Position</label>
-                                <span className="text-xs text-zinc-500">
-                                    {offsetY < -15 ? 'Top' : offsetY > 15 ? 'Bottom' : 'Center'}
-                                </span>
-                            </div>
-                            <input
-                                type="range"
-                                min="-50"
-                                max="50"
-                                value={offsetY}
-                                onChange={(e) => setOffsetY(Number(e.target.value))}
-                                className="w-full h-1 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-accent-pink"
-                            />
-                            <div className="flex justify-between text-[9px] text-zinc-600">
-                                <span>Top</span>
-                                <span>Center</span>
-                                <span>Bottom</span>
+                            <label className="text-xs font-medium text-zinc-400">Vertical Position</label>
+                            <div className="flex gap-2">
+                                {[
+                                    { id: 'top', label: 'Top' },
+                                    { id: 'center', label: 'Center' },
+                                    { id: 'bottom', label: 'Bottom' },
+                                ].map((p) => (
+                                    <button
+                                        key={p.id}
+                                        onClick={() => setPosition(p.id)}
+                                        aria-pressed={position === p.id}
+                                        className={`flex-1 py-2 rounded-[3px] border text-xs font-medium transition-all ${
+                                            position === p.id
+                                                ? 'bg-white/[0.06] border-[oklch(74%_0.175_62)]/55 text-white'
+                                                : 'bg-white/[0.02] border-white/[0.06] text-zinc-500 hover:border-white/10'
+                                        }`}
+                                    >
+                                        {p.label}
+                                    </button>
+                                ))}
                             </div>
                         </div>
 
@@ -133,7 +136,7 @@ export default function HookModal({ isOpen, onClose, onGenerate, isProcessing, v
                                     <button
                                         key={sz.id}
                                         onClick={() => setSize(sz.id)}
-                                        className={`flex-1 py-2 rounded-lg border text-xs font-medium transition-all ${
+                                        className={`flex-1 py-2 rounded-[3px] border text-xs font-medium transition-all ${
                                             size === sz.id
                                                 ? 'bg-white/[0.06] border-accent-pink/40 text-white'
                                                 : 'bg-white/[0.02] border-white/[0.06] text-zinc-500 hover:border-white/10'
@@ -146,7 +149,7 @@ export default function HookModal({ isOpen, onClose, onGenerate, isProcessing, v
                         </div>
 
                         {/* Tip */}
-                        <div className="p-3 bg-white/[0.02] rounded-xl border border-white/[0.06] text-[11px] text-zinc-500 leading-relaxed">
+                        <div className="p-3 bg-white/[0.02] rounded-[3px] border border-white/[0.06] text-[11px] text-zinc-500 leading-relaxed">
                             <span className="text-zinc-400 font-medium">Tip:</span> Keep it short and punchy. "POV:", "Did you know?", or questions work best for scroll-stopping retention.
                         </div>
                     </div>
@@ -154,7 +157,7 @@ export default function HookModal({ isOpen, onClose, onGenerate, isProcessing, v
                     {/* Apply button */}
                     <div className="px-6 py-4 border-t border-white/10">
                         <button
-                            onClick={() => onGenerate({ text, position, size, offset_y: offsetY })}
+                            onClick={() => onGenerate({ text, position, size, offset_y: 0 })}
                             disabled={isProcessing || !text.trim()}
                             className="w-full h-12 rounded-[3px] bg-[oklch(74%_0.175_62)] hover:bg-[oklch(78%_0.175_65)] text-[oklch(14%_0.01_260)] font-mono text-[11px] uppercase tracking-[0.18em] font-semibold border border-[oklch(70%_0.18_62)] shadow-[0_1px_0_0_oklch(100%_0_0/0.3)_inset,0_10px_24px_-14px_oklch(74%_0.175_62/0.55)] active:translate-y-px transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)] focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                         >
@@ -186,10 +189,13 @@ export default function HookModal({ isOpen, onClose, onGenerate, isProcessing, v
                     <div className="absolute inset-0 pointer-events-none">
                         <div
                             className="absolute left-0 right-0 flex justify-center px-8 transition-all duration-200"
-                            style={{ top: `${50 + offsetY}%`, transform: 'translateY(-50%)' }}
+                            style={{
+                                top: position === 'top' ? '15%' : position === 'bottom' ? '85%' : '50%',
+                                transform: 'translateY(-50%)',
+                            }}
                         >
                             <div
-                                className="text-black font-bold rounded-2xl text-center whitespace-pre-wrap"
+                                className="text-black font-bold rounded-[3px] text-center whitespace-pre-wrap"
                                 style={{
                                     ...getSizeStyle(),
                                     backgroundColor: 'rgba(255, 255, 255, 0.92)',
