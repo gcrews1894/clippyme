@@ -157,12 +157,6 @@ python -m uvicorn clippyme.api.app:app --reload --host 0.0.0.0 --port 8000
 cd dashboard && npm install && npm run dev
 ```
 
-### Tests
-```
-python -m pytest tests/test_backend_fixes.py -v
-```
-Tests use `unittest` with mocks. Run from project root (test file adds root to `sys.path`).
-
 ### Frontend build
 ```
 cd dashboard && npm run build
@@ -173,12 +167,6 @@ cd dashboard && npm run build
 cd dashboard && npx shadcn add <component>
 ```
 Components land in `src/components/ui/`. They use Tailwind v4 class syntax — verify compatibility before adding.
-
-### Git security setup
-```
-git config core.hooksPath .githooks
-```
-Activates the pre-commit hook that blocks sensitive data (API keys, cookies, tokens).
 
 ## Key Patterns
 
@@ -308,13 +296,11 @@ Clips can be published/scheduled directly to TikTok, Instagram and YouTube from 
 
 - **Env vars**: `ZERNIO_BASE_URL` (default `https://zernio.com/api/v1`), `ZERNIO_DEFAULT_TZ` (default `Europe/Rome`), `ZERNIO_HTTP_TIMEOUT` (60s), `ZERNIO_UPLOAD_TIMEOUT` (600s), `ZERNIO_MIN_GAP_SECONDS` (5400 = 90 min for SmartScheduler).
 
-- **Tests**: `tests/test_social_publisher.py` covers SmartScheduler (slot selection, gap enforcement, past-time skipping, fallback when overcrowded), publish_clip input validation, and ZernioClient with a mocked `requests.Session` (no real network). 13 tests; the full suite including smartcut is 32 tests in ~0.1s.
-
 - **Security note**: the reference script shared by the user lives in `tmp/` and contains a real API key in plaintext. **`tmp/` is gitignored** via `.gitignore` — never commit anything from that directory.
 
 ## Gemini viral detection — parsing chain
 
-`clippyme.pipeline.gemini_parser` applies a **5-level fallback** when Gemini emits malformed JSON: `strict` → `clean` (smart-quote/comma/backslash fix) → `json_repair` lib → `retry` (one round-trip with error context) → `fallback` (None → whole-video mode). Prompt emits chain-of-thought BEFORE a `### JSON ###` delimiter and uses a 5-axis viral_score rubric (HOOK_STRENGTH, EMOTIONAL_PAYOFF, QUOTABILITY, SELF_CONTAINED, DENSITY) + 3 few-shot examples. Each attempt logs `📊 gemini_parse path=<...> duration_ms=<N>`. Pydantic validation (`ViralClip`) enforces `10≤duration≤75`, `viral_score∈[1,100]`, `viral_reason≥20 chars`. `validate_and_dedupe` drops clips with IoU>0.7 vs a higher-scoring neighbour. Tests in `tests/test_gemini_parsing.py` (13 cases) — **do not break them**.
+`clippyme.pipeline.gemini_parser` applies a **5-level fallback** when Gemini emits malformed JSON: `strict` → `clean` (smart-quote/comma/backslash fix) → `json_repair` lib → `retry` (one round-trip with error context) → `fallback` (None → whole-video mode). Prompt emits chain-of-thought BEFORE a `### JSON ###` delimiter and uses a 5-axis viral_score rubric (HOOK_STRENGTH, EMOTIONAL_PAYOFF, QUOTABILITY, SELF_CONTAINED, DENSITY) + 3 few-shot examples. Each attempt logs `📊 gemini_parse path=<...> duration_ms=<N>`. Pydantic validation (`ViralClip`) enforces `10≤duration≤75`, `viral_score∈[1,100]`, `viral_reason≥20 chars`. `validate_and_dedupe` drops clips with IoU>0.7 vs a higher-scoring neighbour.
 
 ## Code organization rules
 

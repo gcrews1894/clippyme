@@ -145,7 +145,6 @@ dashboard/
     components/ui/          shadcn/ui primitives (Button, Dialog, Tabs, Tooltip, …)
     lib/subtitlePresets.js  1:1 mirror of subtitles.py SUBTITLE_PRESETS for the live preview
 
-tests/                Unit + integration tests (pytest)
 fonts/                Bundled TTF fonts served via /fonts (subtitle + hook rendering)
 data/                 Persisted config, cookies, transcript cache (git-ignored)
 ```
@@ -179,22 +178,6 @@ All routes are JSON in / JSON out. Job IDs are strict UUID4. Config endpoints re
 | `POST` | `/api/publish/{job_id}/{clip_index}` | Upload + schedule a clip on TikTok/IG/YouTube. |
 
 Static mounts: `/videos`, `/thumbnails`, `/gallery`, `/video`, `/fonts` (read-only).
-
----
-
-## Tests
-
-```bash
-pytest tests/ -v
-```
-
-Coverage:
-- `tests/test_backend_fixes.py` — config persistence + main.py compile smoke test
-- `tests/test_gemini_parsing.py` — 13 cases against the 5-level JSON parsing chain (real parser, no mocks)
-- `tests/test_smartcut.py` — Smart Cut token normalization, silence detection, auto-editor timeline
-- `tests/test_social_publisher.py` — SmartScheduler slot selection, gap enforcement, Zernio client mock
-
-Total: ~45 tests, runs in well under a second.
 
 ---
 
@@ -249,7 +232,6 @@ This project has been audited; the current state is suitable for **trusted LAN d
 - `data/config.json` and `data/cookies.txt` are written with mode `0600`.
 - Internal exceptions never leak `str(e)` to API clients; full stack traces are logged server-side only.
 - `ZERNIO_BASE_URL` env override is allowlisted to `https://*.zernio.com`.
-- Pre-commit hook (`.githooks/pre-commit`) blocks accidental commit of API keys / cookies / tokens — enable with `git config core.hooksPath .githooks`.
 
 **Not yet in place** (required before exposing publicly): authentication layer, rate limiting, CSRF, full reverse proxy with TLS + security headers.
 
