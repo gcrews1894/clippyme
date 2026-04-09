@@ -21,7 +21,11 @@ _SIZE_MAP = {"S": 0.8, "M": 1.0, "L": 1.3}
 
 
 async def _apply_smartcut(
-    current_input: str, base_clip: str, metadata: dict, clip_info: dict
+    current_input: str,
+    base_clip: str,
+    metadata: dict,
+    clip_info: dict,
+    intermediate_files: list,
 ) -> str:
     # Cache key must follow the ACTUAL input. The previous implementation
     # keyed off `base_clip` unconditionally, which meant that if we'd
@@ -31,6 +35,7 @@ async def _apply_smartcut(
     # sidecar _smartcut.mp4.
     smartcut_path = current_input.replace(".mp4", "_smartcut.mp4")
     if os.path.exists(smartcut_path):
+        intermediate_files.append(smartcut_path)
         return smartcut_path
     transcript = metadata.get("transcript", {})
     loop = asyncio.get_event_loop()
@@ -43,6 +48,11 @@ async def _apply_smartcut(
         clip_info.get("end", 0),
         transcript.get("language"),
     )
+    # Track the smart-cut artefact so _cleanup_intermediates can remove
+    # it at the end of compose_layers (unless it ends up as the final
+    # composed_clip_*.mp4, in which case the cleanup helper preserves it).
+    if sc_output and sc_output != current_input:
+        intermediate_files.append(sc_output)
     return sc_output or current_input
 
 
@@ -258,7 +268,7 @@ async def compose_layers(
 
         if active.get("smartcut"):
             current_input = await _apply_smartcut(
-                current_input, base_clip, metadata, clip_info
+                current_input, base_clip, metadata, clip_info, intermediate_files
             )
             layers_applied.append("smartcut")
             logger.info("compose_layers: ✓ smartcut → %s", os.path.basename(current_input))
