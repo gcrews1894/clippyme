@@ -1,11 +1,18 @@
 import { useCallback, useEffect, useState } from 'react';
 
 /**
- * Per-clip state: { disabled: boolean, deleted: boolean, publishedAt: number,
- *                    reframeMode: 'auto' | 'disabled', reframing: boolean }
+ * Per-clip state: { selected: boolean, deleted: boolean, publishedAt: number,
+ *                    reframeMode: 'auto' | 'disabled', reframing: boolean,
+ *                    toggles: {...}, hookParams: {...}, subtitleParams: {...} }
  * Keyed by clip index. Persisted in localStorage under `clippyme_clip_states_{jobId}`
- * so user choices (published flags, disabled clips, deleted clips) survive
- * page reloads without a backend round-trip.
+ * so user choices (selection, published flags, deleted clips) survive page
+ * reloads without a backend round-trip.
+ *
+ * NOTE: 'disabled' was the legacy field for "exclude from batch publish".
+ * Replaced by 'selected' (inverse meaning) in v2 of the shape — the new
+ * workflow is opt-in selection ("tick 3 of 12") instead of opt-out muting
+ * ("disable 9 of 12"). Legacy records without `selected` are treated as
+ * selected=true so nothing disappears on upgrade.
  */
 export function useClipStates(jobId) {
     const [states, setStates] = useState({});

@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { AlertCircle, RotateCcw, Sparkles, Send, ArrowUpDown, Check, EyeOff, ChevronDown, ChevronUp } from 'lucide-react';
+import { AlertCircle, RotateCcw, Sparkles, Send, ArrowUpDown, Check, CheckSquare, Square, Download, Trash2, ChevronDown, ChevronUp } from 'lucide-react';
 import ResultCard from './ResultCard';
 import ProcessingAnimation from './ProcessingAnimation';
 import LogsPanel from './LogsPanel';
@@ -95,24 +95,71 @@ export default function ResultsGrid({
 
   const clipCount = visibleClips.length;
 
-  // Stats for the header: how many are published / disabled / publishable
+  // Selection-first stats + derived lists. `selected` is the opt-in
+  // flag for bulk actions (default true so nothing disappears on first
+  // mount). `deleted` still hides the clip from the grid (local-only).
+  const isClipSelected = (state) => state.selected !== false;
+
   const stats = useMemo(() => {
     let published = 0;
-    let disabled = 0;
-    let publishable = 0;
+    let selected = 0;
     for (const { originalIndex } of visibleClips) {
       const state = clipStates[originalIndex] || {};
       if (state.publishedAt) published += 1;
-      if (state.disabled) disabled += 1;
-      if (!state.disabled && !state.publishedAt) publishable += 1;
+      if (isClipSelected(state)) selected += 1;
     }
-    return { published, disabled, publishable };
+    return { published, selected };
   }, [visibleClips, clipStates]);
 
-  const publishableClips = visibleClips.filter(({ originalIndex }) => {
-    const state = clipStates[originalIndex] || {};
-    return !state.disabled && !state.publishedAt;
-  });
+  const selectedClips = visibleClips.filter(({ originalIndex }) =>
+    isClipSelected(clipStates[originalIndex] || {}),
+  );
+  // Only clips that are selected AND not yet published — the subset
+  // Publish-all acts on (republishing an already-published clip goes
+  // through the single-clip Publish button on the card).
+  const publishableClips = selectedClips.filter(({ originalIndex }) =>
+    !clipStates[originalIndex]?.publishedAt,
+  );
+
+  const selectAll = () => {
+    visibleClips.forEach(({ originalIndex }) =>
+      onUpdateClipState(originalIndex, { selected: true }),
+    );
+  };
+  const deselectAll = () => {
+    visibleClips.forEach(({ originalIndex }) =>
+      onUpdateClipState(originalIndex, { selected: false }),
+    );
+  };
+  const deleteSelected = () => {
+    if (selectedClips.length === 0) return;
+    const label = `Delete ${selectedClips.length} selected clip${selectedClips.length === 1 ? '' : 's'}?`;
+    // eslint-disable-next-line no-alert
+    if (!window.confirm(`${label} They will be hidden from the grid — the video files stay on disk and the deletion is only visual.`)) return;
+    selectedClips.forEach(({ originalIndex }) =>
+      onUpdateClipState(originalIndex, { deleted: true, selected: false }),
+    );
+  };
+  const downloadSelected = async () => {
+    if (selectedClips.length === 0) return;
+    for (const { clip, originalIndex } of selectedClips) {
+      try {
+        const a = document.createElement('a');
+        a.href = clip.video_url && clip.video_url.startsWith('http')
+          ? clip.video_url
+          : `${window.location.origin}${clip.video_url || ''}`;
+        a.download = `clip_${originalIndex + 1}.mp4`;
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        // Small gap between downloads so the browser doesn't coalesce them
+        await new Promise((r) => setTimeout(r, 250));
+      } catch {
+        /* ignore per-clip errors so one failure doesn't nuke the batch */
+      }
+    }
+  };
 
   return (
     <div className="space-y-8">
@@ -152,9 +199,9 @@ export default function ResultsGrid({
                     <Check size={10} strokeWidth={2.4} /> {String(stats.published).padStart(2, '0')}&nbsp;published
                   </span>
                 )}
-                {stats.disabled > 0 && (
-                  <span className="inline-flex items-center gap-1.5 px-2 py-1 border border-white/10 text-zinc-500 bg-white/[0.02]">
-                    <EyeOff size={10} strokeWidth={2.2} /> {String(stats.disabled).padStart(2, '0')}&nbsp;muted
+                {stats.selected < clipCount && (
+                  <span className="inline-flex items-center gap-1.5 px-2 py-1 border border-white/10 text-zinc-400 bg-white/[0.02]">
+                    <Check size={10} strokeWidth={2.2} /> {String(stats.selected).padStart(2, '0')}&nbsp;selected
                   </span>
                 )}
                 {results?.cost_analysis && (
@@ -246,30 +293,37 @@ export default function ResultsGrid({
         </div>
       )}
 
-      {clipCount > 0 && (publishableClips.length > 0 || clipCount > 1) && (
-        /* Sticky action rail — stays pinned under the top nav while the user
-           scrolls through a long clip list, so 'Publish all' and 'Sort' are
-           always one click away. Editorial hairline border + backdrop blur
-           to stay legible over whatever grid section sits behind it. */
+      {clipCount > 0 && (
+        /* Sticky action rail — selection-first workflow. User ticks the
+           clips they want via the checkbox on each ResultCard, then
+           triggers bulk actions here. 'Select all / Deselect all' at
+           the far left, bulk Publish / Download / Delete on the right.
+           All four scale their labels with the selected count. */
         <div className="sticky top-[56px] z-40 -mx-4 px-4 py-2 backdrop-blur-md bg-[oklch(9%_0.006_260)]/82 border-y border-white/[0.06]">
           <div className="flex items-center justify-between gap-3 flex-wrap">
-            <div className="type-label flex items-center gap-3 text-zinc-500">
-              <span>
-                <span className="text-zinc-700">on&nbsp;grid&nbsp;/&nbsp;</span>
-                <span className="tabular-nums text-zinc-300">{String(clipCount).padStart(2, '0')}</span>
+            <div className="flex items-center gap-2 type-label text-zinc-500">
+              <button
+                type="button"
+                onClick={stats.selected === clipCount ? deselectAll : selectAll}
+                className="flex items-center gap-1.5 px-2.5 h-8 rounded-[3px] border border-white/10 hover:border-white/25 text-zinc-300 hover:text-white type-mono text-[10px] uppercase tracking-[0.12em] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/50"
+                title={stats.selected === clipCount ? 'Deselect all clips' : 'Select all clips'}
+              >
+                {stats.selected === clipCount ? <CheckSquare size={11} strokeWidth={2.2} /> : <Square size={11} strokeWidth={2.2} />}
+                {stats.selected === clipCount ? 'Deselect\u00a0all' : 'Select\u00a0all'}
+              </button>
+              <span className="text-zinc-700 ml-1 tabular-nums">
+                {String(stats.selected).padStart(2, '0')}
+                <span className="text-zinc-700"> / </span>
+                {String(clipCount).padStart(2, '0')}
+                <span className="text-zinc-700"> selected</span>
               </span>
               {stats.published > 0 && (
                 <span className="text-[oklch(78%_0.17_145)] tabular-nums">
                   · {String(stats.published).padStart(2, '0')}&nbsp;live
                 </span>
               )}
-              {stats.disabled > 0 && (
-                <span className="text-zinc-600 tabular-nums">
-                  · {String(stats.disabled).padStart(2, '0')}&nbsp;muted
-                </span>
-              )}
             </div>
-            <div className="flex items-stretch gap-2">
+            <div className="flex items-stretch gap-2 flex-wrap">
               {clipCount > 1 && (
                 <div className="relative">
                   <select
@@ -286,17 +340,33 @@ export default function ResultsGrid({
                   <ArrowUpDown size={11} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" />
                 </div>
               )}
-              {publishableClips.length > 0 && (
-                <button
-                  onClick={() => setBatchPublishOpen(true)}
-                  className="flex items-center gap-2 h-9 px-3.5 rounded-[3px] bg-[oklch(74%_0.175_62)] hover:bg-[oklch(78%_0.175_65)] text-[oklch(12%_0.01_260)] text-[10px] font-mono uppercase tracking-[0.14em] font-semibold border border-[oklch(70%_0.18_62)] shadow-[0_6px_18px_-10px_oklch(74%_0.175_62/0.6)] active:translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]"
-                  title={`Publish ${publishableClips.length} active clips`}
-                >
-                  <Send size={11} strokeWidth={2.4} />
-                  Publish&nbsp;
-                  <span className="tabular-nums">{String(publishableClips.length).padStart(2, '0')}</span>
-                </button>
-              )}
+              <button
+                onClick={downloadSelected}
+                disabled={selectedClips.length === 0}
+                className="flex items-center gap-1.5 h-9 px-3 rounded-[3px] border border-white/10 hover:border-white/25 text-zinc-300 hover:text-white type-mono text-[10px] uppercase tracking-[0.12em] transition-colors disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/50"
+                title={`Download ${selectedClips.length} selected clip(s) as individual .mp4 files`}
+              >
+                <Download size={11} strokeWidth={2.2} />
+                Download&nbsp;<span className="tabular-nums">{String(selectedClips.length).padStart(2, '0')}</span>
+              </button>
+              <button
+                onClick={deleteSelected}
+                disabled={selectedClips.length === 0}
+                className="flex items-center gap-1.5 h-9 px-3 rounded-[3px] border border-[oklch(62%_0.22_25)]/30 hover:border-[oklch(62%_0.22_25)]/60 text-[oklch(70%_0.2_25)] hover:text-[oklch(82%_0.2_25)] hover:bg-[oklch(62%_0.22_25)]/8 type-mono text-[10px] uppercase tracking-[0.12em] transition-colors disabled:opacity-30 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(62%_0.22_25)]/55"
+                title={`Hide ${selectedClips.length} selected clip(s) from the grid (files stay on disk)`}
+              >
+                <Trash2 size={11} strokeWidth={2.2} />
+                Delete&nbsp;<span className="tabular-nums">{String(selectedClips.length).padStart(2, '0')}</span>
+              </button>
+              <button
+                onClick={() => setBatchPublishOpen(true)}
+                disabled={publishableClips.length === 0}
+                className="flex items-center gap-2 h-9 px-3.5 rounded-[3px] bg-[oklch(74%_0.175_62)] hover:bg-[oklch(78%_0.175_65)] disabled:bg-[oklch(74%_0.175_62)]/40 text-[oklch(12%_0.01_260)] text-[10px] font-mono uppercase tracking-[0.14em] font-semibold border border-[oklch(70%_0.18_62)] shadow-[0_6px_18px_-10px_oklch(74%_0.175_62/0.6)] active:translate-y-px disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]"
+                title={`Publish ${publishableClips.length} selected clip(s)`}
+              >
+                <Send size={11} strokeWidth={2.4} />
+                Publish&nbsp;<span className="tabular-nums">{String(publishableClips.length).padStart(2, '0')}</span>
+              </button>
             </div>
           </div>
         </div>

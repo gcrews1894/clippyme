@@ -87,7 +87,11 @@ export default function ResultCard({
     onUpdateState = () => {},
 }) {
     const [showMetadata, setShowMetadata] = useState(false);
-    const isDisabled = !!clipState.disabled;
+    // Selection model v2 — 'selected' is the opt-in flag for bulk
+    // publish/download/delete. Legacy records lacking it default to
+    // selected=true so nothing vanishes on upgrade from the old
+    // 'disabled' shape.
+    const isSelected = clipState.selected !== false;
     const publishedAt = clipState.publishedAt;
     // Reframe mode precedence: explicit per-clip override (persisted) >
     // backend-written clip.reframe_mode (from metadata.json) > job-level
@@ -330,19 +334,8 @@ export default function ResultCard({
     // Batch-publish excludes disabled clips, so an accidental click can
     // silently drop a clip from the publish run — the toast with undo
     // fixes that.
-    const handleToggleDisabled = () => {
-        const nextDisabled = !isDisabled;
-        onUpdateState({ disabled: nextDisabled });
-        if (nextDisabled) {
-            toast(`Clip #${index + 1} excluded from publishing`, {
-                description: 'It will not be included in "Publish all". You have 6 seconds to undo.',
-                duration: 6000,
-                action: {
-                    label: 'Undo',
-                    onClick: () => onUpdateState({ disabled: false }),
-                },
-            });
-        }
+    const handleToggleSelected = () => {
+        onUpdateState({ selected: !isSelected });
     };
 
     const handleToggleReframe = async () => {
@@ -389,9 +382,9 @@ export default function ResultCard({
     return (
         <div
             className={`group relative bg-[oklch(14%_0.009_260)] border rounded-[3px] overflow-hidden transition-all duration-300 ${
-                isDisabled
-                    ? 'border-white/5 opacity-45 grayscale'
-                    : 'border-white/[0.08] hover:border-[oklch(74%_0.175_62)]/40 hover:shadow-[0_24px_60px_-30px_oklch(0%_0_0/0.9),0_0_0_1px_oklch(74%_0.175_62/0.2)]'
+                isSelected
+                    ? 'border-[oklch(74%_0.175_62)]/60 shadow-[0_0_0_1px_oklch(74%_0.175_62/0.25),0_24px_60px_-30px_oklch(0%_0_0/0.9)]'
+                    : 'border-white/[0.08] opacity-75 hover:border-white/20 hover:opacity-100'
             }`}
         >
             {/* Slate strip — the little "CLIP #003" header that frames the
@@ -432,15 +425,33 @@ export default function ResultCard({
                     )}
                 </div>
 
-                {/* Disabled overlay banner */}
-                {isDisabled && (
-                    <div className="absolute bottom-16 left-0 right-0 z-10 text-center pointer-events-none">
-                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-[2px] bg-black/85 backdrop-blur-sm border border-white/20 type-mono text-[10px] font-semibold text-zinc-300 uppercase tracking-[0.14em] shadow-xl">
-                            <EyeOff size={10} />
-                            Disabled — excluded from batch
-                        </span>
-                    </div>
-                )}
+                {/* Top-left selection checkbox — prominent, click target
+                    is the whole pill. When selected, the card border
+                    also glows amber (see root element className above). */}
+                <button
+                    type="button"
+                    onClick={handleToggleSelected}
+                    aria-pressed={isSelected}
+                    aria-label={isSelected ? 'Deselect clip' : 'Select clip for bulk actions'}
+                    title={isSelected ? 'Click to exclude from bulk actions' : 'Click to include in bulk actions'}
+                    className={`absolute top-2 left-2 z-20 flex items-center gap-1.5 px-2 py-1 rounded-[2px] type-mono text-[10px] uppercase tracking-[0.14em] font-semibold backdrop-blur-sm shadow-lg transition-colors ${
+                        isSelected
+                            ? 'bg-[oklch(74%_0.175_62)] text-[oklch(12%_0.01_260)] border border-[oklch(70%_0.18_62)]'
+                            : 'bg-black/75 text-zinc-300 border border-white/15 hover:bg-black/90 hover:border-white/30'
+                    }`}
+                >
+                    <span
+                        aria-hidden
+                        className={`w-3.5 h-3.5 rounded-[2px] border-[1.5px] flex items-center justify-center ${
+                            isSelected
+                                ? 'border-[oklch(12%_0.01_260)] bg-[oklch(12%_0.01_260)]'
+                                : 'border-zinc-400 bg-transparent'
+                        }`}
+                    >
+                        {isSelected && <Check size={10} strokeWidth={3} className="text-[oklch(74%_0.175_62)]" />}
+                    </span>
+                    {isSelected ? 'Selected' : 'Select'}
+                </button>
 
                 <video
                     ref={videoRef}
@@ -600,23 +611,6 @@ export default function ResultCard({
                     </button>
                     <button
                         type="button"
-                        onClick={handleToggleDisabled}
-                        aria-label={isDisabled ? 'Enable clip' : 'Disable clip (excluded from Publish all)'}
-                        title={
-                            isDisabled
-                                ? 'Re-enable this clip — it will be included in Publish all again'
-                                : 'Disable this clip — it will be skipped by Publish all'
-                        }
-                        className={`shrink-0 w-9 h-9 flex items-center justify-center border-r border-white/[0.07] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/55 focus-visible:ring-inset ${
-                            isDisabled
-                                ? 'text-zinc-600 hover:text-zinc-200 hover:bg-white/[0.04]'
-                                : 'text-zinc-400 hover:text-white hover:bg-white/[0.04]'
-                        }`}
-                    >
-                        {isDisabled ? <EyeOff size={13} strokeWidth={2} /> : <Eye size={13} strokeWidth={2} />}
-                    </button>
-                    <button
-                        type="button"
                         onClick={handleDelete}
                         aria-label="Remove clip from grid"
                         title="Remove this clip from the grid — the file stays on disk, undo available in the toast"
@@ -676,11 +670,9 @@ export default function ResultCard({
                     </button>
                     <button
                         onClick={() => setShowPublishModal(true)}
-                        disabled={isComposing || isDisabled}
+                        disabled={isComposing}
                         title={
-                            isDisabled
-                                ? 'Clip is disabled — enable it to publish'
-                                : publishedAt
+                            publishedAt
                                     ? 'Already published — click to publish again'
                                     : 'Publish to TikTok / Instagram / YouTube via Zernio'
                         }
