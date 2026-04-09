@@ -40,6 +40,18 @@ export function useHistory() {
     });
   };
 
+  // Remove every per-job localStorage entry associated with a jobId.
+  // Without this, useClipStates / per-job preselections leaked into
+  // localStorage forever, bloating storage until QuotaExceeded.
+  const _purgeJobScopedStorage = (jobId) => {
+    try {
+      localStorage.removeItem(`clippyme_clip_states_${jobId}`);
+      localStorage.removeItem(`clippyme_preselections_job_${jobId}`);
+    } catch {
+      /* ignore */
+    }
+  };
+
   const deleteFromHistory = (jobId) => {
     setHistory((prev) => {
       const updated = prev.filter((h) => h.jobId !== jobId);
@@ -48,12 +60,19 @@ export function useHistory() {
       } catch {
         /* ignore */
       }
+      _purgeJobScopedStorage(jobId);
       return updated;
     });
   };
 
   const clearHistory = () => {
-    setHistory([]);
+    // Purge every per-job blob we know about before dropping the index.
+    setHistory((prev) => {
+      for (const entry of prev) {
+        if (entry?.jobId) _purgeJobScopedStorage(entry.jobId);
+      }
+      return [];
+    });
     localStorage.removeItem(HISTORY_KEY);
   };
 
