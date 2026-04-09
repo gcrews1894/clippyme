@@ -89,10 +89,16 @@ export default function ResultCard({
     const [showMetadata, setShowMetadata] = useState(false);
     const isDisabled = !!clipState.disabled;
     const publishedAt = clipState.publishedAt;
-    // Reframe mode: persisted per-clip. Default to 'auto' — the backend
-    // never sets an explicit mode on the initial clip, so we assume the
-    // pipeline's default (auto / face tracking) was used.
-    const reframeMode = clipState.reframeMode || clip.reframe_mode || 'auto';
+    // Reframe mode precedence: explicit per-clip override (persisted) >
+    // backend-written clip.reframe_mode (from metadata.json) > job-level
+    // preselection (the choice the user made at submission time) > 'auto'.
+    // The preselection fallback matters for clips from older jobs where
+    // the backend didn't yet write reframe_mode into each clip entry.
+    const reframeMode =
+        clipState.reframeMode
+        || clip.reframe_mode
+        || preselections?.reframe_mode
+        || 'auto';
     const isReframing = !!clipState.reframing;
     const [showSubtitleModal, setShowSubtitleModal] = useState(false);
     const [showHookModal, setShowHookModal] = useState(false);
@@ -539,47 +545,48 @@ export default function ResultCard({
                     clip-level controls. Editorial flat toolbar: mono label,
                     LED indicator for reframe state, amber accent on hover. */}
                 <div className="flex items-stretch gap-1.5 border border-white/[0.07] bg-white/[0.02] rounded-[3px] overflow-hidden">
-                    <button
-                        type="button"
-                        onClick={handleToggleReframe}
-                        disabled={isReframing}
-                        aria-label={
-                            isReframing
-                                ? 'Reframing in progress'
-                                : reframeMode === 'auto'
-                                    ? 'Auto reframe active — click to disable'
-                                    : 'Reframe disabled (4:3) — click to re-enable'
-                        }
-                        title={
-                            isReframing
-                                ? 'Reframing\u2026'
-                                : reframeMode === 'auto'
-                                    ? 'Auto reframe (face tracking) — click to switch to 4:3 + black bars'
-                                    : 'Reframe disabled (4:3 + black bars) — click to switch to auto face tracking'
-                        }
-                        className={`flex-1 h-9 flex items-center justify-center gap-2 type-mono text-[10px] uppercase tracking-[0.14em] transition-colors border-r border-white/[0.07] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/55 focus-visible:ring-inset disabled:opacity-60 disabled:cursor-wait ${
-                            reframeMode === 'auto'
-                                ? 'text-[oklch(82%_0.16_68)] hover:bg-[oklch(74%_0.175_62)]/15'
-                                : 'text-zinc-500 hover:text-zinc-200 hover:bg-white/[0.04]'
-                        }`}
+                    {/* Reframe: 2-segment control — 'Face Track' vs 'Full Frame'.
+                        Both states are always visible so the user can see at a
+                        glance which one is active and what the other option is.
+                        Clicking the inactive segment switches modes via the
+                        /api/reframe endpoint. */}
+                    <div
+                        role="group"
+                        aria-label="Reframe mode"
+                        className="flex items-stretch border-r border-white/[0.07]"
                     >
-                        {isReframing ? (
-                            <Loader2 size={12} className="animate-spin" strokeWidth={2.2} />
-                        ) : (
-                            <>
-                                <span
-                                    aria-hidden
-                                    className={`w-1.5 h-1.5 rounded-full ${
-                                        reframeMode === 'auto'
-                                            ? 'bg-[oklch(74%_0.175_62)] shadow-[0_0_5px_oklch(74%_0.175_62/0.8)]'
-                                            : 'bg-zinc-700'
+                        {[
+                            { id: 'auto', label: 'Face\u00a0Track', Icon: Crop, title: 'Auto 9:16 with face tracking' },
+                            { id: 'disabled', label: 'Full\u00a0Frame', Icon: Square, title: '4:3 center crop with black bars' },
+                        ].map(({ id, label, Icon, title }) => {
+                            const active = reframeMode === id;
+                            return (
+                                <button
+                                    key={id}
+                                    type="button"
+                                    onClick={() => {
+                                        if (active || isReframing) return;
+                                        handleToggleReframe();
+                                    }}
+                                    disabled={isReframing}
+                                    aria-pressed={active}
+                                    title={isReframing ? 'Reframing\u2026' : title}
+                                    className={`h-9 px-3 flex items-center justify-center gap-1.5 type-mono text-[10px] uppercase tracking-[0.14em] transition-colors border-r border-white/[0.05] last:border-r-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/55 focus-visible:ring-inset disabled:opacity-60 disabled:cursor-wait ${
+                                        active
+                                            ? 'bg-[oklch(74%_0.175_62)]/18 text-[oklch(82%_0.16_68)]'
+                                            : 'text-zinc-500 hover:text-zinc-200 hover:bg-white/[0.04]'
                                     }`}
-                                />
-                                {reframeMode === 'auto' ? <Crop size={12} strokeWidth={2} /> : <Square size={12} strokeWidth={2} />}
-                            </>
-                        )}
-                        {reframeMode === 'auto' ? 'Reframe' : 'No\u00a0reframe'}
-                    </button>
+                                >
+                                    {isReframing && active ? (
+                                        <Loader2 size={12} className="animate-spin" strokeWidth={2.2} />
+                                    ) : (
+                                        <Icon size={12} strokeWidth={2} />
+                                    )}
+                                    {label}
+                                </button>
+                            );
+                        })}
+                    </div>
                     <button
                         type="button"
                         onClick={handleToggleDisabled}

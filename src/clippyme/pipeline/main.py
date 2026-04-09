@@ -1159,6 +1159,11 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
     if os.path.exists(final_output_video): os.remove(final_output_video)
 
     print(f"🎬 Processing clip: {input_video}")
+    if reframe_mode == 'disabled':
+        print("   🚫 Reframe mode: DISABLED — output will be 4:3 center crop with black bars.")
+        print("      (Scene detection still runs for consistency; face tracking is skipped.)")
+    else:
+        print("   🎯 Reframe mode: AUTO — face tracking + dynamic 9:16 crop.")
     print("   Step 1: Detecting scenes...")
     scenes, fps = detect_scenes(input_video)
     
