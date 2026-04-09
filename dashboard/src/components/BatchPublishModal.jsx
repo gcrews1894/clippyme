@@ -276,6 +276,16 @@ export default function BatchPublishModal({ isOpen, onClose, jobId, clips, clipS
                 border_width: preselections?.subtitles?.border_width ?? 2,
                 bg_color: preselections?.subtitles?.bg_color || '#000000',
                 bg_opacity: preselections?.subtitles?.bg_opacity ?? 0,
+                // Propagate custom font_size / words_per_group when set in
+                // the pre-selection panel. Keys are omitted when unset so
+                // the backend's preset default applies instead of a hard-
+                // coded 16. Kept in sync with ResultCard.defaultSubtitleParams.
+                ...(preselections?.subtitles?.font_size !== undefined
+                    ? { font_size: preselections.subtitles.font_size }
+                    : {}),
+                ...(preselections?.subtitles?.words_per_group !== undefined
+                    ? { words_per_group: preselections.subtitles.words_per_group }
+                    : {}),
             };
             const hookParams = clipState.hookParams ?? seededHookParams;
             const subtitleParams = clipState.subtitleParams ?? seededSubtitleParams;

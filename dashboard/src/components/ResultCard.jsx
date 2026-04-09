@@ -139,6 +139,15 @@ export default function ResultCard({
         border_width: preselections?.subtitles?.border_width ?? 2,
         bg_color: preselections?.subtitles?.bg_color || '#000000',
         bg_opacity: preselections?.subtitles?.bg_opacity ?? 0,
+        // Optional custom size / grouping. Keys omitted when unset so the
+        // backend preset default applies. Mirrored in BatchPublishModal's
+        // seededSubtitleParams — keep the two in sync.
+        ...(preselections?.subtitles?.font_size !== undefined
+            ? { fontSize: preselections.subtitles.font_size }
+            : {}),
+        ...(preselections?.subtitles?.words_per_group !== undefined
+            ? { words_per_group: preselections.subtitles.words_per_group }
+            : {}),
     };
 
     const [toggles, setTogglesLocal] = useState({
