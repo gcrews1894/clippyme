@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Activity, ChevronDown, History, Trash2 } from 'lucide-react';
+import { Activity, ChevronDown, History, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { getApiUrl } from '../config';
 

@@ -59,6 +59,33 @@ export default function ResultsGrid({
   const [bulkEditOpen, setBulkEditOpen] = useState(false);
   const [bulkHookModalOpen, setBulkHookModalOpen] = useState(false);
   const [bulkSubModalOpen, setBulkSubModalOpen] = useState(false);
+  // Staging model for the bulk Edit popover — each layer key can be
+  // in one of 3 states: 'keep' (no change), 'on', 'off'. Clicking the
+  // Apply button commits every staged change in one shot via
+  // bulkSetToggle. Keeps the popover open until the user explicitly
+  // commits or dismisses so mistakes can be corrected before flushing
+  // to every selected clip.
+  const [bulkStaged, setBulkStaged] = useState({ smartcut: 'keep', hook: 'keep', subtitles: 'keep' });
+  const bulkStagedCount = Object.values(bulkStaged).filter((v) => v !== 'keep').length;
+  const resetBulkStaged = () => setBulkStaged({ smartcut: 'keep', hook: 'keep', subtitles: 'keep' });
+  const applyBulkStaged = () => {
+    // Build the per-clip toggle patch in one pass, then write once per
+    // clip. Calling bulkSetToggle sequentially clobbered earlier keys
+    // because each call re-read clipStates from a stale closure.
+    const patch = {};
+    Object.entries(bulkStaged).forEach(([key, val]) => {
+      if (val === 'on') patch[key] = true;
+      else if (val === 'off') patch[key] = false;
+    });
+    if (Object.keys(patch).length > 0) {
+      selectedClips.forEach(({ originalIndex }) => {
+        const prev = clipStates[originalIndex]?.toggles || {};
+        onUpdateClipState(originalIndex, { toggles: { ...prev, ...patch } });
+      });
+    }
+    resetBulkStaged();
+    setBulkEditOpen(false);
+  };
   // Collapse the source-video preview once the job is complete — users
   // want the clips grid, not a big player of the original 1h video.
   const [sourcePreviewOpen, setSourcePreviewOpen] = useState(status !== 'complete');
@@ -359,14 +386,15 @@ export default function ResultsGrid({
                   <ArrowUpDown size={11} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" />
                 </div>
               )}
-              {/* Bulk edit popover — lets the user flip Smart Cut / Hook
-                  / Subtitles on all selected clips in one click. Params
-                  (hook text, subtitle preset) can be tweaked per-clip via
-                  the card toggles; this rail only handles on/off state. */}
+              {/* Bulk edit popover — staged selections. The user picks
+                  'On' / 'Off' / 'Keep' per layer, then clicks Apply to
+                  commit everything at once. Style editors open in a
+                  separate modal flow and apply immediately because
+                  they're a full editor, not a tri-state toggle. */}
               <div className="relative">
                 <button
                   type="button"
-                  onClick={() => setBulkEditOpen((v) => !v)}
+                  onClick={() => { setBulkEditOpen((v) => !v); resetBulkStaged(); }}
                   disabled={selectedClips.length === 0}
                   aria-expanded={bulkEditOpen}
                   className="flex items-center gap-1.5 h-9 px-3 rounded-[3px] border border-white/10 hover:border-white/25 text-zinc-300 hover:text-white type-mono text-[10px] uppercase tracking-[0.12em] transition-colors disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/50"
@@ -379,61 +407,89 @@ export default function ResultsGrid({
                 {bulkEditOpen && selectedClips.length > 0 && (
                   <div
                     role="menu"
-                    className="absolute right-0 top-full mt-2 w-64 rounded-[3px] border border-white/10 bg-[oklch(11%_0.008_260)] shadow-[0_20px_60px_-20px_oklch(0%_0_0/0.9)] backdrop-blur-lg p-3 space-y-2.5 z-50"
+                    className="absolute right-0 top-full mt-2 w-72 rounded-[3px] border border-white/10 bg-[oklch(11%_0.008_260)] shadow-[0_20px_60px_-20px_oklch(0%_0_0/0.9)] backdrop-blur-lg p-3 space-y-2.5 z-50"
                   >
                     <div className="type-label text-[9px] text-zinc-600 px-1 pb-1 border-b border-white/5">
-                      Apply to {String(selectedClips.length).padStart(2, '0')} selected
+                      Stage changes for {String(selectedClips.length).padStart(2, '0')} selected
                     </div>
                     {[
                       { key: 'smartcut', label: 'Smart Cut', Icon: Scissors, hint: 'silences + filler words', styleOpener: null },
                       { key: 'hook', label: 'Hook', Icon: MessageSquare, hint: 'text overlay', styleOpener: () => { setBulkEditOpen(false); setBulkHookModalOpen(true); } },
                       { key: 'subtitles', label: 'Subtitles', Icon: Type, hint: 'burned captions', styleOpener: () => { setBulkEditOpen(false); setBulkSubModalOpen(true); } },
-                    ].map(({ key, label, Icon, hint, styleOpener }) => (
-                      <div key={key} className="space-y-1">
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-2 min-w-0 flex-1">
-                            <Icon size={12} strokeWidth={2} className="text-zinc-400 shrink-0" />
-                            <div className="min-w-0">
-                              <div className="text-[11px] text-zinc-200 font-semibold leading-tight">{label}</div>
-                              <div className="text-[9px] text-zinc-600 truncate">{hint}</div>
+                    ].map(({ key, label, Icon, hint, styleOpener }) => {
+                      const staged = bulkStaged[key];
+                      return (
+                        <div key={key} className="space-y-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 min-w-0 flex-1">
+                              <Icon size={12} strokeWidth={2} className="text-zinc-400 shrink-0" />
+                              <div className="min-w-0">
+                                <div className="text-[11px] text-zinc-200 font-semibold leading-tight">{label}</div>
+                                <div className="text-[9px] text-zinc-600 truncate">{hint}</div>
+                              </div>
+                            </div>
+                            {/* Tri-state segmented control: On / Off / Keep */}
+                            <div className="flex items-stretch shrink-0 border border-white/10 rounded-[2px] overflow-hidden">
+                              {[
+                                { id: 'on', label: 'On' },
+                                { id: 'off', label: 'Off' },
+                                { id: 'keep', label: 'Keep' },
+                              ].map(({ id, label: btnLabel }) => (
+                                <button
+                                  key={id}
+                                  type="button"
+                                  onClick={() => setBulkStaged((prev) => ({ ...prev, [key]: id }))}
+                                  aria-pressed={staged === id}
+                                  className={`px-2 h-6 type-mono text-[9px] uppercase tracking-[0.08em] border-r border-white/[0.06] last:border-r-0 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[oklch(74%_0.175_62)]/55 focus-visible:ring-inset ${
+                                    staged === id
+                                      ? id === 'on'
+                                          ? 'bg-[oklch(74%_0.175_62)]/20 text-[oklch(82%_0.16_68)]'
+                                          : id === 'off'
+                                              ? 'bg-[oklch(62%_0.22_25)]/15 text-[oklch(78%_0.2_25)]'
+                                              : 'bg-white/[0.08] text-zinc-300'
+                                      : 'text-zinc-600 hover:text-zinc-300 hover:bg-white/[0.03]'
+                                  }`}
+                                  title={
+                                    id === 'on' ? `Stage: turn ${label} ON` :
+                                    id === 'off' ? `Stage: turn ${label} OFF` :
+                                    `Keep current ${label} state unchanged`
+                                  }
+                                >
+                                  {btnLabel}
+                                </button>
+                              ))}
                             </div>
                           </div>
-                          <div className="flex items-center gap-1 shrink-0">
+                          {styleOpener && (
                             <button
                               type="button"
-                              onClick={() => bulkSetToggle(key, true)}
-                              className="px-2 h-6 rounded-[2px] border border-[oklch(74%_0.175_62)]/40 hover:border-[oklch(74%_0.175_62)]/80 hover:bg-[oklch(74%_0.175_62)]/12 text-[oklch(82%_0.16_68)] type-mono text-[9px] uppercase tracking-[0.1em] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/50"
-                              title={`Turn ${label} ON for all selected clips`}
+                              onClick={styleOpener}
+                              className="ml-5 text-[9px] font-mono uppercase tracking-[0.1em] text-zinc-500 hover:text-[oklch(82%_0.16_68)] transition-colors underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/50 rounded-[2px]"
+                              title={`Open the ${label} style editor and apply to all selected clips on save`}
                             >
-                              On
+                              Edit style → apply immediately to {String(selectedClips.length).padStart(2, '0')}
                             </button>
-                            <button
-                              type="button"
-                              onClick={() => bulkSetToggle(key, false)}
-                              className="px-2 h-6 rounded-[2px] border border-white/10 hover:border-white/25 text-zinc-500 hover:text-zinc-200 type-mono text-[9px] uppercase tracking-[0.1em] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30"
-                              title={`Turn ${label} OFF for all selected clips`}
-                            >
-                              Off
-                            </button>
-                          </div>
+                          )}
                         </div>
-                        {styleOpener && (
-                          <button
-                            type="button"
-                            onClick={styleOpener}
-                            className="ml-5 text-[9px] font-mono uppercase tracking-[0.1em] text-zinc-500 hover:text-[oklch(82%_0.16_68)] transition-colors underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/50 rounded-[2px]"
-                            title={`Open the ${label} style editor and apply to all selected clips on save`}
-                          >
-                            Edit style → apply to {String(selectedClips.length).padStart(2, '0')}
-                          </button>
-                        )}
-                      </div>
-                    ))}
-                    <div className="border-t border-white/5 pt-2 text-[9px] text-zinc-600 leading-snug">
-                      On/Off flips the layer for every selected clip. Use
-                      'Edit style' to open the hook or subtitle editor and
-                      apply the chosen preset, font, colors and position
-                      to all selected clips in one save.
+                      );
+                    })}
+                    <div className="border-t border-white/5 pt-2.5 flex items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => { resetBulkStaged(); setBulkEditOpen(false); }}
+                        className="px-2.5 h-7 rounded-[2px] border border-white/10 hover:border-white/25 text-zinc-500 hover:text-zinc-200 type-mono text-[9px] uppercase tracking-[0.1em] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={applyBulkStaged}
+                        disabled={bulkStagedCount === 0}
+                        className="flex items-center gap-1.5 px-3 h-7 rounded-[2px] bg-[oklch(74%_0.175_62)] hover:bg-[oklch(78%_0.175_65)] disabled:bg-[oklch(74%_0.175_62)]/30 text-[oklch(12%_0.01_260)] type-mono text-[9px] uppercase tracking-[0.1em] font-semibold border border-[oklch(70%_0.18_62)] disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]"
+                        title={bulkStagedCount === 0 ? 'Stage at least one change' : `Apply ${bulkStagedCount} staged change(s) to ${selectedClips.length} clip(s)`}
+                      >
+                        Apply&nbsp;<span className="tabular-nums">{String(bulkStagedCount).padStart(2, '0')}</span>
+                      </button>
                     </div>
                   </div>
                 )}
