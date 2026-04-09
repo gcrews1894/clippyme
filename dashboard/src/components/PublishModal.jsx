@@ -23,10 +23,35 @@ export default function PublishModal({
     composeBeforePublish = null,
     onPublished = null,
 }) {
+    // Helpers — build YYYY-MM-DD for today and a datetime-local string
+    // for tomorrow at 09:00 (the default pre-fill when the user switches
+    // to "Pick time"). Both are computed in LOCAL time so the DOM inputs
+    // consume them without TZ offset drift.
+    const todayISO = () => {
+        const d = new Date();
+        const o = d.getTimezoneOffset();
+        return new Date(d.getTime() - o * 60_000).toISOString().slice(0, 10);
+    };
+    const tomorrowAt9LocalISO = () => {
+        const d = new Date();
+        d.setDate(d.getDate() + 1);
+        d.setHours(9, 0, 0, 0);
+        const o = d.getTimezoneOffset();
+        return new Date(d.getTime() - o * 60_000).toISOString().slice(0, 16);
+    };
+
     const [title, setTitle] = useState(defaultTitle);
     const [caption, setCaption] = useState(defaultCaption);
     const [scheduleMode, setScheduleMode] = useState('now');
-    const [manualDateTime, setManualDateTime] = useState('');
+    // Auto mode now accepts an explicit start day (defaults to today).
+    // The backend SmartScheduler will find the best slot within that
+    // day's prime-time windows, avoiding collisions with posts already
+    // scheduled for that day.
+    const [autoStartDate, setAutoStartDate] = useState(todayISO());
+    // Manual mode pre-fills with tomorrow @ 09:00 local — the user can
+    // tweak it to whatever they want, but they don't have to type the
+    // full ISO string from scratch anymore.
+    const [manualDateTime, setManualDateTime] = useState(tomorrowAt9LocalISO());
     const [enabled, setEnabled] = useState({ tiktok: true, instagram: true, youtube: true });
     const [zernioConfig, setZernioConfig] = useState(null);
     const [publishing, setPublishing] = useState(false);
@@ -36,11 +61,17 @@ export default function PublishModal({
         if (!isOpen) return;
         setTitle(defaultTitle);
         setCaption(defaultCaption);
+        // Reset the schedule pickers to fresh defaults every time the
+        // modal re-opens, so the user never ends up with a stale date
+        // from a previous session.
+        setAutoStartDate(todayISO());
+        setManualDateTime(tomorrowAt9LocalISO());
         setResult(null);
         fetch(getApiUrl('/api/config/zernio'))
             .then((r) => r.ok ? r.json() : null)
             .then(setZernioConfig)
             .catch(() => setZernioConfig(null));
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isOpen, defaultTitle, defaultCaption]);
 
     if (!isOpen) return null;
@@ -142,6 +173,13 @@ export default function PublishModal({
         if (scheduleMode === 'manual') {
             // ISO 8601 from datetime-local input (no timezone offset → backend treats it as local)
             body.scheduled_for = new Date(manualDateTime).toISOString();
+        } else if (scheduleMode === 'auto' && autoStartDate) {
+            // Auto slot: tell the SmartScheduler which day to start from.
+            // Backend will pick the best time within the day's prime-time
+            // windows, bumping to tomorrow automatically if the picked
+            // day is already too far into the night to fit a legitimate
+            // slot (handled by publish_clip in social_publisher.py).
+            body.start_date = autoStartDate;
         }
         if (composeBeforePublish) {
             body.compose_first = true;
@@ -320,9 +358,21 @@ export default function PublishModal({
                             />
                         )}
                         {scheduleMode === 'auto' && (
-                            <p className="text-[10px] text-zinc-600">
-                                A smart scheduler will pick the next optimal slot today (or tomorrow if it's late) avoiding collisions with your other scheduled posts.
-                            </p>
+                            <div className="space-y-1.5 mt-2">
+                                <label className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">
+                                    Start day for the smart slot
+                                </label>
+                                <input
+                                    type="date"
+                                    value={autoStartDate}
+                                    min={todayISO()}
+                                    onChange={(e) => setAutoStartDate(e.target.value)}
+                                    className="w-full bg-white/[0.03] border border-white/5 rounded-[3px] px-3 py-2 text-xs text-white focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                                />
+                                <p className="text-[10px] text-zinc-600 leading-snug">
+                                    Defaults to today. The smart scheduler picks the optimal slot within that day's prime-time windows, avoiding collisions with your other scheduled posts. If today is already past the prime-time cutoff, it bumps to the next day automatically.
+                                </p>
+                            </div>
                         )}
                     </div>
 
