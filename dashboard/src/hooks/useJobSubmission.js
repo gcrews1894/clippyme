@@ -14,6 +14,10 @@ export function useJobSubmission({
   setProcessingMedia,
   setPreselections,
   setJobId,
+  // Optional: called when a batch run hits every job's terminal
+  // state. Lets the parent auto-navigate (e.g. to History) without
+  // coupling this hook to a tab state machine.
+  onBatchFinished,
 }) {
   const handleProcess = async (data) => {
     if (!apiKey) {
@@ -83,6 +87,26 @@ export function useJobSubmission({
         return;
       }
 
+      // Seed processingMedia so the Create tab's ProcessingView shows a
+      // batch-aware header instead of the generic "no media" placeholder.
+      // We stuff the first URL (or filename) as the label and attach the
+      // full job list so the ProcessingView can render a per-job progress
+      // strip if it wants to in the future.
+      try {
+        setProcessingMedia({
+          type: 'batch',
+          payload: urls[0] || files[0]?.name || `${allJobIds.length} jobs`,
+          batch: {
+            jobIds: allJobIds,
+            total: allJobIds.length,
+            urls: urls.length,
+            files: files.length,
+          },
+        });
+      } catch {
+        /* ignore — processingMedia is cosmetic for the live view */
+      }
+
       // 3. Unified polling: track each job_id individually until all done.
       //    We also stream the tail of each job's log buffer so the Live Logs
       //    panel actually advances while the backend is busy.
@@ -146,6 +170,22 @@ export function useJobSubmission({
             ...l,
             `Batch complete! ${succeeded} succeeded, ${failed} failed.`,
           ]);
+          // Notify the parent so it can route the user to the History
+          // tab (where the per-job viewer lives). The parent receives
+          // the full job id list + counts so it can show a toast or
+          // pre-seed the history filter if it wants to.
+          if (typeof onBatchFinished === 'function') {
+            try {
+              onBatchFinished({
+                jobIds: allJobIds,
+                succeeded,
+                failed,
+                total,
+              });
+            } catch (err) {
+              console.warn('onBatchFinished callback threw:', err);
+            }
+          }
         }
       }, 2000);
     } catch (e) {

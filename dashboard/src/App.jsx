@@ -164,6 +164,23 @@ function App() {
     setProcessingMedia,
     setPreselections,
     setJobId,
+    // When a batch run finishes, land the user in the History tab
+    // (the list view, since there's no single jobId to open inline)
+    // and surface a toast summarising the outcome. This matches the
+    // single-job flow where onCompleted auto-switches on completion.
+    onBatchFinished: ({ succeeded, failed, total }) => {
+      setActiveTab('history');
+      // Lightweight toast via window.dispatchEvent so we don't have
+      // to import sonner up here; App.jsx already renders <Toaster />
+      // and HistoryTab / ResultsGrid use toast() directly.
+      import('sonner').then(({ toast }) => {
+        if (failed === 0) {
+          toast.success(`Batch complete — ${succeeded} / ${total} jobs finished`);
+        } else {
+          toast.warning(`Batch finished with errors — ${succeeded} ok / ${failed} failed (${total} total)`);
+        }
+      }).catch(() => { /* silent */ });
+    },
   });
 
   const handleReset = (skipConfirm = false) => {
