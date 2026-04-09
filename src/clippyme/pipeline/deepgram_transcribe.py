@@ -138,7 +138,10 @@ def _build_params(model: str, language: str) -> list[tuple[str, str]]:
         ("utterances", "true"),
         ("numerals", "true"),        # "one hundred" → "100" — cleaner Gemini prompts
         ("measurements", "true"),    # "five meters" → "5 m"
-        ("diarize", "false"),        # speaker diarization not needed for reframing
+        # Speaker diarization — free add-on on Nova-3, lets Gemini reason
+        # about speaker alternation and clip boundaries, and lets the
+        # subtitle writer color-code turns. Opt-out via DEEPGRAM_DIARIZE=false.
+        ("diarize", os.getenv("DEEPGRAM_DIARIZE", "true").lower()),
         ("profanity_filter", "false"),
     ]
     if language:
@@ -198,12 +201,21 @@ def _detected_language(payload: dict[str, Any]) -> str:
 
 
 def _word_to_pipeline(word: dict[str, Any]) -> dict[str, Any]:
-    return {
+    out = {
         "word": word.get("punctuated_word") or word.get("word") or "",
         "start": float(word.get("start", 0.0)),
         "end": float(word.get("end", 0.0)),
         "probability": float(word.get("confidence", 1.0)),
     }
+    # Propagate diarization label when Deepgram emits one (0-indexed int).
+    # Whisper fallback path never sets this, so downstream code treats
+    # `speaker` as optional.
+    if "speaker" in word:
+        try:
+            out["speaker"] = int(word["speaker"])
+        except (TypeError, ValueError):
+            pass
+    return out
 
 
 def _segments_from_utterances(payload: dict[str, Any]) -> list[dict[str, Any]] | None:
@@ -213,14 +225,32 @@ def _segments_from_utterances(payload: dict[str, Any]) -> list[dict[str, Any]] |
     segments: list[dict[str, Any]] = []
     for utt in utterances:
         words = utt.get("words") or []
-        segments.append(
-            {
-                "text": (utt.get("transcript") or "").strip(),
-                "start": float(utt.get("start", 0.0)),
-                "end": float(utt.get("end", 0.0)),
-                "words": [_word_to_pipeline(w) for w in words],
-            }
-        )
+        seg: dict[str, Any] = {
+            "text": (utt.get("transcript") or "").strip(),
+            "start": float(utt.get("start", 0.0)),
+            "end": float(utt.get("end", 0.0)),
+            "words": [_word_to_pipeline(w) for w in words],
+        }
+        # Deepgram attaches `speaker` on the utterance when diarize=true.
+        # Fall back to the majority speaker of the words if not present.
+        if "speaker" in utt:
+            try:
+                seg["speaker"] = int(utt["speaker"])
+            except (TypeError, ValueError):
+                pass
+        elif any("speaker" in w for w in words):
+            counts: dict[int, int] = {}
+            for w in words:
+                sp = w.get("speaker")
+                if sp is None:
+                    continue
+                try:
+                    counts[int(sp)] = counts.get(int(sp), 0) + 1
+                except (TypeError, ValueError):
+                    continue
+            if counts:
+                seg["speaker"] = max(counts, key=counts.get)
+        segments.append(seg)
     return segments
 
 
@@ -408,10 +438,25 @@ def transcribe_with_deepgram(video_path: str) -> dict[str, Any]:
 
     speedup = (float(duration) / elapsed) if elapsed > 0 and duration else 0.0
     speed_note = f" ({speedup:.1f}× realtime)" if speedup else ""
+
+    # Count distinct speakers across all segments for observability + to
+    # let the caller short-circuit the speaker-aware Gemini hints when
+    # only one voice is present.
+    speakers_seen: set[int] = set()
+    for seg in segments:
+        if "speaker" in seg:
+            speakers_seen.add(seg["speaker"])
+        for w in seg.get("words") or []:
+            if "speaker" in w:
+                speakers_seen.add(w["speaker"])
+    speaker_note = (
+        f", speakers={len(speakers_seen)}" if speakers_seen else ""
+    )
+
     print(
         f"   ✅ Deepgram OK — {len(segments)} segments, "
         f"audio={duration:.1f}s, wall={elapsed:.1f}s{speed_note}, "
-        f"lang='{language_detected}', request_id={request_id}"
+        f"lang='{language_detected}'{speaker_note}, request_id={request_id}"
     )
     logger.info(
         "Deepgram transcription done: request_id=%s audio_s=%.1f wall_s=%.1f segments=%d",

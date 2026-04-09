@@ -5,7 +5,7 @@ import subprocess
 import argparse
 import re
 import sys
-from scenedetect import VideoManager, SceneManager
+from scenedetect import open_video, SceneManager
 from scenedetect.detectors import ContentDetector
 from ultralytics import YOLO
 import torch
@@ -132,6 +132,18 @@ Score each axis from 1 to 20 and sum (cap at 100):
 - SELF_CONTAINED: makes sense without context from the rest of the video?
 - DENSITY: no dead air, no rambling, every second earns its place.
 
+## SPEAKER SIGNAL (when available)
+Each segment may carry a ``speaker`` integer (0, 1, 2…) from speaker
+diarization. When present, use it as a boundary hint:
+- Prefer cutting on speaker TURN CHANGES for dialogues / interviews — a
+  turn change is a natural editing beat and resets viewer attention.
+- For monologues, prefer clips where ONE speaker dominates (less context
+  switching = higher SELF_CONTAINED score).
+- Never start a clip mid-turn of speaker A if the hook actually belongs
+  to speaker B's next utterance.
+Diarization is optional — absence of ``speaker`` fields means single
+speaker or Whisper fallback path, score normally.
+
 ## HARD CONSTRAINTS (violating = clip REJECTED)
 - 15s ≤ duration ≤ 60s
 - start on a complete sentence boundary; end on a natural beat
@@ -141,7 +153,14 @@ Score each axis from 1 to 20 and sum (cap at 100):
 - Prefer starting 0.2–0.4s BEFORE the hook and ending 0.2–0.4s AFTER the payoff
 - Never cut in the middle of a word or phrase
 - viral_reason MUST be at least 20 characters and cite the specific hook, payoff or quote
-- viral_hook_text is REQUIRED, NEVER empty: 3-10 words, MUST be a literal phrase the speaker actually says inside the clip (or a tight paraphrase ≤10 words). It is the on-screen hook overlay — write it like a thumbnail caption.
+- viral_hook_text is REQUIRED, NEVER empty: 3-8 words, written AS A SCROLL-STOPPING OVERLAY — NOT a transcript quote, NOT the first words the speaker says. It is standalone copywriting designed to make someone stop scrolling on TikTok/Reels. Use one of these proven patterns:
+    * Curiosity gap: "Nessuno ti dice questo", "What they don't want you to know"
+    * POV / relatable: "POV: sei il primo a scoprirlo", "POV: you just realized…"
+    * Counter-intuitive claim: "Stavo sbagliando tutto", "I was doing it wrong"
+    * Direct question: "E se fosse tutto falso?", "What if you're wrong?"
+    * Number / stakes: "3 cose che nessuno dice", "3 things nobody tells you"
+    * Warning / callout: "Non guardare se…", "Stop scrolling if…"
+  The hook must TEASE the content of the clip without spoiling the payoff. Same language as the transcript. Title Case or Sentence case, never ALL CAPS.
 - No generic intros/outros or pure sponsorship unless they ARE the hook
 
 ## LANGUAGE RULE
@@ -151,12 +170,17 @@ Every text field (viral_reason, descriptions, titles, hook_text) MUST be in the 
 GOOD (score 87):
   start=12.340 end=37.900
   viral_reason="Opens with 'Everyone lies about this' — pattern-break hook, then delivers a counter-intuitive reveal with a clean payoff line at 34s viewers will quote."
-  viral_hook_text="Everyone lies about this"
+  viral_hook_text="The lie everyone believes"          ← teaser, NOT the literal opening line
 
 GOOD (score 78):
   start=102.500 end=148.200
   viral_reason="Builds tension with three failed attempts then lands a punchline at 140s — classic rule-of-three payoff structure perfect for Reels."
-  viral_hook_text="I tried 3 times before this worked"
+  viral_hook_text="I failed 3 times before this"      ← number + stakes, standalone overlay
+
+BAD hooks (DO NOT emit these — they literally echo the transcript):
+  "Hello everyone welcome back"          ← transcript intro, not a hook
+  "So today I wanted to talk about"      ← filler, no curiosity gap
+  "And then what happened next was"      ← mid-sentence fragment
 
 BAD (would score ~30 — DO NOT emit anything like this):
   viral_reason="Interesting point about the topic"   ← too generic, no hook, no payoff specified
@@ -196,7 +220,7 @@ Output schema:
       "video_description_for_tiktok": "<TikTok description with CTA>",
       "video_description_for_instagram": "<Instagram description with CTA>",
       "video_title_for_youtube_short": "<max 100 chars>",
-      "viral_hook_text": "<REQUIRED, 3-10 words, literal phrase from the clip, same language as transcript>"
+      "viral_hook_text": "<REQUIRED, 3-8 words, scroll-stopping overlay copy — NOT a transcript quote. Use curiosity gap, POV, counter-claim, question, number, or warning pattern. Same language as transcript.>"
     }}
   ]
 }}
@@ -756,15 +780,14 @@ def analyze_scenes_strategy(video_path, scenes):
     return strategies
 
 def detect_scenes(video_path):
-    video_manager = VideoManager([video_path])
+    # PySceneDetect v0.6+ API — VideoManager was removed. `open_video` returns
+    # a VideoStream that SceneManager consumes directly.
+    video = open_video(video_path)
     scene_manager = SceneManager()
     scene_manager.add_detector(ContentDetector())
-    video_manager.set_downscale_factor()
-    video_manager.start()
-    scene_manager.detect_scenes(frame_source=video_manager)
+    scene_manager.detect_scenes(video=video)
     scene_list = scene_manager.get_scene_list()
-    fps = video_manager.get_framerate()
-    video_manager.release()
+    fps = video.frame_rate
     return scene_list, fps
 
 def get_video_resolution(video_path):
@@ -820,7 +843,14 @@ def download_youtube_video(url, output_dir=".", cookies_file_path=None):
         'socket_timeout': 30,
         'retries': 10,
         'fragment_retries': 10,
-        'nocheckcertificate': True,
+        # SSL verification stays ON (security) — previously disabled. If a
+        # legitimate cert chain issue resurfaces in a sandbox, set the
+        # YTDLP_NOCHECKCERT=1 env var to opt out temporarily.
+        'nocheckcertificate': os.environ.get('YTDLP_NOCHECKCERT') == '1',
+        # Detect YouTube's per-fragment throttling and re-fetch the slow
+        # segment. Threshold is bytes/sec — 100 KB/s catches the 16-23h
+        # evening throttle window without tripping on legit slow networks.
+        'throttledratelimit': int(os.environ.get('YTDLP_THROTTLED_RATE', 100 * 1024)),
         'cachedir': False,
         'remote_components': ['ejs:github'],
         'http_headers': {
@@ -1304,6 +1334,162 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
     
     return True
 
+def _diarize_with_pyannote(audio_path: str) -> list[tuple[float, float, int]] | None:
+    """Run pyannote.audio speaker-diarization-3.1 on a local audio file.
+
+    Returns a list of ``(start, end, speaker_int)`` tuples in chronological
+    order, or ``None`` if diarization is disabled / unavailable / fails.
+
+    Gating:
+      - ``WHISPER_DIARIZE=false`` → skip entirely (fast path).
+      - pyannote.audio not installed → soft warning + skip (no crash).
+      - ``HUGGINGFACE_TOKEN`` missing → warning + skip (the model is gated).
+
+    This keeps pyannote as a fully optional dependency: users who want
+    speaker diarization on the Whisper path install it manually via
+    ``pip install pyannote.audio>=3.1`` and accept the
+    ``pyannote/speaker-diarization-3.1`` license on Hugging Face. The
+    rest of the pipeline keeps working with or without speakers.
+    """
+    if (os.getenv("WHISPER_DIARIZE") or "true").strip().lower() == "false":
+        return None
+
+    hf_token = (
+        os.getenv("HUGGINGFACE_TOKEN")
+        or os.getenv("HF_TOKEN")
+        or ""
+    ).strip()
+    if not hf_token:
+        print(
+            "   ⚠️  Whisper diarization skipped: HUGGINGFACE_TOKEN not set "
+            "(required to download pyannote/speaker-diarization-3.1)."
+        )
+        return None
+
+    try:
+        from pyannote.audio import Pipeline as _PyannotePipeline  # type: ignore
+    except ImportError:
+        print(
+            "   ⚠️  Whisper diarization skipped: pyannote.audio not installed. "
+            "Install with `pip install pyannote.audio>=3.1` and accept the "
+            "pyannote/speaker-diarization-3.1 license on Hugging Face."
+        )
+        return None
+
+    try:
+        print("   🗣️  Running pyannote speaker diarization (may take a while)…")
+        t0 = time.time()
+        pipeline = _PyannotePipeline.from_pretrained(
+            "pyannote/speaker-diarization-3.1",
+            use_auth_token=hf_token,
+        )
+        if CUDA_AVAILABLE:
+            try:
+                import torch  # type: ignore
+                pipeline.to(torch.device("cuda"))
+            except Exception:  # noqa: BLE001
+                pass
+        diarization = pipeline(audio_path)
+    except Exception as exc:  # noqa: BLE001 — any pyannote failure is non-fatal
+        print(f"   ⚠️  Whisper diarization failed ({exc}); continuing without speakers.")
+        return None
+
+    # Normalize pyannote output into (start, end, speaker_int) tuples.
+    # pyannote emits labels like "SPEAKER_00", "SPEAKER_01" — map to ints
+    # so the downstream shape matches Deepgram's.
+    label_to_int: dict[str, int] = {}
+    turns: list[tuple[float, float, int]] = []
+    for turn, _, label in diarization.itertracks(yield_label=True):
+        if label not in label_to_int:
+            label_to_int[label] = len(label_to_int)
+        turns.append((float(turn.start), float(turn.end), label_to_int[label]))
+    turns.sort(key=lambda t: t[0])
+
+    elapsed = time.time() - t0
+    n_speakers = len(label_to_int)
+    print(
+        f"   ✅ pyannote OK — {len(turns)} turns, {n_speakers} speakers, "
+        f"wall={elapsed:.1f}s"
+    )
+    return turns
+
+
+def _assign_speakers_to_words(
+    words: list[dict],
+    turns: list[tuple[float, float, int]],
+) -> None:
+    """Merge diarization turns into Whisper words by maximum overlap.
+
+    Mutates ``words`` in place, adding a ``speaker`` key where a matching
+    turn exists. Words that fall outside every turn (silence, non-speech)
+    are left untouched. Runs in O(n+m) thanks to the ordered walk.
+    """
+    if not words or not turns:
+        return
+    # Sort words by start (Whisper generally emits them ordered, but the
+    # cost is marginal and guarantees the two-pointer walk is correct).
+    words.sort(key=lambda w: float(w.get("start", 0.0)))
+
+    ti = 0
+    for w in words:
+        try:
+            ws = float(w.get("start", 0.0))
+            we = float(w.get("end", ws))
+        except (TypeError, ValueError):
+            continue
+
+        # Advance ti until the current turn could still overlap this word.
+        while ti < len(turns) and turns[ti][1] < ws:
+            ti += 1
+        if ti >= len(turns):
+            break
+
+        # Find the turn with the maximum overlap against [ws, we]. Because
+        # turns are sorted and mostly non-overlapping (diarization emits
+        # contiguous turns), at most 2-3 candidates need to be checked.
+        best_speaker: int | None = None
+        best_overlap = 0.0
+        j = ti
+        while j < len(turns) and turns[j][0] <= we:
+            ts, te, sp = turns[j]
+            overlap = max(0.0, min(te, we) - max(ts, ws))
+            if overlap > best_overlap:
+                best_overlap = overlap
+                best_speaker = sp
+            j += 1
+
+        if best_speaker is not None:
+            w["speaker"] = best_speaker
+
+
+def _extract_audio_to_wav(video_path: str) -> str | None:
+    """ffmpeg-extract a mono 16 kHz WAV next to the source video.
+
+    pyannote.audio needs a plain WAV (won't accept .mp4 directly), so we
+    produce a temp file and return its path. Returns ``None`` if ffmpeg
+    is missing or the extraction fails — caller should skip diarization.
+    """
+    out_path = os.path.join(
+        os.path.dirname(os.path.abspath(video_path)) or ".",
+        f".diarize_{int(time.time())}_{os.getpid()}.wav",
+    )
+    try:
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                "-i", video_path,
+                "-vn", "-ac", "1", "-ar", "16000",
+                "-c:a", "pcm_s16le",
+                out_path,
+            ],
+            check=True,
+        )
+        return out_path
+    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+        print(f"   ⚠️  Could not extract audio for diarization: {exc}")
+        return None
+
+
 def transcribe_video(video_path):
     """Dispatch to the configured transcription provider.
 
@@ -1313,6 +1499,12 @@ def transcribe_video(video_path):
 
     On Deepgram failure we automatically fall back to Faster-Whisper so a
     misconfigured key never breaks the pipeline.
+
+    Whisper path: after transcription, optionally runs pyannote speaker
+    diarization (if ``pyannote.audio`` is installed and a HF token is
+    available) and merges speaker labels into the word timestamps so the
+    downstream Gemini prompt + subtitle writer see the same ``speaker``
+    field as the Deepgram path.
     """
     provider = (os.getenv("TRANSCRIPTION_PROVIDER") or "deepgram").strip().lower()
     if provider == "deepgram":
@@ -1340,14 +1532,14 @@ def transcribe_video(video_path):
     for segment in segments:
         # Print progress to keep user informed (and prevent timeouts feeling)
         print(f"   [{segment.start:.2f}s -> {segment.end:.2f}s] {segment.text}")
-        
+
         seg_dict = {
             'text': segment.text,
             'start': segment.start,
             'end': segment.end,
             'words': []
         }
-        
+
         if segment.words:
             for word in segment.words:
                 seg_dict['words'].append({
@@ -1356,10 +1548,51 @@ def transcribe_video(video_path):
                     'end': word.end,
                     'probability': word.probability
                 })
-        
+
         transcript_segments.append(seg_dict)
         full_text += segment.text + " "
-        
+
+    # --- Optional speaker diarization (pyannote.audio) ------------------
+    # Runs only when pyannote is installed AND HF token is set AND
+    # WHISPER_DIARIZE != "false". Short-circuit BEFORE extracting audio
+    # so we don't pay the ffmpeg cost when diarization is disabled.
+    wav_tmp: str | None = None
+    diarize_enabled = (
+        (os.getenv("WHISPER_DIARIZE") or "true").strip().lower() != "false"
+        and bool((os.getenv("HUGGINGFACE_TOKEN") or os.getenv("HF_TOKEN") or "").strip())
+    )
+    try:
+        if diarize_enabled:
+            wav_tmp = _extract_audio_to_wav(video_path)
+        if wav_tmp:
+            turns = _diarize_with_pyannote(wav_tmp)
+            if turns:
+                # Flatten words, merge speakers, then distribute back to
+                # their parent segments via majority vote.
+                flat_words: list[dict] = []
+                for seg in transcript_segments:
+                    flat_words.extend(seg.get("words") or [])
+                _assign_speakers_to_words(flat_words, turns)
+
+                for seg in transcript_segments:
+                    counts: dict[int, int] = {}
+                    for w in seg.get("words") or []:
+                        sp = w.get("speaker")
+                        if sp is None:
+                            continue
+                        counts[sp] = counts.get(sp, 0) + 1
+                    if counts:
+                        seg["speaker"] = max(counts, key=counts.get)
+
+                speakers_seen = {sp for _, _, sp in turns}
+                print(f"   🗣️  Whisper transcript enriched with {len(speakers_seen)} speaker label(s).")
+    finally:
+        if wav_tmp and os.path.exists(wav_tmp):
+            try:
+                os.remove(wav_tmp)
+            except OSError:
+                pass
+
     return {
         'text': full_text.strip(),
         'segments': transcript_segments,
@@ -1595,8 +1828,22 @@ if __name__ == '__main__':
                         help='Skip download/analysis/cutting: take --input (an existing 16:9 '
                              'source slice) and re-run reframing + zoom/normalize/cover only. '
                              'Used by POST /api/reframe to switch modes on an already-generated clip.')
+    parser.add_argument('--language', type=str, default=None,
+                        help="Override ASR language for this job (e.g. 'en', 'it', 'es', 'multi'). "
+                             "When unset, Deepgram uses DEEPGRAM_LANGUAGE from env (default 'multi' "
+                             "for native EN+IT code-switching). Single-language mode improves both "
+                             "transcription accuracy AND speaker diarization reliability.")
 
     args = parser.parse_args()
+
+    # Per-job language override — propagate to the env BEFORE any transcription
+    # call so deepgram_transcribe.transcribe_with_deepgram reads the user's
+    # choice (it reads DEEPGRAM_LANGUAGE at call time). Also used to hint the
+    # Whisper fallback path via faster-whisper's auto-detect being bypassed.
+    if args.language:
+        os.environ["DEEPGRAM_LANGUAGE"] = args.language
+        os.environ["CLIPPYME_LANGUAGE"] = args.language
+        print(f"🌐  Language override: {args.language} (overrides default 'multi')")
 
     # --- Reframe-only fast path: reuse an existing 16:9 slice ----------------
     if args.reframe_only:

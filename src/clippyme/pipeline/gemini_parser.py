@@ -263,74 +263,42 @@ def backfill_hook_text(
 ) -> List[Dict[str, Any]]:
     """Ensure EVERY clip has a non-empty ``viral_hook_text``.
 
+    IMPORTANT: The hook is designed to be a SCROLL-STOPPING overlay, not
+    a transcript echo. The prompt in ``main.py`` explicitly forbids quoting
+    the first spoken words, so this backfill also does NOT fall back to
+    transcript words — doing so would reintroduce the exact bug the new
+    prompt is meant to fix.
+
     Strategy (first success wins):
-      1. Keep Gemini's hook if non-empty (normalized + truncated to 10 words).
-      2. Use the first ~10 transcript words inside the clip window.
-      3. Widen the window by ±1s (handles off-by-one boundary cases).
-      4. Fall back to the YouTube title (truncated).
-      5. Hard-coded ``"Watch this"`` so the field is never empty.
+      1. Keep Gemini's hook if non-empty (normalized + truncated to 8 words).
+      2. Derive a teaser-style hook from the YouTube title if present.
+      3. Use ``fallback_title`` (source title) similarly truncated.
+      4. Hard-coded generic teaser so the field is never empty.
+
+    The ``words`` parameter is kept for backward compatibility with
+    callers in ``main.py`` and ``job_results.py``; it is intentionally
+    unused.
 
     This function is idempotent and mutates each clip dict in place,
-    returning the same list for convenience. It's safe to call on
-    clips loaded from an old metadata.json that predate the viral_hook_text
-    schema field.
-
-    Parameters
-    ----------
-    clips:
-        List of clip dicts (Pydantic-dumped or loaded from metadata.json).
-    words:
-        Transcript word objects ``{"w": str, "s": float, "e": float}``.
-        Pass ``[]`` if the transcript isn't available — the function
-        still honors title and hard-coded fallbacks.
-    fallback_title:
-        Last-resort text (typically the YouTube/source title). Only used
-        if both the Gemini hook and the transcript-window lookup fail.
+    returning the same list for convenience.
     """
-    safe_words = words or []
+    del words  # unused — see docstring
 
     for clip in clips:
-        existing = _truncate_words(clip.get("viral_hook_text") or "", 10)
+        existing = _truncate_words(clip.get("viral_hook_text") or "", 8)
         if existing:
             clip["viral_hook_text"] = existing
             continue
 
-        try:
-            cs = float(clip.get("start", 0.0) or 0.0)
-            ce = float(clip.get("end", 0.0) or 0.0)
-        except (TypeError, ValueError):
-            cs, ce = 0.0, 0.0
-
-        def _hook_in_window(lo: float, hi: float) -> str:
-            picked = []
-            for w in safe_words:
-                try:
-                    s = float(w.get("s", 0.0))
-                except (TypeError, ValueError):
-                    continue
-                if lo <= s < hi:
-                    picked.append(str(w.get("w", "")))
-                    if len(picked) >= 10:
-                        break
-            return " ".join(p for p in picked if p).strip()
-
-        hook = _hook_in_window(cs, ce)
-        if not hook:
-            hook = _hook_in_window(cs - 1.0, ce + 1.0)
-
-        if hook:
-            clip["viral_hook_text"] = _truncate_words(hook, 10)
-            continue
-
         title_hook = _truncate_words(
             clip.get("video_title_for_youtube_short", "") or fallback_title,
-            10,
+            8,
         )
         if title_hook:
             clip["viral_hook_text"] = title_hook
             continue
 
-        clip["viral_hook_text"] = "Watch this"
+        clip["viral_hook_text"] = "You need to see this"
 
     return clips
 

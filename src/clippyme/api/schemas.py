@@ -12,6 +12,12 @@ class BatchRequest(BaseModel):
     urls: List[str] = Field(..., min_length=1, max_length=20)
     instructions: Optional[str] = Field(None, max_length=2000)
     reframe_mode: Optional[str] = Field(None, pattern=r"^(auto|disabled)$")
+    # Optional per-batch ASR language override. When omitted the pipeline
+    # uses its default (Deepgram `multi` for EN+IT code-switching). Setting
+    # this to a single-language code ("en", "it", "es", …) improves both
+    # transcription accuracy AND speaker diarization reliability on audio
+    # that isn't actually multilingual.
+    language: Optional[str] = Field(None, max_length=16)
 
 
 class ConfigUpdateRequest(BaseModel):

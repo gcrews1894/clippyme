@@ -8,6 +8,17 @@ import os
 ALLOWED_REFRAME_MODES = frozenset({"auto", "disabled"})
 MAX_INSTRUCTIONS_LEN = 2000
 
+# Languages we explicitly allow the frontend to request for Deepgram.
+# Keep this aligned with Nova-3's supported single-language codes:
+# https://developers.deepgram.com/docs/models-languages-overview
+# ``multi`` stays the default — the language override is OPT-IN per job.
+ALLOWED_LANGUAGES = frozenset({
+    "multi", "auto",
+    "en", "it", "es", "fr", "de", "pt", "nl", "hi", "ja", "ru",
+    "pl", "tr", "sv", "da", "nb", "fi", "cs", "uk", "el", "ko", "zh",
+    "en-US", "en-GB", "es-ES", "es-419", "pt-BR", "pt-PT", "fr-CA",
+})
+
 
 def build_main_cmd(
     *,
@@ -17,12 +28,17 @@ def build_main_cmd(
     instructions: str | None = None,
     reframe_mode: str | None = None,
     cookies_path: str | None = None,
+    language: str | None = None,
 ) -> list[str]:
     """Build a `python -u -m clippyme.pipeline.main ...` command line for a single processing job."""
     if reframe_mode is not None and reframe_mode not in ALLOWED_REFRAME_MODES:
         raise ValueError(f"invalid reframe_mode: {reframe_mode!r}")
     if instructions is not None and len(instructions) > MAX_INSTRUCTIONS_LEN:
         raise ValueError(f"instructions too long (>{MAX_INSTRUCTIONS_LEN} chars)")
+    if language is not None:
+        lang_norm = language.strip()
+        if lang_norm and lang_norm not in ALLOWED_LANGUAGES:
+            raise ValueError(f"unsupported language: {language!r}")
 
     # Reject argv-injection attempts: any value starting with "-" would
     # be interpreted as a new flag by argparse. yt-dlp URLs and uploaded
@@ -44,6 +60,8 @@ def build_main_cmd(
         cmd.extend(["--instructions", instructions])
     if reframe_mode and reframe_mode != "auto":
         cmd.extend(["--reframe-mode", reframe_mode])
+    if language and language.strip() and language.strip() != "multi":
+        cmd.extend(["--language", language.strip()])
     return cmd
 
 

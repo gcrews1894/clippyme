@@ -221,17 +221,20 @@ async def process_endpoint(
     # Handle JSON body manually for URL payload
     instructions = None
     reframe_mode = None
+    language = None
     content_type = request.headers.get("content-type", "")
     if "application/json" in content_type:
         body = await request.json()
         url = body.get("url")
         instructions = body.get("instructions")
         reframe_mode = body.get("reframe_mode")
+        language = body.get("language")
 
-    # For multipart/form-data uploads, extract reframe_mode from form fields
+    # For multipart/form-data uploads, extract reframe_mode + language from form fields
     if "multipart/form-data" in content_type:
         form = await request.form()
         reframe_mode = form.get("reframe_mode", reframe_mode)
+        language = form.get("language", language)
 
     if not url and not file:
         raise HTTPException(status_code=400, detail="Must provide URL or File")
@@ -262,14 +265,18 @@ async def process_endpoint(
                     raise HTTPException(status_code=413, detail=f"File too large. Max size {MAX_FILE_SIZE_MB}MB")
                 buffer.write(content)
 
-    cmd = build_main_cmd(
-        url=url,
-        input_path=input_path,
-        output_dir=job_output_dir,
-        instructions=instructions,
-        reframe_mode=reframe_mode,
-        cookies_path=os.path.join("data", "cookies.txt"),
-    )
+    try:
+        cmd = build_main_cmd(
+            url=url,
+            input_path=input_path,
+            output_dir=job_output_dir,
+            instructions=instructions,
+            reframe_mode=reframe_mode,
+            cookies_path=os.path.join("data", "cookies.txt"),
+            language=language,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
     # Enqueue Job
     jobs[job_id] = {
@@ -308,12 +315,16 @@ async def batch_process(req: BatchRequest, request: Request):
         job_output_dir = os.path.join(OUTPUT_DIR, job_id)
         os.makedirs(job_output_dir, exist_ok=True)
 
-        cmd = build_main_cmd(
-            url=url,
-            output_dir=job_output_dir,
-            instructions=req.instructions,
-            reframe_mode=req.reframe_mode,
-        )
+        try:
+            cmd = build_main_cmd(
+                url=url,
+                output_dir=job_output_dir,
+                instructions=req.instructions,
+                reframe_mode=req.reframe_mode,
+                language=getattr(req, "language", None),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
 
         env = os.environ.copy()
         env["GEMINI_API_KEY"] = api_key
