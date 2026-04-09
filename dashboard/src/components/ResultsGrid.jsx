@@ -261,11 +261,14 @@ export default function ResultsGrid({
         </div>
       </header>
 
-      {processingMedia && (
+      {/* Source preview — ONLY rendered while the job is still live
+          (processing / error with partial results). Once status becomes
+          'complete', the user is in the history viewer and wants the
+          clip grid; a big player of the original 1h video is just
+          noise, so we skip the section entirely instead of collapsing
+          it. */}
+      {processingMedia && status !== 'complete' && (
         <div className="rounded-[3px] bg-[oklch(9%_0.006_260)] border border-white/5 overflow-hidden">
-          {/* Collapsible source-preview. When the job is done the user
-              wants the clip grid, not a big player of the original video,
-              so we default to collapsed on completion. */}
           <button
             type="button"
             onClick={() => setSourcePreviewOpen((v) => !v)}
@@ -275,7 +278,7 @@ export default function ResultsGrid({
             <span className="type-label flex items-center gap-2.5">
               Source preview
               <span className="type-mono text-[10px] text-zinc-600 normal-case tracking-normal">
-                {status === 'complete' ? 'Job complete' : 'Live'}
+                Live
               </span>
             </span>
             {sourcePreviewOpen ? (
@@ -288,7 +291,7 @@ export default function ResultsGrid({
             <div className="border-t border-white/5 p-4">
               <ProcessingAnimation
                 media={processingMedia}
-                isComplete={status === 'complete'}
+                isComplete={false}
                 syncedTime={syncedTime}
                 isSyncedPlaying={isSyncedPlaying}
                 syncTrigger={syncTrigger}
