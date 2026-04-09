@@ -304,12 +304,23 @@ export default function ResultsGrid({
             <div className="flex items-center gap-2 type-label text-zinc-500">
               <button
                 type="button"
-                onClick={stats.selected === clipCount ? deselectAll : selectAll}
-                className="flex items-center gap-1.5 px-2.5 h-8 rounded-[3px] border border-white/10 hover:border-white/25 text-zinc-300 hover:text-white type-mono text-[10px] uppercase tracking-[0.12em] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/50"
-                title={stats.selected === clipCount ? 'Deselect all clips' : 'Select all clips'}
+                onClick={selectAll}
+                disabled={stats.selected === clipCount}
+                className="flex items-center gap-1.5 px-2.5 h-8 rounded-[3px] border border-white/10 hover:border-white/25 text-zinc-300 hover:text-white type-mono text-[10px] uppercase tracking-[0.12em] transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/50"
+                title={stats.selected === clipCount ? 'All clips are already selected' : 'Select every visible clip'}
               >
-                {stats.selected === clipCount ? <CheckSquare size={11} strokeWidth={2.2} /> : <Square size={11} strokeWidth={2.2} />}
-                {stats.selected === clipCount ? 'Deselect\u00a0all' : 'Select\u00a0all'}
+                <CheckSquare size={11} strokeWidth={2.2} />
+                Select&nbsp;all
+              </button>
+              <button
+                type="button"
+                onClick={deselectAll}
+                disabled={stats.selected === 0}
+                className="flex items-center gap-1.5 px-2.5 h-8 rounded-[3px] border border-white/10 hover:border-white/25 text-zinc-300 hover:text-white type-mono text-[10px] uppercase tracking-[0.12em] transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/50"
+                title={stats.selected === 0 ? 'Nothing is currently selected' : 'Clear all selection'}
+              >
+                <Square size={11} strokeWidth={2.2} />
+                Deselect&nbsp;all
               </button>
               <span className="text-zinc-700 ml-1 tabular-nums">
                 {String(stats.selected).padStart(2, '0')}
