@@ -987,7 +987,7 @@ def normalize_audio(video_path):
         analyze_cmd = [
             'ffmpeg', '-y', '-i', video_path,
             '-af', 'loudnorm=I=-14:TP=-1.5:LRA=7:print_format=json',
-            '-f', 'null', '/dev/null'
+            '-f', 'null', os.devnull
         ]
         result = subprocess.run(analyze_cmd, capture_output=True, text=True)
         # Parse measured values from stderr (loudnorm outputs JSON at the end)
