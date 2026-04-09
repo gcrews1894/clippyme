@@ -13,7 +13,7 @@ import { getApiUrl } from '../config';
  *   clips: Array<{ clip: object, originalIndex: number }>  (already filtered)
  *   onPublished: (originalIndex) => void
  */
-export default function BatchPublishModal({ isOpen, onClose, jobId, clips, clipStates = {}, onPublished }) {
+export default function BatchPublishModal({ isOpen, onClose, jobId, clips, clipStates = {}, preselections = null, onPublished }) {
     const [zernioConfig, setZernioConfig] = useState(null);
     const [scheduleMode, setScheduleMode] = useState('auto');
     // Start date for auto slots — defaults to today (local YYYY-MM-DD).
@@ -188,11 +188,53 @@ export default function BatchPublishModal({ isOpen, onClose, jobId, clips, clipS
             // runs the Smart Cut → Hook → Subtitles pipeline before upload.
             // Without this the batch path uploaded the raw base clip,
             // ignoring every toggle the user had turned on.
+            //
+            // Race-proof fallback: the ResultCard seeds clipStates from
+            // preselections on mount via a useEffect, but useClipStates
+            // loads from localStorage in a SEPARATE effect driven by
+            // jobId change. The two can race on history restore — if
+            // BatchPublishModal opens before the seed has settled, the
+            // persisted clipState.toggles may still be undefined, and
+            // the old code would send an empty body. Fix: if toggles is
+            // missing, fall back to a fresh seed built from preselections
+            // (same shape as ResultCard.defaultToggles). This works for
+            // both 'brand new job just finished' and 'job restored from
+            // history' paths without relying on React timing.
             const clipState = clipStates[originalIndex] || {};
-            const toggles = clipState.toggles || {};
+            const seededToggles = {
+                smartcut: !!preselections?.smartcut,
+                hook: !!preselections?.hook,
+                subtitles: !!preselections?.subtitles,
+            };
+            const toggles = clipState.toggles ?? seededToggles;
             const anyToggleActive = Object.values(toggles).some(Boolean);
-            const hookParams = clipState.hookParams || {};
-            const subtitleParams = clipState.subtitleParams || {};
+
+            // Same race-proof fallback for hook/subtitle params — use
+            // the persisted values if present, otherwise reconstruct from
+            // preselections (mirroring ResultCard's default*Params).
+            const seededHookParams = {
+                text: clip.viral_hook_text || clip.hook_text || '',
+                position: preselections?.hook?.position || 'top',
+                size: preselections?.hook?.size || 'S',
+                offset_y: 0,
+            };
+            const seededSubtitleParams = {
+                preset: preselections?.subtitles?.preset || 'classic_white',
+                mode: preselections?.subtitles?.mode || 'karaoke',
+                display_mode: 'word_group',
+                highlight_color: null,
+                font: preselections?.subtitles?.font || 'Montserrat-Black',
+                uppercase: true,
+                offset_y: 0,
+                font_color: preselections?.subtitles?.font_color || '#FFFFFF',
+                position: preselections?.subtitles?.position || 'bottom',
+                border_color: preselections?.subtitles?.border_color || '#000000',
+                border_width: preselections?.subtitles?.border_width ?? 2,
+                bg_color: preselections?.subtitles?.bg_color || '#000000',
+                bg_opacity: preselections?.subtitles?.bg_opacity ?? 0,
+            };
+            const hookParams = clipState.hookParams ?? seededHookParams;
+            const subtitleParams = clipState.subtitleParams ?? seededSubtitleParams;
 
             const titleText = (clip.video_title_for_youtube_short || `Clip ${originalIndex + 1}`).slice(0, 100);
             const captionText = (clip.tiktok_caption && clip.tiktok_caption.trim()) || titleText;

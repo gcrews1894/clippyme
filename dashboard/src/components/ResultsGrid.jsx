@@ -509,6 +509,7 @@ export default function ResultsGrid({
         jobId={jobId}
         clips={publishableClips}
         clipStates={clipStates}
+        preselections={preselections}
         onPublished={(originalIndex) => onUpdateClipState(originalIndex, { publishedAt: Date.now() })}
       />
 
