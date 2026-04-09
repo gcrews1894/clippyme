@@ -619,13 +619,19 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
                                         <hr className="hairline flex-1" />
                                     </div>
 
-                                {/* Auto Reframe — single toggle (on = face tracking, off = 4:3 with black bars) */}
+                                {/* Auto Reframe — single toggle. ON = face tracking in
+                                    a 9:16 vertical frame. OFF = original footage
+                                    placed inside a 9:16 frame with black letterbox
+                                    bars top & bottom (NOT a crop). Terminology is
+                                    kept consistent with ResultCard so users never
+                                    see '4:3' language that made them think the
+                                    output was a crop. */}
                                 <SwitchRow
                                     label="Auto Reframe"
                                     description={
                                         reframeMode === 'auto'
-                                            ? 'Face tracking 9:16'
-                                            : 'Disabled — 4:3 + black bars'
+                                            ? 'ON · face tracking in a 9:16 frame'
+                                            : 'OFF · letterbox (black bars top & bottom)'
                                     }
                                     checked={reframeMode === 'auto'}
                                     onChange={(next) => setReframeMode(next ? 'auto' : 'disabled')}
