@@ -809,6 +809,36 @@ def sanitize_filename(filename):
     return filename[:100]
 
 
+def _resolve_cookies_path(explicit: str | None) -> str | None:
+    """Resolve the cookies.txt path used by yt-dlp.
+
+    Precedence:
+      1. Explicit path passed on the CLI / by the caller.
+      2. Repo-root ``data/cookies.txt`` (the path the dashboard writes to).
+      3. ``YOUTUBE_COOKIES`` env var → materialized into ``data/cookies_env.txt``.
+      4. None (no cookies).
+
+    The repo-root resolution uses the current working directory, which
+    matches how the FastAPI backend and the Docker container launch the
+    pipeline (both run from the repo root). This replaces the pre-refactor
+    ``os.path.dirname(__file__)`` logic that silently pointed at
+    ``src/clippyme/pipeline/data/`` after the src-layout migration.
+    """
+    if explicit:
+        return explicit
+    repo_root_cookies = os.path.join("data", "cookies.txt")
+    if os.path.exists(repo_root_cookies):
+        return os.path.abspath(repo_root_cookies)
+    env_cookies = os.environ.get("YOUTUBE_COOKIES")
+    if env_cookies:
+        env_path = os.path.join("data", "cookies_env.txt")
+        os.makedirs(os.path.dirname(env_path) or ".", exist_ok=True)
+        with open(env_path, "w") as f:
+            f.write(env_cookies)
+        return os.path.abspath(env_path)
+    return None
+
+
 def download_youtube_video(url, output_dir=".", cookies_file_path=None):
     """
     Downloads a YouTube video using yt-dlp.
@@ -818,22 +848,11 @@ def download_youtube_video(url, output_dir=".", cookies_file_path=None):
     print("📥 Downloading video from YouTube...")
     step_start_time = time.time()
 
-    if cookies_file_path:
-        cookies_path = cookies_file_path
-        print(f"🍪 Using provided cookies file: {cookies_path}")
+    cookies_path = _resolve_cookies_path(cookies_file_path)
+    if cookies_path:
+        print(f"🍪 Using cookies file: {cookies_path}")
     else:
-        persistent_cookies = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "cookies.txt")
-        if os.path.exists(persistent_cookies):
-            cookies_path = persistent_cookies
-            print(f"🍪 Using persistent cookies file: {cookies_path}")
-        elif os.environ.get("YOUTUBE_COOKIES"):
-            cookies_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "cookies_env.txt")
-            os.makedirs(os.path.dirname(cookies_path), exist_ok=True)
-            with open(cookies_path, "w") as f:
-                f.write(os.environ["YOUTUBE_COOKIES"])
-        else:
-            cookies_path = None
-            print("⚠️ No cookies file found.")
+        print("⚠️ No cookies file found.")
     
     # Common yt-dlp options to work around YouTube bot detection.
     # Avoid the OAuth/PO-token checks that block server IPs.
