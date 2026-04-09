@@ -30,9 +30,25 @@ def load_job_metadata(job_id: str, output_dir: str) -> Tuple[str, dict]:
 
 
 def save_job_metadata(metadata_path: str, data: dict) -> None:
-    """Persist a job's metadata JSON back to disk."""
-    with open(metadata_path, "w") as f:
-        json.dump(data, f, indent=4)
+    """Persist a job's metadata JSON back to disk atomically.
+
+    Writes to a ``<metadata_path>.tmp`` sibling and ``os.replace()``s it
+    into place so a crash / SIGKILL mid-write cannot leave the caller with
+    a half-written or truncated JSON file (which would then fail to parse
+    on the next load and silently wipe the job from the dashboard).
+    """
+    tmp_path = metadata_path + ".tmp"
+    try:
+        with open(tmp_path, "w") as f:
+            json.dump(data, f, indent=4)
+        os.replace(tmp_path, metadata_path)
+    except Exception:
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+        raise
 
 
 def relocate_root_job_artifacts(job_id: str, job_output_dir: str, output_dir: str) -> bool:
