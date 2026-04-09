@@ -206,6 +206,40 @@ export default function ResultCard({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
+    // Re-sync local state whenever the parent clipState changes externally
+    // (e.g. Bulk Edit Apply in ResultsGrid writes new toggles directly to
+    // clipStates without going through this card's setToggles). Without
+    // this sync the card kept showing its own stale local toggles forever
+    // — the bulk edit felt like a no-op even though clipStates was
+    // correctly updated and downstream (download/publish) honoured it.
+    useEffect(() => {
+        if (clipState.toggles) {
+            setTogglesLocal((prev) =>
+                JSON.stringify(prev) === JSON.stringify(clipState.toggles)
+                    ? prev
+                    : { ...prev, ...clipState.toggles },
+            );
+        }
+    }, [clipState.toggles]);
+    useEffect(() => {
+        if (clipState.hookParams) {
+            setHookParamsLocal((prev) =>
+                JSON.stringify(prev) === JSON.stringify(clipState.hookParams)
+                    ? prev
+                    : { ...prev, ...clipState.hookParams },
+            );
+        }
+    }, [clipState.hookParams]);
+    useEffect(() => {
+        if (clipState.subtitleParams) {
+            setSubtitleParamsLocal((prev) =>
+                JSON.stringify(prev) === JSON.stringify(clipState.subtitleParams)
+                    ? prev
+                    : { ...prev, ...clipState.subtitleParams },
+            );
+        }
+    }, [clipState.subtitleParams]);
+
     // isComposing + showPublishModal were used by the now-removed per-card
     // Download + Publish buttons. The sticky action rail in ResultsGrid
     // hosts those actions via the selection model, so both pieces of
