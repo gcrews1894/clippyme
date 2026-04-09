@@ -5,7 +5,19 @@ import urllib.request
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 FONT_URL = "https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSerif/NotoSerif-Bold.ttf"
-FONT_DIR = "fonts"
+
+# Resolve bundled fonts dir by walking up from __file__ (→ repo-root/fonts).
+# A bare CWD-relative "fonts" broke for any caller not launched from the
+# repo root (reframe subprocess, tests, ad-hoc CLI from /tmp). Env override
+# lets operators point at a different install prefix.
+_REPO_ROOT_FROM_HERE = os.path.abspath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..")
+)
+FONT_DIR = os.environ.get("CLIPPYME_FONTS_DIR") or os.path.join(_REPO_ROOT_FROM_HERE, "fonts")
+if not os.path.isdir(FONT_DIR):
+    _cwd_fallback = os.path.abspath("fonts")
+    if os.path.isdir(_cwd_fallback):
+        FONT_DIR = _cwd_fallback
 FONT_PATH = os.path.join(FONT_DIR, "NotoSerif-Bold.ttf")
 
 
