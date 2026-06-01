@@ -102,3 +102,50 @@ def test_gap_ok_enforces_minimum_gap():
     occupied = [base]
     assert s._gap_ok(base.replace(hour=14), occupied) is True       # 2h away
     assert s._gap_ok(base.replace(minute=30), occupied) is False    # 30 min away
+
+
+# --- publish_clip manual-mode timestamp validation -------------------------
+
+def _guard_network(monkeypatch):
+    """Make any ZernioClient use blow up loudly, so a test that reaches the
+    network instead of failing validation is unambiguous (and never hits the
+    real API)."""
+    class _Boom:
+        def __init__(self, *a, **k):
+            raise AssertionError("validation should have rejected input before any network call")
+    monkeypatch.setattr(sp, "ZernioClient", _Boom)
+
+
+def test_manual_mode_rejects_non_iso_scheduled_for(monkeypatch, tmp_path):
+    _guard_network(monkeypatch)
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"x")
+    with pytest.raises(ValueError, match="(?i)iso"):
+        sp.publish_clip(
+            api_key="sk_test",
+            clip_path=str(clip),
+            title="t",
+            caption="c",
+            platform_targets=[{"platform": "tiktok", "accountId": "acc1"}],
+            schedule_mode="manual",
+            scheduled_for="not-a-timestamp",
+        )
+
+
+def test_manual_mode_accepts_valid_iso_scheduled_for(monkeypatch, tmp_path):
+    # A well-formed ISO 8601 timestamp must pass validation (it then proceeds
+    # to the network layer, which our guard turns into a recognisable error —
+    # proving validation itself did NOT reject it).
+    _guard_network(monkeypatch)
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"x")
+    with pytest.raises(AssertionError, match="network"):
+        sp.publish_clip(
+            api_key="sk_test",
+            clip_path=str(clip),
+            title="t",
+            caption="c",
+            platform_targets=[{"platform": "tiktok", "accountId": "acc1"}],
+            schedule_mode="manual",
+            scheduled_for="2026-06-01T12:30:00",
+        )
