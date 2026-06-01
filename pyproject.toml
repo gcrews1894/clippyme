@@ -9,3 +9,10 @@ requires-python = ">=3.11"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+# Heavy pipeline tests (cv2/mediapipe/yt-dlp runtime) live behind the Docker
+# backend image; the pure-logic suites (api, domain, integrations, parser)
+# run on the host with just `pip install -e .` + pytest.
