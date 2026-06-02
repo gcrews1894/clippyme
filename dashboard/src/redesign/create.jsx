@@ -288,11 +288,15 @@ export function CreateView({ opts, set, onPickPreset, onCreate, presets, default
     <div className="container fade-in">
       <Hero eyebrow="Drop a link · get scroll-stopping shorts" line1="Long videos in." grad="Viral shorts out."
         sub="Paste a YouTube link and ClippyMe does the rest: transcribes it, scores every moment, reframes to 9:16, cuts the silence, and queues the best clips to post." />
-      <div className="label" style={{ marginBottom: 12 }}>Start from a preset — or set everything by hand below</div>
-      <PresetCards presets={presets} active={opts.preset} defaultId={defaultId}
-        onPick={onPickPreset} onSetDefault={onSetDefault} onDelete={onDelete} onSaveCurrent={onSaveCurrent} />
-      <div className="create-grid">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+        {/* Order: pick a source first, then optionally start from a preset,
+            then fine-tune the recipe by hand. */}
         <SourcePanel opts={opts} set={set} />
+        <div>
+          <div className="label" style={{ marginBottom: 12 }}>Start from a preset — or set everything by hand below</div>
+          <PresetCards presets={presets} active={opts.preset} defaultId={defaultId}
+            onPick={onPickPreset} onSetDefault={onSetDefault} onDelete={onDelete} onSaveCurrent={onSaveCurrent} />
+        </div>
         <OptionsPanel opts={opts} set={set} />
       </div>
       <SummaryBar opts={opts} ready={ready} count={count} onCreate={onCreate} />
