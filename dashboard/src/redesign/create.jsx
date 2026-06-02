@@ -266,7 +266,7 @@ export function CreateView({ opts, set, onPickPreset, onCreate }) {
   return (
     <div className="container fade-in">
       <Hero eyebrow="Drop a link · get scroll-stopping shorts" line1="Long videos in." grad="Viral shorts out."
-        sub="Paste a YouTube link and ClippyMe transcribes, scores every moment, reframes to 9:16, trims the silence, and schedules the best cuts — automatically." />
+        sub="Paste a YouTube link and ClippyMe does the rest: transcribes it, scores every moment, reframes to 9:16, cuts the silence, and queues the best clips to post." />
       <div className="label" style={{ marginBottom: 12 }}>Start from a recipe</div>
       <PresetCards active={opts.preset} onPick={onPickPreset} />
       <div className="create-grid">
