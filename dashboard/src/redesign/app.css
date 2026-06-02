@@ -26,6 +26,15 @@ body::before{
 button{font-family:inherit}
 :focus-visible{outline:2px solid var(--brand-blue);outline-offset:2px}
 
+/* The global app index.css applies `font-family: var(--font-display)` to all
+   h1–h6, and tokens.css sets --font-display to Anton (an all-caps display
+   face). That makes small section titles render in Anton and look illegible.
+   Force the UI sans on every redesign heading; the intentionally-display ones
+   (hero, score, clip hook) set their own font-family at higher specificity. */
+.panel-head h3, .empty h3, .results-head h2, .modal-head h3, .stream-head h3 {
+  font-family: var(--font-sans);
+}
+
 /* utility type */
 .mono{font-family:var(--font-mono)}
 .label{font-family:var(--font-mono);font-size:10px;font-weight:500;letter-spacing:.16em;text-transform:uppercase;color:var(--fg-3)}
