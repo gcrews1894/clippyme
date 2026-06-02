@@ -127,7 +127,7 @@ export default function RedesignApp() {
     onFailed: (errorMsg) => {
       setStatus('error');
       setLogs((prev) => [...prev, 'Error: ' + errorMsg]);
-      pushToast('error', 'Job failed — ' + String(errorMsg).slice(0, 80));
+      pushToast('error', 'Job failed: ' + String(errorMsg).slice(0, 80));
     },
     onProgress: (lg, step) => { setLogs(lg); if (step) setCurrentStep(step); },
   });

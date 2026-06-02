@@ -21,7 +21,7 @@ export function HistoryView({ history, onOpen, onDelete, onClear }) {
   if (!history.length) {
     return (
       <div className="container narrow fade-in">
-        <Hero eyebrow="History" line1="Nothing here yet." sub="Every job you run shows up here — ready to reopen, re-export, or publish again." />
+        <Hero eyebrow="History" line1="Nothing here yet." sub="Every job you run lands here, ready to reopen, re-export, or publish again." />
         <div className="empty">
           <div className="ei"><Icon n="clock" /></div>
           <h3>No jobs yet</h3>
@@ -131,7 +131,7 @@ export function SettingsView({ apiKey, onApiKey, cookiesConfigured, pushToast })
       });
       setAccts(next);
       pushToast?.('success', `Discovered ${(accounts || []).length} accounts`);
-    } catch { pushToast?.('error', 'Discover failed — check API key'); }
+    } catch { pushToast?.('error', 'Discover failed. Check the API key.'); }
   };
 
   const onCookieFile = async (e) => {

@@ -27,7 +27,7 @@ function ClipCard({ clip, index, jobId, state, onUpdate, selectMode, onPublish, 
       onUpdate(index, { reframeMode: next, reframeBust: Date.now() });
       pushToast?.('success', `Reframe → ${next}`);
     } catch (err) {
-      pushToast?.('error', err.status === 409 ? 'Clip too old to reframe — reprocess it' : 'Reframe failed');
+      pushToast?.('error', err.status === 409 ? 'This clip is too old to reframe. Reprocess it.' : 'Reframe failed');
     } finally {
       setReframing(false);
     }

@@ -48,8 +48,8 @@ export function ProcessingView({ media, status, logs = [], step, clips = [], onC
     <div className="container fade-in">
       <Hero eyebrow={failed ? 'Pipeline error' : 'Pipeline running'}
         line1={failed ? 'Something broke.' : 'Cutting your clips.'}
-        sub={failed ? 'The job failed — check the log below. You can retry or start over.'
-          : "ClippyMe is working through the pipeline. Clips appear below as soon as they're rendered — no need to wait for the whole batch."} />
+        sub={failed ? 'The job failed. Check the log below, then retry or start over.'
+          : "ClippyMe is working through the pipeline. Clips show up below the moment each one is rendered, so you don't have to wait for the whole batch."} />
       <div className="proc">
         <aside className="proc-aside">
           <Panel pad={true}>
