@@ -69,6 +69,7 @@ import contextlib
 import logging
 import mimetypes
 import os
+import re
 import time
 from typing import Any
 
@@ -386,8 +387,10 @@ def _post_with_retries(
             attempt += 1
             continue
 
-        # Non-retryable status → raise with body snippet
-        snippet = (response.text or "")[:400]
+        # Non-retryable status → raise with body snippet. Strip control/ANSI
+        # bytes first so a crafted error body can't inject escape sequences or
+        # forged log lines when the message is printed to stdout/logs.
+        snippet = re.sub(r"[\x00-\x1f\x7f]", " ", (response.text or "")[:400])
         raise DeepgramError(
             f"Deepgram returned HTTP {response.status_code}: {snippet}"
         )
