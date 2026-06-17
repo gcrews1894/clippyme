@@ -69,3 +69,16 @@ def test_reject_internal_upload_url(bad):
 def test_accept_public_https_upload_url():
     # Public IP literal over https — must not raise.
     _reject_internal_upload_url("https://13.226.1.1/bucket/key")
+
+
+# --- Security response headers ---------------------------------------------
+
+def test_security_headers_present():
+    from fastapi.testclient import TestClient
+
+    from clippyme.api import app as app_module
+    tc = TestClient(app_module.app)
+    r = tc.get("/api/health")
+    assert r.headers.get("x-content-type-options") == "nosniff"
+    assert r.headers.get("x-frame-options") == "DENY"
+    assert "default-src 'none'" in r.headers.get("content-security-policy", "")

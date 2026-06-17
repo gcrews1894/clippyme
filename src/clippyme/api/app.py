@@ -133,6 +133,25 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 
+@app.middleware("http")
+async def _security_headers(request: Request, call_next):
+    """Add OWASP-recommended hardening headers to every response.
+
+    - nosniff: block MIME-confusion attacks on served media/JSON.
+    - frame-ancestors/X-Frame-Options: clickjacking defence.
+    - Referrer-Policy: don't leak full URLs (job ids) to third parties.
+    - CSP default-src 'none': the API serves JSON + media consumed by the
+      separate Vite frontend; it should never itself be a script/HTML host.
+    Ref: OWASP Secure Headers Project.
+    """
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+    return response
+
+
 @app.exception_handler(ClippyMeError)
 async def _clippyme_error_handler(request: Request, exc: ClippyMeError):
     """Map domain exceptions to HTTP responses so domain modules don't need
