@@ -857,10 +857,15 @@ def _render_global_smooth(input_video, ffmpeg_process, cameraman, speaker_tracke
     cap.release()
 
     # --- Global smoothing pass ---------------------------------------------
+    # Global smoother for the pan path: savgol (default) | kalman | l2. The two
+    # alternatives (RTS Kalman, L2 convex optimiser) are ported from
+    # mfahsold/montage-ai; default stays savgol so behaviour is unchanged unless
+    # opted in via REFRAME_GLOBAL_METHOD.
+    global_method = os.getenv("REFRAME_GLOBAL_METHOD", "savgol").strip().lower()
     smoothed = build_smoothed_trajectory(
         targets, scene_ids, window=win, polyorder=2,
         x_max=original_width, y_max=original_height,
-        min_zoom=1.0, max_zoom=1.6,
+        min_zoom=1.0, max_zoom=1.6, method=global_method,
     )
 
     # --- Pass 2: render from the smoothed trajectory -----------------------

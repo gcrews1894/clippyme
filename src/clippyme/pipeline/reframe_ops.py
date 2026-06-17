@@ -398,9 +398,122 @@ def smooth_and_clamp(values, window: int, polyorder: int,
     return np.clip(smoothed, lo, hi)
 
 
+# --- alternative global smoothers (ported from mfahsold/montage-ai) ----------
+
+def kalman_rts_smooth(values, process_noise: float = 1.0,
+                      measurement_noise: float = 10.0):
+    """Forward Kalman + backward RTS smoother over a 1-D camera-center path.
+
+    Constant-velocity model (state ``[position, velocity]``, observe position).
+    The forward pass filters causally; the Rauch–Tung–Striebel backward pass
+    then refines every estimate using future frames, so the result is a smooth,
+    non-causal trajectory that *extrapolates motion through detection gaps*
+    (where the input simply repeats the last center) instead of flat-lining —
+    something the Savitzky-Golay low-pass and the online EMA/1€/spring smoothers
+    can't do. Pure numpy. Direct port of mfahsold/montage-ai
+    ``SubjectKalmanFilter.smooth_sequence`` (auto_reframe.py).
+
+    Higher ``measurement_noise`` (relative to ``process_noise``) ⇒ the filter
+    trusts the model over the measurements ⇒ smoother output.
+    """
+    v = np.asarray(values, dtype=float)
+    n = len(v)
+    if n < 2:
+        return v.copy()
+
+    F = np.array([[1.0, 1.0], [0.0, 1.0]])
+    H = np.array([[1.0, 0.0]])
+    Q = np.array([[process_noise, 0.0], [0.0, process_noise * 0.1]])
+    R = np.array([[measurement_noise]])
+
+    x = np.array([v[0], 0.0])
+    P = np.eye(2) * 100.0
+    xf, Pf = [], []  # filtered state + covariance per step
+    for z in v:
+        # Predict
+        x = F @ x
+        P = F @ P @ F.T + Q
+        # Update
+        S = H @ P @ H.T + R
+        K = P @ H.T @ np.linalg.inv(S)
+        x = x + (K @ (np.array([z]) - H @ x)).flatten()
+        P = (np.eye(2) - K @ H) @ P
+        xf.append(x.copy())
+        Pf.append(P.copy())
+
+    smoothed = [None] * n
+    smoothed[-1] = xf[-1]
+    for i in range(n - 2, -1, -1):
+        P_pred = F @ Pf[i] @ F.T + Q
+        C = Pf[i] @ F.T @ np.linalg.inv(P_pred)
+        smoothed[i] = xf[i] + C @ (smoothed[i + 1] - F @ xf[i])
+    return np.array([s[0] for s in smoothed])
+
+
+def solve_camera_path_l2(values, lambda_smooth: float = 100.0,
+                         lambda_trend: float = 10.0, constraints=None):
+    """Global L2-convex camera-path optimiser over a 1-D center signal.
+
+    Minimises ``Σ(xₜ−cₜ)² + λ_smooth·Σ(xₜ−xₜ₋₁)² + λ_trend·Σ(xₜ−2xₜ₋₁+xₜ₋₂)²``
+    — i.e. stay near the detected subject, while penalising camera *velocity*
+    (shake) and *acceleration* (jerk). Setting the gradient to zero gives the
+    closed-form linear system ``(I + λ_smooth·D1ᵀD1 + λ_trend·D2ᵀD2)·x = c``,
+    solved here densely in pure numpy. This is a principled global optimiser —
+    the closed-form analogue of smart-reframe's Viterbi ``PathSolver`` that the
+    Savitzky-Golay pass only approximates. Direct port of mfahsold/montage-ai
+    ``CameraMotionOptimizer.solve`` (auto_reframe.py), with its scipy.sparse
+    solve replaced by a dense numpy solve to honour reframe_ops' no-scipy rule
+    (fine for clip-length paths; a banded/sparse solve is the O(n) upgrade).
+
+    ``constraints``: optional ``{frame_index: target_center}`` keyframes pulled
+    in with a strong penalty — manual overrides of the automatic path.
+    """
+    c = np.asarray(values, dtype=float)
+    n = len(c)
+    if n < 3:
+        return c.copy()
+
+    eye_n = np.eye(n)
+    d1 = np.eye(n - 1, n, k=1) - np.eye(n - 1, n, k=0)          # first difference
+    d2 = (np.eye(n - 2, n, k=0) - 2.0 * np.eye(n - 2, n, k=1)   # second difference
+          + np.eye(n - 2, n, k=2))
+    a = eye_n + lambda_smooth * (d1.T @ d1) + lambda_trend * (d2.T @ d2)
+    b = c.copy()
+
+    if constraints:
+        lam_c = 10000.0  # strong pull toward each keyframe
+        for idx, target in constraints.items():
+            if 0 <= idx < n:
+                a[idx, idx] += lam_c
+                b[idx] += lam_c * float(target)
+
+    try:
+        return np.linalg.solve(a, b)
+    except np.linalg.LinAlgError:
+        return c.copy()
+
+
+def _smooth_axis(values, method: str, window: int, polyorder: int,
+                 lo: float, hi: float):
+    """Smooth one 1-D camera axis with the selected global method, then clamp.
+
+    ``"savgol"`` (default) keeps the proven Savitzky-Golay behaviour;
+    ``"kalman"`` uses the RTS smoother; ``"l2"`` uses the convex path optimiser.
+    All three are clamped into ``[lo, hi]`` exactly like ``smooth_and_clamp``.
+    """
+    if method == "kalman":
+        out = kalman_rts_smooth(values)
+    elif method == "l2":
+        out = solve_camera_path_l2(values)
+    else:
+        out = savgol_1d(values, window, polyorder)
+    return np.clip(out, lo, hi)
+
+
 def build_smoothed_trajectory(targets, scene_ids, window: int, polyorder: int,
                               x_max: float, y_max: float,
-                              min_zoom: float = 1.0, max_zoom: float = 1.6):
+                              min_zoom: float = 1.0, max_zoom: float = 1.6,
+                              method: str = "savgol"):
     """Smooth a recorded ``(cx, cy, zoom)`` camera trajectory, per scene segment.
 
     ``targets[i]`` is the raw per-frame camera target (or ``None`` for frames
@@ -427,8 +540,11 @@ def build_smoothed_trajectory(targets, scene_ids, window: int, polyorder: int,
         while j < n and targets[j] is not None and scene_ids[j] == sid:
             j += 1
         seg = targets[i:j]
-        xs = smooth_and_clamp([t[0] for t in seg], window, polyorder, 0.0, x_max)
-        ys = smooth_and_clamp([t[1] for t in seg], window, polyorder, 0.0, y_max)
+        # Pan axes (cx, cy) use the selected global method; zoom always uses
+        # savgol — the L2/Kalman optimisers are tuned for the pan *path*, not the
+        # narrow, slowly-varying zoom signal.
+        xs = _smooth_axis([t[0] for t in seg], method, window, polyorder, 0.0, x_max)
+        ys = _smooth_axis([t[1] for t in seg], method, window, polyorder, 0.0, y_max)
         zs = smooth_and_clamp([t[2] for t in seg], window, polyorder, min_zoom, max_zoom)
         for k in range(j - i):
             out[i + k] = (float(xs[k]), float(ys[k]), float(zs[k]))

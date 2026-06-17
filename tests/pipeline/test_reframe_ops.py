@@ -427,3 +427,110 @@ def test_split_portrait_inferred_from_dims():
     # height >= width -> portrait layout (stacked rows for n=2)
     slots = ro.split_screen_slots(2, 720, 1280)
     assert slots[0][2] == 720  # full-width row, not a half-width column
+
+
+# --- kalman_rts_smooth ------------------------------------------------------
+
+def test_kalman_short_input_passthrough():
+    assert list(ro.kalman_rts_smooth([5.0])) == [5.0]
+    assert list(ro.kalman_rts_smooth([])) == []
+
+
+def test_kalman_preserves_length():
+    raw = [float(i % 7) for i in range(40)]
+    assert len(ro.kalman_rts_smooth(raw)) == len(raw)
+
+
+def test_kalman_constant_stays_constant():
+    out = ro.kalman_rts_smooth([100.0] * 20)
+    assert np.allclose(out, 100.0, atol=1e-6)
+
+
+def test_kalman_reduces_jitter():
+    rng = np.random.default_rng(0)
+    clean = np.linspace(0, 200, 80)
+    noisy = clean + rng.normal(0, 15, size=80)
+    out = ro.kalman_rts_smooth(noisy)
+    # Smoothed path is closer to the underlying ramp than the noisy input.
+    assert np.mean((out - clean) ** 2) < np.mean((noisy - clean) ** 2)
+
+
+def test_kalman_tracks_linear_ramp():
+    ramp = [float(i) for i in range(50)]
+    out = ro.kalman_rts_smooth(ramp)
+    # A constant-velocity model should follow a straight ramp almost exactly.
+    assert np.max(np.abs(out - np.array(ramp))) < 2.0
+
+
+# --- solve_camera_path_l2 ---------------------------------------------------
+
+def test_l2_short_input_passthrough():
+    assert list(ro.solve_camera_path_l2([1.0, 2.0])) == [1.0, 2.0]
+
+
+def test_l2_constant_stays_constant():
+    out = ro.solve_camera_path_l2([50.0] * 30)
+    assert np.allclose(out, 50.0, atol=1e-6)
+
+
+def test_l2_reduces_jitter():
+    rng = np.random.default_rng(1)
+    clean = np.full(60, 300.0)
+    noisy = clean + rng.normal(0, 20, size=60)
+    out = ro.solve_camera_path_l2(noisy, lambda_smooth=200.0, lambda_trend=20.0)
+    assert np.mean((out - clean) ** 2) < np.mean((noisy - clean) ** 2)
+
+
+def test_l2_higher_lambda_is_flatter():
+    rng = np.random.default_rng(2)
+    noisy = 100.0 + rng.normal(0, 30, size=50)
+    soft = ro.solve_camera_path_l2(noisy, lambda_smooth=10.0)
+    hard = ro.solve_camera_path_l2(noisy, lambda_smooth=2000.0)
+    # Stronger smoothing -> lower step-to-step variance (less camera motion).
+    assert np.var(np.diff(hard)) < np.var(np.diff(soft))
+
+
+def test_l2_keyframe_constraint_pulls_toward_target():
+    raw = [0.0] * 21
+    mid = 10
+    out = ro.solve_camera_path_l2(raw, constraints={mid: 500.0})
+    # The constrained frame is pulled strongly toward the keyframe target.
+    assert out[mid] > 400.0
+
+
+# --- build_smoothed_trajectory method dispatch ------------------------------
+
+def _ramp_targets(n):
+    return [(float(i), float(i) * 0.5, 1.0) for i in range(n)]
+
+
+def test_trajectory_method_default_matches_savgol():
+    targets = _ramp_targets(30)
+    sids = [0] * 30
+    a = ro.build_smoothed_trajectory(targets, sids, 7, 2, 1000, 1000)
+    b = ro.build_smoothed_trajectory(targets, sids, 7, 2, 1000, 1000, method="savgol")
+    assert a == b  # default is byte-identical to explicit savgol
+
+
+def test_trajectory_kalman_method_runs_and_clamps():
+    targets = _ramp_targets(30)
+    sids = [0] * 30
+    out = ro.build_smoothed_trajectory(targets, sids, 7, 2, 1000, 1000, method="kalman")
+    assert len(out) == 30
+    assert all(0.0 <= cx <= 1000 and 0.0 <= cy <= 1000 for (cx, cy, _z) in out)
+
+
+def test_trajectory_l2_method_runs_and_clamps():
+    targets = _ramp_targets(30)
+    sids = [0] * 30
+    out = ro.build_smoothed_trajectory(targets, sids, 7, 2, 1000, 1000, method="l2")
+    assert len(out) == 30
+    assert all(0.0 <= cx <= 1000 for (cx, _cy, _z) in out)
+
+
+def test_trajectory_method_preserves_none_gaps():
+    targets = _ramp_targets(10) + [None] * 3 + _ramp_targets(10)
+    sids = [0] * 23
+    out = ro.build_smoothed_trajectory(targets, sids, 5, 2, 1000, 1000, method="kalman")
+    assert out[10] is None and out[11] is None and out[12] is None
+    assert len(out) == 23
