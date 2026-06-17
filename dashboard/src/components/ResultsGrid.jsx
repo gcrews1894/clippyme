@@ -166,7 +166,6 @@ export default function ResultsGrid({
   // want the clips grid, not a big player of the original 1h video.
   const [sourcePreviewOpen, setSourcePreviewOpen] = useState(status !== 'complete');
 
-  const allClips = results?.clips || [];
   // Filter out deleted clips from the grid.
   //
   // CRITICAL: `originalIndex` MUST come from `clip.original_index` emitted
@@ -178,7 +177,7 @@ export default function ResultsGrid({
   // to positional index only for legacy/restore paths that don't ship
   // the field yet.
   const visibleClips = useMemo(() => {
-    const base = allClips
+    const base = (results?.clips || [])
       .map((clip, i) => ({
         clip,
         originalIndex: typeof clip.original_index === 'number' ? clip.original_index : i,
@@ -200,7 +199,7 @@ export default function ResultsGrid({
     const rankMap = new Map(byScore.map((entry, i) => [entry.originalIndex, i + 1]));
 
     return sorted.map((entry) => ({ ...entry, rank: rankMap.get(entry.originalIndex) }));
-  }, [allClips, clipStates, sortBy]);
+  }, [results?.clips, clipStates, sortBy]);
 
   const clipCount = visibleClips.length;
 
@@ -261,21 +260,10 @@ export default function ResultsGrid({
   const deleteSelected = () => {
     if (selectedClips.length === 0) return;
     const label = `Delete ${selectedClips.length} selected clip${selectedClips.length === 1 ? '' : 's'}?`;
-    // eslint-disable-next-line no-alert
     if (!window.confirm(`${label} They will be hidden from the grid — the video files stay on disk and the deletion is only visual.`)) return;
     selectedClips.forEach(({ originalIndex }) =>
       onUpdateClipState(originalIndex, { deleted: true, selected: false }),
     );
-  };
-  // Bulk toggle helpers — flip a single `toggles` key across all
-  // selected clips in one shot. Used by the 'Bulk edit' popover.
-  const bulkSetToggle = (key, value) => {
-    selectedClips.forEach(({ originalIndex }) => {
-      const prev = clipStates[originalIndex]?.toggles || {};
-      onUpdateClipState(originalIndex, {
-        toggles: { ...prev, [key]: value },
-      });
-    });
   };
   // Apply a whole param dict (e.g. subtitleParams or hookParams) to
   // every selected clip, shallow-merging over each clip's existing
@@ -628,7 +616,6 @@ export default function ResultsGrid({
                 onClick={() => {
                   if (allVisibleClips.length === 0) return;
                   if (stats.published > 0) {
-                    // eslint-disable-next-line no-alert
                     if (!window.confirm(`Re-publish ALL ${allVisibleClips.length} clips including ${stats.published} already-published? This will create duplicate posts.`)) return;
                   }
                   setPublishScope('all');

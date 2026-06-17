@@ -150,7 +150,7 @@ export default function HookModal({ isOpen, onClose, onGenerate, isProcessing, v
 
                         {/* Tip */}
                         <div className="p-3 bg-white/[0.02] rounded-[3px] border border-white/[0.06] text-[11px] text-zinc-500 leading-relaxed">
-                            <span className="text-zinc-400 font-medium">Tip:</span> Keep it short and punchy. "POV:", "Did you know?", or questions work best for scroll-stopping retention.
+                            <span className="text-zinc-400 font-medium">Tip:</span> Keep it short and punchy. &quot;POV:&quot;, &quot;Did you know?&quot;, or questions work best for scroll-stopping retention.
                         </div>
                     </div>
 

@@ -219,7 +219,7 @@ export function ApiKeyModal({ onClose, onGoToSettings }) {
         <div className="modal-head"><h3>Add your Gemini key</h3><button className="x" onClick={onClose}><Icon n="x" /></button></div>
         <div className="modal-body">
           <p style={{ color: 'var(--fg-2)', fontSize: 14, lineHeight: 1.55 }}>
-            ClippyMe needs a Gemini key to score the transcript and find viral moments. It's stored locally and never leaves your machine.
+            ClippyMe needs a Gemini key to score the transcript and find viral moments. It&apos;s stored locally and never leaves your machine.
           </p>
         </div>
         <div className="modal-foot">

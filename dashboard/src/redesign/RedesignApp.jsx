@@ -80,6 +80,9 @@ export default function RedesignApp() {
   const [opts, setOpts] = useState(() => ({ ...DEFAULT_OPTS, ...(getDefaultPresetOpts() || {}) }));
   const [presetsVersion, setPresetsVersion] = useState(0);
   const [defaultPresetId, setDefaultPresetId] = useState(getDefaultPresetId());
+  // presetsVersion is a manual cache-bust trigger: allPresets() reads from
+  // external (localStorage) state, so bumping the version must force a recompute.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const presetList = useMemo(() => allPresets(), [presetsVersion]);
   const [preselections, setPreselectionsRaw] = useState(null);
   const [confetti, setConfetti] = useState(false);

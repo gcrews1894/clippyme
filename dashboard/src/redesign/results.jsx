@@ -4,12 +4,6 @@ import { useState } from 'react';
 import { Icon, Btn, Badge } from './primitives';
 import { clipVideoSrc, fmtDuration, downloadClip, reframeClip, exportClip } from './realApi';
 
-function scoreTone(s) {
-  if (s >= 80) return 'teal';
-  if (s >= 50) return 'amber';
-  return 'danger';
-}
-
 function ClipCard({ clip, index, jobId, state, preselections, onUpdate, selectMode, onPublish, onCaptions, pushToast }) {
   const [reframing, setReframing] = useState(false);
   const [downloading, setDownloading] = useState(false);

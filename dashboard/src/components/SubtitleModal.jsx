@@ -177,9 +177,6 @@ export default function SubtitleModal({ isOpen, onClose, onGenerate, isProcessin
         }
     };
 
-    const previewFont = mode === 'viral' ? fontName : classicFontName;
-    const previewHighlight = mode === 'viral' ? highlightColor : fontColor;
-
     return createPortal(
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fade-in" onClick={onClose}>
             <div
