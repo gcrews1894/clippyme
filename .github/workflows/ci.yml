@@ -39,8 +39,8 @@ jobs:
       # Audit the declared dependencies for known CVEs. Non-blocking for now
       # (|| true) so a freshly-disclosed CVE doesn't wedge unrelated PRs;
       # drop the `|| true` once the dependency set is on a lock file.
-      - name: Dependency vulnerability scan
-        run: pip-audit -r requirements.txt --desc || true
+      - name: Dependency vulnerability scan (full pinned tree)
+        run: pip-audit -r requirements.lock --desc || true
 
   frontend:
     name: Frontend (build + lint)

@@ -93,13 +93,16 @@ ENV PATH=/app/data/bin:$PATH
 # Build with:   docker compose build --build-arg ENABLE_WHISPER_DIARIZE=1
 ARG GPU_RUNTIME
 ARG ENABLE_WHISPER_DIARIZE=0
-COPY requirements.txt .
+# Install from the fully-pinned lock for reproducible builds (regenerate with
+# `uv pip compile requirements.txt ... -o requirements.lock`). requirements.txt
+# is copied too for reference/diagnostics.
+COPY requirements.lock requirements.txt ./
 # BuildKit cache mount: pip's download cache lives in the mount (shared across
 # rebuilds) and is NOT baked into the image layer, so we get fast rebuilds
 # without the image bloat that dropping --no-cache-dir would otherwise cause.
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade pip && \
-    pip install -r requirements.txt && \
+    pip install -r requirements.lock && \
     if [ "$GPU_RUNTIME" = "nvidia" ]; then \
         pip install nvidia-cublas-cu12 && \
         SITE=$(python -c "import site; print(site.getsitepackages()[0])") && \
