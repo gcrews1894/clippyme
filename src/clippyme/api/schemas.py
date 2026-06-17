@@ -67,7 +67,7 @@ class PublishRequest(BaseModel):
     title: str = ""
     caption: str = ""
     platforms: List[dict] = Field(..., min_length=1, max_length=14)
-    schedule_mode: str = "now"
+    schedule_mode: str = Field("now", pattern=r"^(now|auto|manual)$")
     scheduled_for: Optional[str] = None
     # Optional YYYY-MM-DD that defines the day the SmartScheduler should
     # start picking slots from when schedule_mode="auto". Ignored by

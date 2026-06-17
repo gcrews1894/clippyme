@@ -313,8 +313,17 @@ async def process_endpoint(
         # discard the client-supplied filename (path traversal risk) and only
         # preserve a sanitized extension whitelisted to known media formats.
         raw_ext = os.path.splitext(file.filename or "")[1].lower()
-        safe_ext = raw_ext if raw_ext in {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi"} else ".mp4"
-        input_path = os.path.join(UPLOAD_DIR, f"{job_id}{safe_ext}")
+        allowed_ext = {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi"}
+        if raw_ext not in allowed_ext:
+            # Reject unknown extensions explicitly instead of silently
+            # treating them as .mp4 (which produced confusing downstream
+            # ffmpeg failures on non-video uploads).
+            shutil.rmtree(job_output_dir, ignore_errors=True)
+            raise HTTPException(
+                status_code=400,
+                detail="Unsupported file type. Allowed: .mp4, .mov, .mkv, .webm, .m4v, .avi",
+            )
+        input_path = os.path.join(UPLOAD_DIR, f"{job_id}{raw_ext}")
         try:
             await stream_upload_within_limit(file, input_path, MAX_FILE_SIZE_MB * 1024 * 1024)
         except FileTooLarge as exc:
