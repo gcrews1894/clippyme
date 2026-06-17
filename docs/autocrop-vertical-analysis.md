@@ -107,9 +107,10 @@ no-op boundaries, and the never-raise contract.
 - **fps-source mismatch (concern #3).** Rather than re-plumb every fps read, the
   VFR normalize + CFR-locked output neutralize the drift the mismatch could
   cause. Noted as a deferred hardening (an explicit cv2-vs-PySceneDetect assert).
-- **`_render_global_smooth` opt-in path** shares the same single-write model, so
-  the corrupt-frame guard is not applied there yet — that path is opt-in and
-  off by default; noted for a follow-up if it graduates.
+- **`_render_global_smooth` opt-in path** shares the same single-write model; the
+  corrupt-frame guard was extended to its pass-2 render loop too (follow-up
+  commit), so both render paths now duplicate the last good frame rather than
+  aborting.
 - **Heavy ports skipped.** HW encoder, quality/ratio CLI flags are real but off
   ClippyMe's product axis (dashboard-driven, containerized libx264) — catalogued
   as deferred, honouring "Non riscrivere tutto."
