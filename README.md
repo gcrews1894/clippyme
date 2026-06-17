@@ -57,7 +57,7 @@ Given a video URL or upload, ClippyMe runs the following pipeline end-to-end:
 1. **Download** with `yt-dlp` (Deno-based JS runtime to bypass YouTube bot detection, optional cookies for age-gated content).
 2. **Transcribe** with **Deepgram Nova-3** by default (multi-language, code-switching EN/IT) — automatic fallback to local **Faster-Whisper** if no key or network failure. Cached on disk for 7 days keyed by URL hash.
 3. **Detect viral moments** with **Google Gemini**. A 5-axis viral_score rubric (HOOK_STRENGTH, EMOTIONAL_PAYOFF, QUOTABILITY, SELF_CONTAINED, DENSITY) plus a 5-level robust JSON parser tolerates malformed model output.
-4. **Reframe to 9:16** with active-speaker tracking: YOLOv8 person detection + MediaPipe FaceMesh mouth-aspect-ratio (MAR) variance to pick who is speaking, then a smoothed cameraman that adapts speed and zoom per scene.
+4. **Reframe to 9:16** with active-speaker tracking: YOLOv8 person detection + MediaPipe FaceMesh mouth-aspect-ratio (MAR) variance to pick who is speaking, then a smoothed cameraman that adapts speed and zoom per scene. Hardened against messy real-world inputs: variable-frame-rate normalization, audio `start_time` compensation (YouTube A/V desync), and corrupt-frame resilience — all no-ops on clean sources.
 5. **Post-process** each clip: Ken Burns auto-zoom (1.0→1.05×), EBU R128 audio normalization to −14 LUFS, automatic cover frame selection.
 6. **Optional editing** at download time (compose-on-demand): **Smart Cut** (filler-word + silence removal via auto-editor v3 timeline + audio polish), **Hook** text overlay (Pillow + emoji), **Subtitles** (6 ASS karaoke presets or classic SRT, pixel-faithful frontend preview).
 7. **Publish or schedule** to TikTok / Instagram / YouTube via **Zernio**, with a SmartScheduler that picks Italian-prime-time slots, avoids same-day collisions, and handles per-platform daily-limit 429s by skipping exhausted platforms across a batch.
@@ -162,6 +162,9 @@ src/clippyme/
     deepgram_transcribe.py   Deepgram Nova-3 REST client (retry/backoff, keyterms)
     gemini_parser.py  5-level JSON parsing chain + Pydantic validation + dedupe
     gemini_service.py List available Gemini models
+    reframe.py        cv2/YOLO/MediaPipe glue: SpeakerTracker + SmoothedCameraman
+    reframe_ops.py    Pure decision math (no cv2 → host-tested): smoothers, zoom
+    media_probe.py    cv2-free ffprobe + A/V-sync helpers (VFR, start_time, fps)
   domain/             Endpoint-facing business logic
     compose.py        Smart Cut → Hook → Subtitles compose pipeline
     clip_endpoints.py        Smart Cut + history restore helpers
@@ -247,7 +250,7 @@ Three per-scene strategies, decided by sampling 7 frames per scene:
 - **WIDE** — multi-speaker → same tracker with longer cooldown (45 frames ≈ 1.5 s) for interview-style switching.
 - **GENERAL** — no faces → letterbox.
 
-**Lost-subject recovery:** in TRACK/WIDE, if no speaker is detected for `REFRAME_LOST_HOLD` frames (~3 s) the camera eases back to the source center and gently zooms out instead of freezing on empty space. The active-speaker camera can optionally use a 1€ adaptive filter (`REFRAME_SMOOTHER=euro`) in place of the default two-speed EMA. The pure decision math lives in the cv2-free, host-tested `clippyme.pipeline.reframe_ops` module.
+**Lost-subject recovery:** in TRACK/WIDE, if no speaker is detected for `REFRAME_LOST_HOLD` frames (~3 s) the camera eases back to the source center and gently zooms out instead of freezing on empty space. The active-speaker camera can optionally use a 1€ adaptive filter (`REFRAME_SMOOTHER=euro`) or a momentum/damped-spring smoother (`REFRAME_SMOOTHER=spring`) in place of the default two-speed EMA, with an optional hard pan-rate cap (`REFRAME_MAX_STEP_PX`). An opt-in two-pass global trajectory smoother (`REFRAME_GLOBAL_SMOOTH=1`, method `savgol`/`kalman`/`l2`) Savitzky-Golay-smooths the whole camera path per scene. The pure decision math lives in the cv2-free, host-tested `clippyme.pipeline.reframe_ops` module; ffprobe-backed A/V-sync helpers (VFR detection, stream `start_time`, fps reconcile) live alongside in `media_probe.py`.
 
 Override per job: `--reframe-mode disabled` forces a 4:3 center crop with black bars.
 
@@ -298,3 +301,4 @@ The CPU image runs everywhere (Linux x86_64, ARM64, Apple Silicon via Docker Des
 - [OpenShorts](https://github.com/SamurAIGPT/Open-Source-Shorts-Maker) — original starting point.
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp), [Faster-Whisper](https://github.com/SYSTRAN/faster-whisper), [Deepgram](https://deepgram.com), [Google Gemini](https://ai.google.dev), [Ultralytics YOLO](https://github.com/ultralytics/ultralytics), [MediaPipe](https://github.com/google/mediapipe), [auto-editor](https://github.com/WyattBlue/auto-editor), [Zernio](https://zernio.com).
 - [shadcn/ui](https://ui.shadcn.com), [Radix UI](https://www.radix-ui.com), [Tailwind CSS](https://tailwindcss.com).
+- Reframe-algorithm research studied and selectively ported (see `docs/*-analysis.md`): [gauravzazz/smart-reframe](https://github.com/gauravzazz/smart-reframe), [KazKozDev/auto-vertical-reframe](https://github.com/KazKozDev/auto-vertical-reframe), [obi19999/smart-video-reframe](https://github.com/obi19999/smart-video-reframe), [mfahsold/montage-ai](https://github.com/mfahsold/montage-ai), [kamilstanuch/Autocrop-vertical](https://github.com/kamilstanuch/Autocrop-vertical).
