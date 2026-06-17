@@ -11,7 +11,7 @@ ClippyMe is a self-hosted AI video platform that transforms long-form videos (Yo
 All Python backend code lives under `src/clippyme/` (src-layout, installed via `pip install -e .`):
 
 - `src/clippyme/api/` — FastAPI app (`app.py`), `schemas.py`, `security.py`
-- `src/clippyme/pipeline/` — `main.py` orchestrator, `deepgram_transcribe.py`, `gemini_parser.py`, `gemini_service.py`
+- `src/clippyme/pipeline/` — `main.py` orchestrator, `deepgram_transcribe.py`, `gemini_parser.py`, `gemini_service.py`, plus extracted cv2-free stages (`transcribe_cache.py`, `download.py`, `scene_detection.py`, `postprocess.py`) and pure-math `reframe_ops.py`. (The cv2/YOLO/MediaPipe reframe + transcription stages still live in `main.py`.)
 - `src/clippyme/domain/` — `compose.py`, `clip_endpoints.py`, `job_results.py`, `job_artifacts.py`, `job_worker.py`, `history_service.py`, `subtitles.py`, `smartcut.py`, `hooks.py`
 - `src/clippyme/integrations/` — `social_publisher.py`, `auto_editor_updater.py`
 - `src/clippyme/storage/` — `config_store.py`
