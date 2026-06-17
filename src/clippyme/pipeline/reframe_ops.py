@@ -111,6 +111,44 @@ def drift_to_center(current: float, center: float, frames_since_seen: int,
     return current + (center - current) * drift_rate
 
 
+# --- zoom control (ported from smart-reframe ZoomController) -----------------
+
+def zoom_for_face_height(face_h: float, max_crop_h: float,
+                         target_occupancy: float = 0.4,
+                         min_zoom: float = 1.0, max_zoom: float = 1.6) -> float:
+    """Continuous close-up correction: pick the zoom factor that makes the face
+    occupy ``target_occupancy`` of the crop height, clamped to [min, max].
+
+    Replaces the old 4-bucket step ladder (1.0/1.15/1.3/1.5), which snapped
+    visibly whenever a face crossed a bucket edge. In ClippyMe's convention the
+    crop height is ``max_crop_h / zoom`` (larger zoom ⇒ tighter crop), so a face
+    of height ``face_h`` occupies ``face_h * zoom / max_crop_h`` of the frame.
+    Solving ``occupancy == target_occupancy`` gives ``zoom = max_crop_h *
+    target_occupancy / face_h``. Adapted from smart-reframe's
+    ``needed_zoom_for_size`` (gauravzazz/smart-reframe, framing/zoom.py).
+    """
+    if face_h <= 0:
+        return min_zoom
+    zoom = max_crop_h * target_occupancy / face_h
+    return max(min_zoom, min(zoom, max_zoom))
+
+
+def asymmetric_zoom_step(current: float, target: float,
+                         rate_in: float, rate_out: float) -> float:
+    """Ease ``current`` toward ``target`` with direction-dependent speed.
+
+    Pull-back (target < current ⇒ a bigger crop) uses the fast ``rate_out`` so
+    the camera never lingers cropped-in while a face grows or a second person
+    enters; push-in (target > current) uses the slow ``rate_in`` for a
+    cinematic feel. Ported from smart-reframe's asymmetric zoom smoothing
+    (framing/zoom.py:117-130), translated into ClippyMe's inverted zoom
+    convention (smaller factor = wider crop = pull-back).
+    """
+    diff = target - current
+    rate = rate_in if diff > 0 else rate_out
+    return current + diff * rate
+
+
 # --- saliency-based crop selection (faceless scenes) ------------------------
 
 def salient_crop_center(column_energy, crop_w: float, frame_w: float,
@@ -184,4 +222,57 @@ def savgol_1d(values, window: int, polyorder: int):
             out[i] = cw[0]
         else:
             out[i] = center_coeffs @ v[lo:hi + 1]
+    return out
+
+
+def smooth_and_clamp(values, window: int, polyorder: int,
+                     lo: float, hi: float):
+    """Savitzky-Golay smooth a full 1-D trajectory, then clamp into [lo, hi].
+
+    The wired entry point for the two-stage track-then-render reframe pass: a
+    cheap, deterministic analogue of smart-reframe's Viterbi ``PathSolver``.
+    Where they globally optimise the crop path with dynamic programming over
+    per-frame saliency maps, we record the per-frame camera targets in pass one
+    and globally low-pass them here before rendering in pass two — same goal
+    (a smooth, jitter-free global trajectory) at a fraction of the cost.
+    """
+    smoothed = savgol_1d(values, window, polyorder)
+    return np.clip(smoothed, lo, hi)
+
+
+def build_smoothed_trajectory(targets, scene_ids, window: int, polyorder: int,
+                              x_max: float, y_max: float,
+                              min_zoom: float = 1.0, max_zoom: float = 1.6):
+    """Smooth a recorded ``(cx, cy, zoom)`` camera trajectory, per scene segment.
+
+    ``targets[i]`` is the raw per-frame camera target (or ``None`` for frames
+    that bypass the cameraman, e.g. GENERAL/DISABLED). ``scene_ids[i]`` is the
+    scene index of frame ``i``. Each maximal run of consecutive non-None frames
+    that share a scene index is low-passed independently with ``savgol_1d`` —
+    so the smoother never pans across a hard cut — and clamped to the source
+    bounds. ``None`` entries pass through unchanged, preserving length.
+
+    This is the host-testable core of the two-stage track-then-render reframe
+    pass; the cv2 glue in ``reframe.py`` records ``targets`` in pass one and
+    renders from the smoothed result in pass two.
+    """
+    n = len(targets)
+    out = [None] * n
+    i = 0
+    while i < n:
+        if targets[i] is None:
+            i += 1
+            continue
+        # Extend a run while frames are non-None and in the same scene.
+        j = i
+        sid = scene_ids[i]
+        while j < n and targets[j] is not None and scene_ids[j] == sid:
+            j += 1
+        seg = targets[i:j]
+        xs = smooth_and_clamp([t[0] for t in seg], window, polyorder, 0.0, x_max)
+        ys = smooth_and_clamp([t[1] for t in seg], window, polyorder, 0.0, y_max)
+        zs = smooth_and_clamp([t[2] for t in seg], window, polyorder, min_zoom, max_zoom)
+        for k in range(j - i):
+            out[i + k] = (float(xs[k]), float(ys[k]), float(zs[k]))
+        i = j
     return out

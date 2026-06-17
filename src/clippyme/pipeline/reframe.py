@@ -9,16 +9,26 @@ logic out of ``main``. Verified against mediapipe 0.10.14 in the Docker image.
 import math
 import os
 import subprocess
+import sys
 import time
 
 import cv2
 import numpy as np
 import torch
 import mediapipe as mp
+from tqdm import tqdm
 from ultralytics import YOLO
 
 from clippyme.pipeline.hardware import DEVICE
-from clippyme.pipeline.reframe_ops import OneEuroFilter, drift_to_center, salient_crop_center
+from clippyme.pipeline.reframe_ops import (
+    OneEuroFilter,
+    asymmetric_zoom_step,
+    build_smoothed_trajectory,
+    drift_to_center,
+    salient_crop_center,
+    smooth_and_clamp,
+    zoom_for_face_height,
+)
 from clippyme.pipeline.scene_detection import detect_scenes, get_video_resolution
 
 # Set per-job by main before process_video_to_vertical runs (9:16 default).
@@ -158,6 +168,11 @@ class SmoothedCameraman:
     SMOOTHING_SLOW = 0.08   # cinematic glide for small/medium moves
     SMOOTHING_FAST = 0.30   # aggressive catch-up for large jumps
     FAST_THRESHOLD_RATIO = 0.6  # diff > this * crop_width → use fast smoothing
+    # Asymmetric zoom rates (ported from smart-reframe): push IN slowly for a
+    # cinematic feel, pull BACK fast so a growing face / arriving second person
+    # is never left chopped while the crop catches up.
+    ZOOM_RATE_IN = 0.05     # zooming in (tighter crop) — slow
+    ZOOM_RATE_OUT = 0.12    # pulling back (wider crop) — fast
 
     def __init__(self, output_width, output_height, video_width, video_height):
         self.output_width = output_width
@@ -238,16 +253,14 @@ class SmoothedCameraman:
         else:
             self.target_center_y = y + h / 2
             # Zoom in proportionally to face size — small faces (talking head in
-            # wide shot) trigger more zoom; large faces stay at 1.0.
-            face_height_ratio = h / self.video_height
-            if face_height_ratio < 0.15:
-                self.target_zoom = 1.5  # tight zoom
-            elif face_height_ratio < 0.25:
-                self.target_zoom = 1.3  # medium zoom
-            elif face_height_ratio < 0.4:
-                self.target_zoom = 1.15  # gentle zoom
-            else:
-                self.target_zoom = 1.0  # no zoom (face already fills frame)
+            # wide shot) trigger more zoom; large faces stay at 1.0. Continuous
+            # face-occupancy target (ported from smart-reframe) replaces the old
+            # 4-bucket ladder, which snapped visibly at bucket edges. 1.6 ceiling
+            # matches min_crop (= max_crop/1.6); face aims for ~40% of crop height.
+            self.target_zoom = zoom_for_face_height(
+                h, self.max_crop_height, target_occupancy=0.4,
+                min_zoom=1.0, max_zoom=1.6,
+            )
 
     def _ease_axis(self, current: float, target: float, safe_radius: float, fast_ref: float) -> float:
         """Adaptive easing for a single axis. Returns the new current value."""
@@ -308,10 +321,13 @@ class SmoothedCameraman:
                     self.current_center_y, self.target_center_y,
                     self.safe_zone_radius_y, self.max_crop_height,
                 )
-            # Zoom animates more slowly than position to feel cinematic
-            zoom_diff = self.target_zoom - self.current_zoom
-            if abs(zoom_diff) > 0.01:
-                self.current_zoom += zoom_diff * 0.05
+            # Zoom animates more slowly than position to feel cinematic, and
+            # asymmetrically: fast pull-back, slow push-in (smart-reframe port).
+            if abs(self.target_zoom - self.current_zoom) > 0.01:
+                self.current_zoom = asymmetric_zoom_step(
+                    self.current_zoom, self.target_zoom,
+                    self.ZOOM_RATE_IN, self.ZOOM_RATE_OUT,
+                )
 
         # Recompute crop dims from current zoom
         self.crop_width = max(self.min_crop_width, int(self.max_crop_width / self.current_zoom))
@@ -331,6 +347,24 @@ class SmoothedCameraman:
         y1 = max(0, int(cy - half_h))
         y2 = min(self.video_height, int(cy + half_h))
 
+        return x1, y1, x2, y2
+
+    def crop_box_at(self, cx: float, cy: float, zoom: float):
+        """Crop box (x1, y1, x2, y2) for an explicit center + zoom, with no
+        easing. Used by the two-stage global-smoothing render pass, which feeds
+        in a pre-smoothed trajectory instead of letting the camera ease online.
+        Shares the exact crop-dim + clamp math of ``get_crop_box``.
+        """
+        crop_width = max(self.min_crop_width, int(self.max_crop_width / zoom))
+        crop_height = max(self.min_crop_height, int(self.max_crop_height / zoom))
+        half_w = crop_width / 2
+        half_h = crop_height / 2
+        cx = max(half_w, min(self.video_width - half_w, cx))
+        cy = max(half_h, min(self.video_height - half_h, cy))
+        x1 = max(0, int(cx - half_w))
+        x2 = min(self.video_width, int(cx + half_w))
+        y1 = max(0, int(cy - half_h))
+        y2 = min(self.video_height, int(cy + half_h))
         return x1, y1, x2, y2
 
 class SpeakerTracker:
@@ -725,6 +759,104 @@ def create_disabled_reframe(frame, output_width, output_height):
 
     return canvas
 
+def _render_global_smooth(input_video, ffmpeg_process, cameraman, speaker_tracker,
+                          detection_smoother, scene_boundaries, scene_strategies,
+                          output_width, output_height, original_width, original_height,
+                          total_frames, fps):
+    """Two-stage track-then-render reframe (opt-in via REFRAME_GLOBAL_SMOOTH).
+
+    Pass 1 decodes the clip and records the raw per-frame camera target
+    (center_x, center_y, zoom) without any online easing. The full trajectory
+    is then low-passed per scene segment with a Savitzky-Golay filter
+    (``build_smoothed_trajectory``) so the camera follows one globally smooth
+    path instead of reacting frame-by-frame. Pass 2 re-decodes and renders each
+    frame from the smoothed trajectory. This is ClippyMe's cheap, deterministic
+    analogue of smart-reframe's offline Viterbi ``PathSolver``.
+
+    Trades a second decode pass for a markedly smoother result; default-off so
+    the proven single-pass streaming path is untouched.
+    """
+    win = int(round(fps * 0.7))
+    if win % 2 == 0:
+        win += 1
+    win = max(5, win)
+
+    # --- Pass 1: record raw trajectory -------------------------------------
+    targets, scene_ids, strategies = [], [], []
+    cap = cv2.VideoCapture(input_video)
+    frame_number = 0
+    current_scene_index = 0
+    print("   🔁 Global-smooth pass 1/2: tracking trajectory...")
+    with tqdm(total=total_frames, desc="   Pass 1", file=sys.stdout) as pbar:
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
+            if current_scene_index < len(scene_boundaries):
+                _, end_f = scene_boundaries[current_scene_index]
+                if frame_number >= end_f and current_scene_index < len(scene_boundaries) - 1:
+                    current_scene_index += 1
+            strat = scene_strategies[current_scene_index] if current_scene_index < len(scene_strategies) else 'TRACK'
+            strategies.append(strat)
+            scene_ids.append(current_scene_index)
+            if strat in ('DISABLED', 'GENERAL'):
+                targets.append(None)
+            else:
+                if frame_number % 2 == 0:
+                    candidates = detect_face_candidates(frame)
+                    candidates = detection_smoother.smooth(candidates, frame_number)
+                    for cand in candidates:
+                        cand['mar'] = compute_mouth_aspect_ratio(frame, cand['box'])
+                    target_box = speaker_tracker.get_target(candidates, frame_number, original_width)
+                    if target_box:
+                        cameraman.update_target(target_box)
+                    elif strat == 'TRACK':
+                        person_box = detect_person_yolo(frame)
+                        if person_box:
+                            cameraman.update_target(person_box, is_person_box=True)
+                targets.append((cameraman.target_center_x, cameraman.target_center_y, cameraman.target_zoom))
+            frame_number += 1
+            pbar.update(1)
+    cap.release()
+
+    # --- Global smoothing pass ---------------------------------------------
+    smoothed = build_smoothed_trajectory(
+        targets, scene_ids, window=win, polyorder=2,
+        x_max=original_width, y_max=original_height,
+        min_zoom=1.0, max_zoom=1.6,
+    )
+
+    # --- Pass 2: render from the smoothed trajectory -----------------------
+    print("   🔁 Global-smooth pass 2/2: rendering...")
+    cap = cv2.VideoCapture(input_video)
+    frame_number = 0
+    with tqdm(total=total_frames, desc="   Pass 2", file=sys.stdout) as pbar:
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
+            strat = strategies[frame_number] if frame_number < len(strategies) else 'TRACK'
+            if strat == 'DISABLED':
+                output_frame = create_disabled_reframe(frame, output_width, output_height)
+            elif strat == 'GENERAL':
+                output_frame = create_general_frame(frame, output_width, output_height)
+            else:
+                tgt = smoothed[frame_number] if frame_number < len(smoothed) else None
+                if tgt is None:
+                    output_frame = cv2.resize(frame, (output_width, output_height))
+                else:
+                    cx, cy, zoom = tgt
+                    x1, y1, x2, y2 = cameraman.crop_box_at(cx, cy, zoom)
+                    if y2 > y1 and x2 > x1:
+                        output_frame = cv2.resize(frame[y1:y2, x1:x2], (output_width, output_height))
+                    else:
+                        output_frame = cv2.resize(frame, (output_width, output_height))
+            ffmpeg_process.stdin.write(output_frame.tobytes())
+            frame_number += 1
+            pbar.update(1)
+    cap.release()
+
+
 def process_video_to_vertical(input_video, final_output_video, reframe_mode='auto'):
     """
     Core logic to convert horizontal video to vertical using scene detection and Active Speaker Tracking (MediaPipe).
@@ -810,8 +942,25 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
         speaker_tracker = SpeakerTracker(cooldown_frames=45)
         detection_smoother = DetectionSmoother(window_size=5)
 
+        # Opt-in two-stage global trajectory smoothing (REFRAME_GLOBAL_SMOOTH).
+        # When on, a dedicated track-then-render pass handles all frames and the
+        # single-pass streaming loop below is skipped (its `while` short-circuits
+        # on `not global_smooth`). Default-off keeps the proven path byte-identical.
+        global_smooth = (
+            os.getenv("REFRAME_GLOBAL_SMOOTH", "").strip().lower() in ("1", "true", "yes", "on")
+            and reframe_mode != 'disabled'
+        )
+        if global_smooth:
+            _render_global_smooth(
+                input_video, ffmpeg_process, cameraman,
+                speaker_tracker, detection_smoother,
+                scene_boundaries, scene_strategies,
+                OUTPUT_WIDTH, OUTPUT_HEIGHT,
+                original_width, original_height, total_frames, fps,
+            )
+
         with tqdm(total=total_frames, desc="   Processing", file=sys.stdout) as pbar:
-            while cap.isOpened():
+            while cap.isOpened() and not global_smooth:
                 ret, frame = cap.read()
                 if not ret:
                     break

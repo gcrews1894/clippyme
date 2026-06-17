@@ -139,3 +139,135 @@ def test_savgol_reduces_noise_variance():
     noisy = clean + rng.normal(0, 0.3, size=300)
     smoothed = ro.savgol_1d(noisy, window=21, polyorder=3)
     assert np.var(smoothed - clean) < np.var(noisy - clean)
+
+
+# --- zoom_for_face_height (continuous close-up correction) ------------------
+# Ported from smart-reframe ZoomController: target a constant face-occupancy of
+# the crop instead of ClippyMe's coarse 4-bucket zoom (which snaps visibly at
+# bucket edges). zoom = max_crop_h * target_occupancy / face_h, clamped.
+
+def test_zoom_for_face_tiny_face_hits_max_zoom():
+    # A small talking head in a wide shot → zoom all the way in (clamped).
+    assert ro.zoom_for_face_height(face_h=40, max_crop_h=1080) == 1.6
+
+
+def test_zoom_for_face_large_face_hits_min_zoom():
+    # Face already fills the frame → no zoom.
+    assert ro.zoom_for_face_height(face_h=900, max_crop_h=1080) == 1.0
+
+
+def test_zoom_for_face_midsize_is_continuous_value():
+    z = ro.zoom_for_face_height(face_h=360, max_crop_h=1080, target_occupancy=0.4)
+    assert z == pytest.approx(1.2, abs=1e-6)  # 0.4*1080/360 = 1.2
+
+
+def test_zoom_for_face_is_monotonic_decreasing():
+    zs = [ro.zoom_for_face_height(face_h=h, max_crop_h=1080) for h in (50, 150, 300, 600)]
+    assert zs == sorted(zs, reverse=True)
+
+
+def test_zoom_for_face_nonpositive_height_is_min_zoom():
+    assert ro.zoom_for_face_height(face_h=0, max_crop_h=1080) == 1.0
+
+
+# --- asymmetric_zoom_step (fast pull-back / slow push-in) -------------------
+# smart-reframe's signature cinematic move: pull back FAST (never chop a face
+# that grew/added a person), push in SLOW (cinematic). In ClippyMe's zoom
+# convention a *smaller* zoom factor = bigger crop = pulling back.
+
+def test_asym_zoom_push_in_uses_slow_rate():
+    # target > current → zooming IN → slow rate.
+    out = ro.asymmetric_zoom_step(1.0, 1.5, rate_in=0.05, rate_out=0.20)
+    assert out == pytest.approx(1.0 + 0.5 * 0.05)
+
+
+def test_asym_zoom_pull_back_uses_fast_rate():
+    # target < current → pulling BACK → fast rate.
+    out = ro.asymmetric_zoom_step(1.5, 1.0, rate_in=0.05, rate_out=0.20)
+    assert out == pytest.approx(1.5 - 0.5 * 0.20)
+
+
+def test_asym_zoom_pull_back_faster_than_push_in():
+    step_in = abs(ro.asymmetric_zoom_step(1.0, 1.4, 0.05, 0.20) - 1.0)
+    step_out = abs(ro.asymmetric_zoom_step(1.4, 1.0, 0.05, 0.20) - 1.4)
+    assert step_out > step_in
+
+
+def test_asym_zoom_converges_to_target():
+    cur = 1.0
+    for _ in range(200):
+        cur = ro.asymmetric_zoom_step(cur, 1.45, 0.05, 0.20)
+    assert cur == pytest.approx(1.45, abs=1e-3)
+
+
+# --- smooth_and_clamp (global two-stage trajectory pass) --------------------
+# Wires the dormant savgol_1d: smooth a full recorded crop trajectory offline,
+# then clamp each value into a valid range. This is the cheap, deterministic
+# analogue of smart-reframe's Viterbi PathSolver.
+
+def test_smooth_and_clamp_preserves_length():
+    v = list(range(40))
+    assert len(ro.smooth_and_clamp(v, window=7, polyorder=2, lo=0, hi=39)) == 40
+
+
+def test_smooth_and_clamp_reduces_noise():
+    rng = np.random.default_rng(7)
+    clean = np.linspace(100, 900, 200)
+    noisy = clean + rng.normal(0, 25, size=200)
+    out = ro.smooth_and_clamp(noisy, window=21, polyorder=2, lo=0, hi=1000)
+    assert np.var(out - clean) < np.var(noisy - clean)
+
+
+def test_smooth_and_clamp_respects_bounds():
+    v = [-500.0, 50.0, 2000.0, 50.0, -500.0]
+    out = ro.smooth_and_clamp(v, window=3, polyorder=1, lo=0.0, hi=100.0)
+    assert all(0.0 <= x <= 100.0 for x in out)
+
+
+# --- build_smoothed_trajectory (two-stage track-then-render glue) -----------
+# Records per-frame raw camera targets, then globally low-passes them PER SCENE
+# SEGMENT so the smoother never pans across a hard cut. None entries (GENERAL /
+# DISABLED frames that don't use the cameraman) pass straight through.
+
+def test_trajectory_preserves_length_and_none_gaps():
+    targets = [(100.0, 50.0, 1.0), None, (110.0, 55.0, 1.1), (120.0, 60.0, 1.2)]
+    scene_ids = [0, 0, 0, 0]
+    out = ro.build_smoothed_trajectory(targets, scene_ids, window=3, polyorder=1,
+                                       x_max=1920, y_max=1080)
+    assert len(out) == 4
+    assert out[1] is None  # gap preserved
+
+
+def test_trajectory_does_not_smooth_across_scene_cut():
+    # Two scenes with a big jump at the cut. Each side is constant, so smoothing
+    # within-segment must leave each side's value essentially unchanged (no
+    # bleed of scene 1's position into scene 0).
+    targets = [(100.0, 50.0, 1.0)] * 4 + [(900.0, 50.0, 1.0)] * 4
+    scene_ids = [0, 0, 0, 0, 1, 1, 1, 1]
+    out = ro.build_smoothed_trajectory(targets, scene_ids, window=5, polyorder=1,
+                                       x_max=1920, y_max=1080)
+    assert out[3][0] == pytest.approx(100.0, abs=1.0)
+    assert out[4][0] == pytest.approx(900.0, abs=1.0)
+
+
+def test_trajectory_reduces_jitter_within_segment():
+    rng = np.random.default_rng(3)
+    base_x = np.linspace(200, 800, 60)
+    noisy = [(float(x + rng.normal(0, 40)), 540.0, 1.2) for x in base_x]
+    scene_ids = [0] * 60
+    out = ro.build_smoothed_trajectory(noisy, scene_ids, window=15, polyorder=2,
+                                       x_max=1920, y_max=1080)
+    sm_x = np.array([o[0] for o in out])
+    noisy_x = np.array([t[0] for t in noisy])
+    assert np.var(sm_x - base_x) < np.var(noisy_x - base_x)
+
+
+def test_trajectory_clamps_to_bounds():
+    targets = [(-50.0, -50.0, 5.0), (5000.0, 5000.0, 5.0)]
+    scene_ids = [0, 0]
+    out = ro.build_smoothed_trajectory(targets, scene_ids, window=3, polyorder=1,
+                                       x_max=1920, y_max=1080)
+    for cx, cy, z in out:
+        assert 0.0 <= cx <= 1920
+        assert 0.0 <= cy <= 1080
+        assert 1.0 <= z <= 1.6
