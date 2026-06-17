@@ -20,6 +20,11 @@ from tqdm import tqdm
 from ultralytics import YOLO
 
 from clippyme.pipeline.hardware import DEVICE
+from clippyme.pipeline.media_probe import (
+    audio_sync_seek_args,
+    probe_is_variable_frame_rate,
+    probe_stream_start_time,
+)
 from clippyme.pipeline.reframe_ops import (
     OneEuroFilter,
     advance_value_with_velocity,
@@ -909,11 +914,40 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
     base_name = os.path.splitext(final_output_video)[0]
     temp_video_output = f"{base_name}_temp_video.mp4"
     temp_audio_output = f"{base_name}_temp_audio.aac"
-    
+    temp_cfr_input = f"{base_name}_temp_cfr_input.mp4"
+
     # Clean up previous temp files if they exist
     if os.path.exists(temp_video_output): os.remove(temp_video_output)
     if os.path.exists(temp_audio_output): os.remove(temp_audio_output)
+    if os.path.exists(temp_cfr_input): os.remove(temp_cfr_input)
     if os.path.exists(final_output_video): os.remove(final_output_video)
+
+    # --- VFR → CFR pre-normalization (ported from kamilstanuch/Autocrop-vertical) ---
+    # The render loop decodes frames with OpenCV and re-emits them at a *fixed*
+    # `-r fps`. If the source is variable-frame-rate (phone uploads, some YouTube
+    # downloads), its real per-frame timing wanders from the nominal rate, so the
+    # fixed-rate output drifts against the stream-copied audio. Detect VFR up front
+    # and re-mux to constant frame rate first. This is a no-op for the common case:
+    # the normal pipeline feeds already-re-encoded CFR clip slices, so detection
+    # returns False and the proven path stays byte-identical. Only the whole-video
+    # fallback / standalone --reframe-only on a raw download pays the extra pass.
+    if probe_is_variable_frame_rate(input_video):
+        print("   ⚠️ Variable frame rate detected — normalizing to constant frame rate first...")
+        cfr_cmd = [
+            'ffmpeg', '-y', '-i', input_video,
+            '-vsync', 'cfr', '-c:v', 'libx264', '-preset', 'fast', '-crf', '18',
+            '-c:a', 'copy', temp_cfr_input,
+        ]
+        try:
+            subprocess.run(cfr_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            input_video = temp_cfr_input
+            print("   ✅ VFR normalization complete.")
+        except subprocess.CalledProcessError:
+            # Non-fatal: fall back to the original file (sync may be imperfect, but
+            # a failed normalization must never abort the whole clip).
+            print("   ⚠️ VFR normalization failed; proceeding with the original file.")
+            if os.path.exists(temp_cfr_input):
+                os.remove(temp_cfr_input)
 
     print(f"🎬 Processing clip: {input_video}")
     if reframe_mode == 'disabled':
@@ -960,6 +994,13 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
         'ffmpeg', '-y', '-f', 'rawvideo', '-vcodec', 'rawvideo',
         '-s', f'{OUTPUT_WIDTH}x{OUTPUT_HEIGHT}', '-pix_fmt', 'bgr24',
         '-r', str(fps), '-i', '-', '-c:v', 'libx264',
+        # -pix_fmt yuv420p: the raw input is bgr24; without this libx264 may pick a
+        # non-subsampled format (yuv444p) that some players/mobile decoders reject.
+        # Later post-process passes (zoom/subtitles) already force 420p, but a clip
+        # with those skipped would otherwise ship a non-420p codec.
+        # -vsync cfr: lock output to a constant frame rate matching `-r`.
+        # (Both ported from kamilstanuch/Autocrop-vertical.)
+        '-pix_fmt', 'yuv420p', '-vsync', 'cfr',
         '-preset', 'fast', '-crf', '23', '-an', temp_video_output
     ]
 
@@ -972,7 +1013,13 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
     
         frame_number = 0
         current_scene_index = 0
-    
+        # Corrupt/failed-frame resilience (ported from kamilstanuch/Autocrop-vertical):
+        # if a single frame raises mid-processing, duplicate the last good output
+        # instead of letting the exception abort the whole render (which would
+        # truncate the video and desync the full-length stream-copied audio).
+        dropped_frames = 0
+        last_output_frame = None
+
         # Pre-calculate scene boundaries
         scene_boundaries = []
         for s_start, s_end in scenes:
@@ -1016,57 +1063,70 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
                 # Determine Strategy for current frame based on scene
                 current_strategy = scene_strategies[current_scene_index] if current_scene_index < len(scene_strategies) else 'TRACK'
             
-                # Apply Strategy
-                if current_strategy == 'DISABLED':
-                    output_frame = create_disabled_reframe(frame, OUTPUT_WIDTH, OUTPUT_HEIGHT)
+                # Apply Strategy. Guarded so a single malformed frame (bad crop,
+                # corrupt decode) duplicates the previous good output rather than
+                # aborting the render and truncating the clip.
+                try:
+                    if current_strategy == 'DISABLED':
+                        output_frame = create_disabled_reframe(frame, OUTPUT_WIDTH, OUTPUT_HEIGHT)
 
-                elif current_strategy == 'GENERAL':
-                    # No faces detected anywhere in scene → letterbox fallback
-                    output_frame = create_general_frame(frame, OUTPUT_WIDTH, OUTPUT_HEIGHT)
-                    cameraman.current_center_x = original_width / 2
-                    cameraman.target_center_x = original_width / 2
-                    cameraman.current_center_y = original_height / 2
-                    cameraman.target_center_y = original_height / 2
-                    cameraman.current_zoom = 1.0
-                    cameraman.target_zoom = 1.0
+                    elif current_strategy == 'GENERAL':
+                        # No faces detected anywhere in scene → letterbox fallback
+                        output_frame = create_general_frame(frame, OUTPUT_WIDTH, OUTPUT_HEIGHT)
+                        cameraman.current_center_x = original_width / 2
+                        cameraman.target_center_x = original_width / 2
+                        cameraman.current_center_y = original_height / 2
+                        cameraman.target_center_y = original_height / 2
+                        cameraman.current_zoom = 1.0
+                        cameraman.target_zoom = 1.0
 
-                else:
-                    # TRACK (single speaker) or WIDE (multi-speaker) — both use the
-                    # same active-speaker tracker now. WIDE relies on MAR-variance
-                    # to pick whichever face is currently talking, switching
-                    # dynamically with cooldown protection.
-                    if frame_number % 2 == 0:
-                        candidates = detect_face_candidates(frame)
-                        candidates = detection_smoother.smooth(candidates, frame_number)
-                        for cand in candidates:
-                            cand['mar'] = compute_mouth_aspect_ratio(frame, cand['box'])
-                        target_box = speaker_tracker.get_target(candidates, frame_number, original_width)
-                        if target_box:
-                            cameraman.update_target(target_box)
-                        elif current_strategy == 'TRACK':
-                            # Single-speaker scene: fall back to YOLO body detection
-                            person_box = detect_person_yolo(frame)
-                            if person_box:
-                                cameraman.update_target(person_box, is_person_box=True)
-                        # WIDE: if no face detected this frame, just keep the
-                        # cameraman's current target (don't fall back to body
-                        # tracking which would jump to a random person).
-
-                    # Snap camera on scene change to avoid panning from previous scene position
-                    is_scene_start = (frame_number == scene_boundaries[current_scene_index][0])
-
-                    x1, y1, x2, y2 = cameraman.get_crop_box(force_snap=is_scene_start)
-
-                    # Crop
-                    if y2 > y1 and x2 > x1:
-                        cropped = frame[y1:y2, x1:x2]
-                        output_frame = cv2.resize(cropped, (OUTPUT_WIDTH, OUTPUT_HEIGHT))
                     else:
-                        output_frame = cv2.resize(frame, (OUTPUT_WIDTH, OUTPUT_HEIGHT))
+                        # TRACK (single speaker) or WIDE (multi-speaker) — both use the
+                        # same active-speaker tracker now. WIDE relies on MAR-variance
+                        # to pick whichever face is currently talking, switching
+                        # dynamically with cooldown protection.
+                        if frame_number % 2 == 0:
+                            candidates = detect_face_candidates(frame)
+                            candidates = detection_smoother.smooth(candidates, frame_number)
+                            for cand in candidates:
+                                cand['mar'] = compute_mouth_aspect_ratio(frame, cand['box'])
+                            target_box = speaker_tracker.get_target(candidates, frame_number, original_width)
+                            if target_box:
+                                cameraman.update_target(target_box)
+                            elif current_strategy == 'TRACK':
+                                # Single-speaker scene: fall back to YOLO body detection
+                                person_box = detect_person_yolo(frame)
+                                if person_box:
+                                    cameraman.update_target(person_box, is_person_box=True)
+                            # WIDE: if no face detected this frame, just keep the
+                            # cameraman's current target (don't fall back to body
+                            # tracking which would jump to a random person).
+
+                        # Snap camera on scene change to avoid panning from previous scene position
+                        is_scene_start = (frame_number == scene_boundaries[current_scene_index][0])
+
+                        x1, y1, x2, y2 = cameraman.get_crop_box(force_snap=is_scene_start)
+
+                        # Crop
+                        if y2 > y1 and x2 > x1:
+                            cropped = frame[y1:y2, x1:x2]
+                            output_frame = cv2.resize(cropped, (OUTPUT_WIDTH, OUTPUT_HEIGHT))
+                        else:
+                            output_frame = cv2.resize(frame, (OUTPUT_WIDTH, OUTPUT_HEIGHT))
+                    last_output_frame = output_frame
+                except Exception:
+                    dropped_frames += 1
+                    if last_output_frame is not None:
+                        output_frame = last_output_frame
+                    else:
+                        output_frame = np.zeros((OUTPUT_HEIGHT, OUTPUT_WIDTH, 3), dtype=np.uint8)
 
                 ffmpeg_process.stdin.write(output_frame.tobytes())
                 frame_number += 1
                 pbar.update(1)
+
+        if dropped_frames > 0:
+            print(f"   ⚠️ {dropped_frames} frame(s) failed processing and were duplicated from the previous good frame.")
     
         ffmpeg_process.stdin.close()
         stderr_output = ffmpeg_process.stderr.read().decode()
@@ -1095,8 +1155,18 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
         return False
 
     print("\n   🔊 Step 5: Extracting audio...")
+    # A/V-sync fix (ported from kamilstanuch/Autocrop-vertical): many sources —
+    # especially YouTube downloads — carry a non-zero video-stream start_time
+    # (audio at 0.0s, video at e.g. 1.8s). The vertical video above was re-encoded
+    # from frame 0, so we must drop the matching audio lead-in or the streams
+    # desync. `audio_sync_seek_args` returns [] for the common zero-start case,
+    # keeping behaviour byte-identical there.
+    video_start = probe_stream_start_time(input_video, 'v:0')
+    seek_args = audio_sync_seek_args(video_start)
+    if seek_args:
+        print(f"   ⏱️  Compensating video start_time offset {video_start:.3f}s in audio.")
     audio_extract_command = [
-        'ffmpeg', '-y', '-i', input_video, '-vn', '-acodec', 'copy', temp_audio_output
+        'ffmpeg', '-y', *seek_args, '-i', input_video, '-vn', '-acodec', 'copy', temp_audio_output
     ]
     try:
         result = subprocess.run(audio_extract_command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
@@ -1111,7 +1181,11 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
     if os.path.exists(temp_audio_output):
         merge_command = [
             'ffmpeg', '-y', '-i', temp_video_output, '-i', temp_audio_output,
-            '-c:v', 'copy', '-c:a', 'copy', final_output_video
+            # -shortest reconciles any residual length mismatch between the
+            # freshly-encoded video and the (possibly trimmed) audio so the output
+            # ends cleanly instead of freezing on the last frame with trailing
+            # audio (ported from kamilstanuch/Autocrop-vertical).
+            '-c:v', 'copy', '-c:a', 'copy', '-shortest', final_output_video
         ]
     else:
          merge_command = [
@@ -1130,6 +1204,7 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
     # Clean up temp files
     if os.path.exists(temp_video_output): os.remove(temp_video_output)
     if os.path.exists(temp_audio_output): os.remove(temp_audio_output)
-    
+    if os.path.exists(temp_cfr_input): os.remove(temp_cfr_input)
+
     return True
 

@@ -883,7 +883,13 @@ if __name__ == '__main__':
                     '-ss', f'{float(start):.3f}',
                     '-i', input_video,
                     '-t', f'{clip_duration:.3f}',
+                    # -pix_fmt yuv420p + -vsync cfr guarantee the persisted source
+                    # slice is universally decodable and constant-frame-rate, so the
+                    # downstream reframe render (which writes raw frames at a fixed
+                    # -r) can't drift against audio even if the original download was
+                    # VFR (ported from kamilstanuch/Autocrop-vertical).
                     '-c:v', 'libx264', '-crf', '18', '-preset', 'fast',
+                    '-pix_fmt', 'yuv420p', '-vsync', 'cfr',
                     '-c:a', 'aac',
                     clip_source_path,
                 ]
