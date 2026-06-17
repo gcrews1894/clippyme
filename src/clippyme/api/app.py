@@ -32,11 +32,12 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Header, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field, ValidationError
 
 from clippyme.domain.job_results import load_partial_result, load_final_result, build_main_cmd
 from clippyme.domain.compose import compose_layers
+from clippyme.domain.errors import ClippyMeError
 from clippyme.domain.uploads import stream_upload_within_limit, FileTooLarge
 from clippyme.domain.clip_endpoints import run_smart_cut, restore_job_from_disk
 from clippyme.domain.url_utils import filename_from_video_url
@@ -130,6 +131,13 @@ async def lifespan(app: FastAPI):
     ae_updater_task.cancel()
 
 app = FastAPI(lifespan=lifespan)
+
+
+@app.exception_handler(ClippyMeError)
+async def _clippyme_error_handler(request: Request, exc: ClippyMeError):
+    """Map domain exceptions to HTTP responses so domain modules don't need
+    to import FastAPI's HTTPException."""
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
 # Enable CORS for frontend
 app.add_middleware(
@@ -783,7 +791,7 @@ async def compose_clip(job_id: str, clip_index: int, req: ComposeRequest):
             subtitle_params=req.subtitle_params,
         )
         return {"composed_url": f"/videos/{job_id}/{composed_filename}"}
-    except HTTPException:
+    except (HTTPException, ClippyMeError):
         raise
     except Exception as e:
         logger.error("Compose error for job %s clip %d: %s", job_id, clip_index, e)
@@ -897,6 +905,8 @@ async def publish_clip_endpoint(job_id: str, clip_index: int, req: PublishReques
                 subtitle_params=req.subtitle_params or {},
             )
             upload_path = os.path.join(job_dir, composed_filename)
+        except ClippyMeError:
+            raise
         except Exception as e:
             logger.error("publish: compose_layers failed for %s/%d: %s", job_id, clip_index, e)
             raise HTTPException(status_code=500, detail=f"Compose before publish failed: {e}")
