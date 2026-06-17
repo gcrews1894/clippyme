@@ -17,7 +17,7 @@ const STEP_INFO = {
   processing: { pct: 80, idx: 3 },
 };
 
-function MiniClip({ clip, idx }) {
+function MiniClip({ clip }) {
   return (
     <div className="clip fade-in" style={{ cursor: 'default' }}>
       <div className="clip-media" style={{ padding: 0, background: '#000' }}>

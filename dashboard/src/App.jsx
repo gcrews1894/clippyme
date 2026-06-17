@@ -29,7 +29,7 @@ function App() {
   const [logsVisible, setLogsVisible] = useState(true);
   const [processingMedia, setProcessingMedia] = useState(null);
   const [activeTab, setActiveTab] = useState('dashboard');
-  const { history, saveToHistory, deleteFromHistory, clearHistory } = useHistory();
+  const { saveToHistory, deleteFromHistory, clearHistory } = useHistory();
   const { hfTokenSet, setHfTokenSet, cookiesConfigured, setCookiesConfigured } = useBackendStatus();
 
   const [currentStep, setCurrentStep] = useState(null);

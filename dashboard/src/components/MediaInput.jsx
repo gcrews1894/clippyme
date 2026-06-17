@@ -199,7 +199,7 @@ const SUBTITLE_PRESETS = [
     },
 ];
 
-export default function MediaInput({ onProcess, onBatchProcess, isProcessing, cookiesConfigured }) {
+export default function MediaInput({ onProcess, onBatchProcess, isProcessing }) {
     const [mode, setMode] = useState('single'); // 'single' | 'batch'
     const [singleSource, setSingleSource] = useState('url'); // 'url' | 'file'
     const [url, setUrl] = useState('');

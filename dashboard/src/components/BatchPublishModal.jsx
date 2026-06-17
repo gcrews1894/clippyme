@@ -73,41 +73,6 @@ export default function BatchPublishModal({ isOpen, onClose, jobId, clips, clipS
         ([k, v]) => v && platformsAvailable[k],
     ).length;
 
-    const buildPlatformTargets = () => {
-        const out = [];
-        if (enabled.tiktok && accounts.tiktok) {
-            out.push({
-                platform: 'tiktok',
-                accountId: accounts.tiktok,
-                platformSpecificData: {
-                    tiktokSettings: {
-                        privacy_level: 'PUBLIC_TO_EVERYONE',
-                        allow_comment: true,
-                        allow_duet: true,
-                        allow_stitch: true,
-                        content_preview_confirmed: true,
-                        express_consent_given: true,
-                    },
-                },
-            });
-        }
-        if (enabled.instagram && accounts.instagram) {
-            out.push({
-                platform: 'instagram',
-                accountId: accounts.instagram,
-                platformSpecificData: { shareToFeed: true },
-            });
-        }
-        if (enabled.youtube && accounts.youtube) {
-            out.push({
-                platform: 'youtube',
-                accountId: accounts.youtube,
-                platformSpecificData: { visibility: 'public', madeForKids: false },
-            });
-        }
-        return out;
-    };
-
     const handlePublishAll = async () => {
         if (!isConfigured) {
             toast.error('Configure your Zernio API key in Settings first');

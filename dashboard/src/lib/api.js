@@ -6,7 +6,9 @@ async function throwFromResponse(res) {
   try {
     const parsed = JSON.parse(text);
     msg = typeof parsed.detail === 'string' ? parsed.detail : JSON.stringify(parsed.detail);
-  } catch {}
+  } catch {
+    // Non-JSON body: fall back to the raw text captured above.
+  }
   throw new Error(msg || `HTTP ${res.status}`);
 }
 
