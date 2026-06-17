@@ -238,6 +238,75 @@ def asymmetric_zoom_step(current: float, target: float,
     return current + diff * rate
 
 
+# --- multi-face split-screen layout (ported from obi19999/smart-video-reframe) ---
+
+def split_screen_slots(n_faces: int, width: int, height: int,
+                       portrait: Optional[bool] = None):
+    """Tile a ``width``×``height`` output frame into ``n_faces`` slot rectangles
+    for a multi-face split-screen montage (podcast / interview 2-up, 3-up, 4-up).
+
+    Returns a list of integer ``(x, y, w, h)`` slots that tile the frame with no
+    gaps or overlaps; a caller crops each tracked face into its slot. Direct port
+    of the layout arithmetic in obi19999/smart-video-reframe
+    ``FaceDetector.combine_faces`` — that repo's one net-new idea relative to
+    ClippyMe's single-camera reframer. Kept here as a tested-but-unwired building
+    block (the same convention as ``rank_subject`` / ``associate_subject`` /
+    ``salient_crop_center``) until a multi-face render mode is wired in; today
+    ClippyMe reframes to one cinematic camera, so nothing calls this yet.
+
+    Layout (portrait, the 9:16 default):
+      1 → whole frame   2 → stacked rows   3 → top banner + bottom pair
+      4 → 2×2 grid      n → n equal rows
+    Landscape mirrors into equal columns. The last slot in each run absorbs the
+    integer-rounding remainder so the slots always cover the frame exactly.
+    """
+    if n_faces <= 0:
+        return []
+    if portrait is None:
+        portrait = height >= width
+    n = n_faces
+    if n == 1:
+        return [(0, 0, width, height)]
+
+    if portrait:
+        if n == 2:
+            h0 = height // 2
+            return [(0, 0, width, h0), (0, h0, width, height - h0)]
+        if n == 3:
+            top_h = int(height * 0.35)
+            bot_h = height - top_h
+            half_w = width // 2
+            return [
+                (0, 0, width, top_h),
+                (0, top_h, half_w, bot_h),
+                (half_w, top_h, width - half_w, bot_h),
+            ]
+        if n == 4:
+            half_w = width // 2
+            half_h = height // 2
+            return [
+                (0, 0, half_w, half_h),
+                (half_w, 0, width - half_w, half_h),
+                (0, half_h, half_w, height - half_h),
+                (half_w, half_h, width - half_w, height - half_h),
+            ]
+        row_h = height // n
+        slots, y = [], 0
+        for i in range(n):
+            h = height - y if i == n - 1 else row_h
+            slots.append((0, y, width, h))
+            y += h
+        return slots
+
+    col_w = width // n
+    slots, x = [], 0
+    for i in range(n):
+        w = width - x if i == n - 1 else col_w
+        slots.append((x, 0, w, height))
+        x += w
+    return slots
+
+
 # --- saliency-based crop selection (faceless scenes) ------------------------
 
 def salient_crop_center(column_energy, crop_w: float, frame_w: float,

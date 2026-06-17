@@ -358,3 +358,72 @@ def test_rank_monotonic_in_confidence():
 
 def test_rank_no_face_lower_than_face():
     assert ro.rank_subject(**{**_BASE, "has_face": False}) < ro.rank_subject(**_BASE)
+
+
+# --- split_screen_slots -----------------------------------------------------
+
+def _covers_exactly(slots, width, height):
+    """Slots tile the frame with no gaps/overlaps: areas sum to W*H, each slot
+    is in-bounds, and no two slots overlap."""
+    total = 0
+    for (x, y, w, h) in slots:
+        assert x >= 0 and y >= 0 and w > 0 and h > 0
+        assert x + w <= width and y + h <= height
+        total += w * h
+    for i in range(len(slots)):
+        ax, ay, aw, ah = slots[i]
+        for j in range(i + 1, len(slots)):
+            bx, by, bw, bh = slots[j]
+            overlap_w = max(0, min(ax + aw, bx + bw) - max(ax, bx))
+            overlap_h = max(0, min(ay + ah, by + bh) - max(ay, by))
+            assert overlap_w * overlap_h == 0
+    return total == width * height
+
+
+def test_split_zero_or_negative_is_empty():
+    assert ro.split_screen_slots(0, 720, 1280) == []
+    assert ro.split_screen_slots(-3, 720, 1280) == []
+
+
+def test_split_one_is_whole_frame():
+    assert ro.split_screen_slots(1, 720, 1280) == [(0, 0, 720, 1280)]
+
+
+def test_split_two_portrait_stacks_rows():
+    slots = ro.split_screen_slots(2, 720, 1280)
+    assert len(slots) == 2
+    assert slots[0][2] == 720 and slots[1][2] == 720  # full width rows
+    assert _covers_exactly(slots, 720, 1280)
+
+
+def test_split_three_portrait_top_banner_plus_pair():
+    slots = ro.split_screen_slots(3, 720, 1280)
+    assert len(slots) == 3
+    assert slots[0] == (0, 0, 720, int(1280 * 0.35))  # top banner full width
+    assert _covers_exactly(slots, 720, 1280)
+
+
+def test_split_four_portrait_is_2x2_grid():
+    slots = ro.split_screen_slots(4, 720, 1280)
+    assert len(slots) == 4
+    assert _covers_exactly(slots, 720, 1280)
+
+
+def test_split_five_portrait_equal_rows_remainder_absorbed():
+    # 1281 % 5 != 0 -> last row absorbs the remainder, still tiles exactly.
+    slots = ro.split_screen_slots(5, 720, 1281)
+    assert len(slots) == 5
+    assert _covers_exactly(slots, 720, 1281)
+
+
+def test_split_landscape_makes_columns():
+    slots = ro.split_screen_slots(3, 1920, 1080, portrait=False)
+    assert len(slots) == 3
+    assert all(h == 1080 for (_, _, _, h) in slots)  # full height columns
+    assert _covers_exactly(slots, 1920, 1080)
+
+
+def test_split_portrait_inferred_from_dims():
+    # height >= width -> portrait layout (stacked rows for n=2)
+    slots = ro.split_screen_slots(2, 720, 1280)
+    assert slots[0][2] == 720  # full-width row, not a half-width column
