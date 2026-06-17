@@ -877,31 +877,46 @@ def _render_global_smooth(input_video, ffmpeg_process, cameraman, speaker_tracke
     print("   🔁 Global-smooth pass 2/2: rendering...")
     cap = cv2.VideoCapture(input_video)
     frame_number = 0
+    # Corrupt/failed-frame resilience — mirror the streaming render loop: a single
+    # malformed frame duplicates the last good output instead of aborting pass 2
+    # and truncating the clip (ported from kamilstanuch/Autocrop-vertical).
+    dropped_frames = 0
+    last_output_frame = None
     with tqdm(total=total_frames, desc="   Pass 2", file=sys.stdout) as pbar:
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret:
                 break
-            strat = strategies[frame_number] if frame_number < len(strategies) else 'TRACK'
-            if strat == 'DISABLED':
-                output_frame = create_disabled_reframe(frame, output_width, output_height)
-            elif strat == 'GENERAL':
-                output_frame = create_general_frame(frame, output_width, output_height)
-            else:
-                tgt = smoothed[frame_number] if frame_number < len(smoothed) else None
-                if tgt is None:
-                    output_frame = cv2.resize(frame, (output_width, output_height))
+            try:
+                strat = strategies[frame_number] if frame_number < len(strategies) else 'TRACK'
+                if strat == 'DISABLED':
+                    output_frame = create_disabled_reframe(frame, output_width, output_height)
+                elif strat == 'GENERAL':
+                    output_frame = create_general_frame(frame, output_width, output_height)
                 else:
-                    cx, cy, zoom = tgt
-                    x1, y1, x2, y2 = cameraman.crop_box_at(cx, cy, zoom)
-                    if y2 > y1 and x2 > x1:
-                        output_frame = cv2.resize(frame[y1:y2, x1:x2], (output_width, output_height))
-                    else:
+                    tgt = smoothed[frame_number] if frame_number < len(smoothed) else None
+                    if tgt is None:
                         output_frame = cv2.resize(frame, (output_width, output_height))
+                    else:
+                        cx, cy, zoom = tgt
+                        x1, y1, x2, y2 = cameraman.crop_box_at(cx, cy, zoom)
+                        if y2 > y1 and x2 > x1:
+                            output_frame = cv2.resize(frame[y1:y2, x1:x2], (output_width, output_height))
+                        else:
+                            output_frame = cv2.resize(frame, (output_width, output_height))
+                last_output_frame = output_frame
+            except Exception:
+                dropped_frames += 1
+                if last_output_frame is not None:
+                    output_frame = last_output_frame
+                else:
+                    output_frame = np.zeros((output_height, output_width, 3), dtype=np.uint8)
             ffmpeg_process.stdin.write(output_frame.tobytes())
             frame_number += 1
             pbar.update(1)
     cap.release()
+    if dropped_frames > 0:
+        print(f"   ⚠️ {dropped_frames} frame(s) failed processing and were duplicated from the previous good frame.")
 
 
 def process_video_to_vertical(input_video, final_output_video, reframe_mode='auto'):
