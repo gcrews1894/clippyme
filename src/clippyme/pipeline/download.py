@@ -44,7 +44,10 @@ def _resolve_cookies_path(explicit: str | None) -> str | None:
     if env_cookies:
         env_path = os.path.join("data", "cookies_env.txt")
         os.makedirs(os.path.dirname(env_path) or ".", exist_ok=True)
-        with open(env_path, "w") as f:
+        # Cookies are session credentials — write 0o600 so they're not
+        # world-readable under the default umask (matches data/cookies.txt).
+        fd = os.open(env_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
             f.write(env_cookies)
         return os.path.abspath(env_path)
     return None

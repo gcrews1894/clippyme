@@ -17,7 +17,8 @@ python-dotenv==1.2.2
 mediapipe==0.10.14
 fastapi==0.135.3
 uvicorn==0.42.0
-python-multipart==0.0.22
+# 0.0.31 fixes CVE-2026-40347/42561/53538/53539/53540 (multipart parser DoS).
+python-multipart==0.0.31
 # Fonts/emoji rendering in subtitles.py + hooks.py assume the Pillow 12.x
 # FreeType/OTF API. Allow patch/minor security updates, block the next major.
 Pillow>=12.2.0,<13
