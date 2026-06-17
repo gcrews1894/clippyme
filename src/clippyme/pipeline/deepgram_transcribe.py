@@ -65,6 +65,7 @@ Env vars
 """
 from __future__ import annotations
 
+import contextlib
 import logging
 import mimetypes
 import os
@@ -96,6 +97,21 @@ def _get_session() -> requests.Session:
     if _SESSION is None:
         _SESSION = requests.Session()
     return _SESSION
+
+
+def _reset_session() -> None:
+    """Drop the pooled session after a network error or 5xx.
+
+    A ``requests.Session`` keeps a connection pool alive for TLS keep-alive
+    across batch jobs, but a connection that errored (server 5xx, dropped
+    socket) can linger in the pool and poison subsequent requests. Closing
+    and clearing it forces a clean reconnect on the next call.
+    """
+    global _SESSION
+    if _SESSION is not None:
+        with contextlib.suppress(Exception):
+            _SESSION.close()
+        _SESSION = None
 
 
 def _guess_content_type(path: str) -> str:
@@ -338,6 +354,9 @@ def _post_with_retries(
                 )
         except requests.RequestException as exc:
             last_exc = exc
+            # The pooled connection errored — drop it so the retry reconnects.
+            _reset_session()
+            session = _get_session()
             if attempt >= max_retries:
                 raise DeepgramError(
                     f"Network error talking to Deepgram after {attempt + 1} attempts: {exc}"
@@ -352,6 +371,11 @@ def _post_with_retries(
             return response
 
         if _should_retry(response.status_code) and attempt < max_retries:
+            # 5xx (and 429/408/409/425): the upstream is unhealthy; recycle the
+            # connection pool before retrying so we don't reuse a poisoned socket.
+            if response.status_code >= 500:
+                _reset_session()
+                session = _get_session()
             retry_after = response.headers.get("Retry-After")
             wait = _compute_backoff(attempt + 1, retry_after)
             print(
