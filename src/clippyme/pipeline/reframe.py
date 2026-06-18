@@ -827,8 +827,12 @@ def _reframe_comfort_enabled() -> bool:
     motion sickness. Set ``REFRAME_COMFORT=0`` to fall back to the original
     single-pass streaming tracker.
     """
-    return (os.getenv("REFRAME_COMFORT", "1").strip().lower()
-            in ("1", "true", "yes", "on"))
+    # Empty-safe: an unset OR empty (`REFRAME_COMFORT=` from docker-compose's
+    # `${VAR:-}`) value means "use the default" (on).
+    val = (os.getenv("REFRAME_COMFORT") or "").strip().lower()
+    if not val:
+        return True
+    return val in ("1", "true", "yes", "on")
 
 
 def _render_global_smooth(input_video, ffmpeg_process, cameraman, speaker_tracker,
@@ -902,14 +906,19 @@ def _render_global_smooth(input_video, ffmpeg_process, cameraman, speaker_tracke
     # tracking + breathing zoom is what causes seasickness, not jitter). The
     # individual env vars still override these comfort defaults when set.
     comfort = _reframe_comfort_enabled()
+    # NB: read env vars empty-safe — docker-compose passes these as `VAR=`
+    # (empty string) via `${VAR:-}`, and os.getenv(name, default) returns that
+    # empty string rather than the default, so a plain float("") would crash.
     # AutoFlip-style per-scene stationary lock. Comfort default 0.30 of the frame
     # dimension (a talking head may drift this far before the camera moves at all);
     # 0.0 = off (no-op) when comfort is disabled.
-    stationary_thresh = float(os.getenv("REFRAME_STATIONARY_THRESH", "0.30" if comfort else "0.0"))
-    snap_center_dist = float(os.getenv("REFRAME_SNAP_CENTER", "0.10"))
+    _st = (os.getenv("REFRAME_STATIONARY_THRESH") or "").strip()
+    stationary_thresh = float(_st) if _st else (0.30 if comfort else 0.0)
+    _sc = (os.getenv("REFRAME_SNAP_CENTER") or "").strip()
+    snap_center_dist = float(_sc) if _sc else 0.10
     # Per-scene zoom lock — on by default under comfort.
-    lock_zoom = (os.getenv("REFRAME_ZOOM_LOCK", "1" if comfort else "0").strip().lower()
-                 in ("1", "true", "yes", "on"))
+    _zl = (os.getenv("REFRAME_ZOOM_LOCK") or "").strip().lower()
+    lock_zoom = (_zl in ("1", "true", "yes", "on")) if _zl else comfort
     smoothed = build_smoothed_trajectory(
         targets, scene_ids, window=win, polyorder=2,
         x_max=original_width, y_max=original_height,
