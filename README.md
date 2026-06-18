@@ -257,6 +257,8 @@ Every finished clip has an **Edit & reprocess** panel — one button on the clip
 
 Editing is staged: nothing runs while you toggle. **Apply & reprocess** re-renders the framing (only when the reframe mode changed) and then composes the active layers in one pass via `/api/compose/{job_id}/{clip_index}` — order is **Subtitles → Smart Cut → Hook** (subtitles burn first so their absolute timing never drifts when Smart Cut removes silences). The preview updates to the composed result, and downloading runs the same compose, so what you see is what you get.
 
+**Apply runs in the background.** Hitting Apply closes the modal immediately and the reframe/compose work runs without blocking the page — the clip card shows a *Reprocessing…* overlay while it renders, and you can edit, reprocess, and publish other clips at the same time. Each clip is an independent job, so several can render at once.
+
 ---
 
 ## Reframing
