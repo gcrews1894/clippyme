@@ -13,7 +13,7 @@ import { ResultsView } from './results';
 import { PublishModal } from './publish';
 import { HistoryView, SettingsView, ApiKeyModal } from './views';
 import { CaptionEditModal } from './captions';
-import { optsToPreselections, restoreJob, cancelJob } from './realApi';
+import { optsToPreselections, restoreJob, cancelJob, pauseJob, resumeJob, stopJob } from './realApi';
 import { allPresets, getDefaultPresetOpts, getDefaultPresetId, saveUserPreset, deleteUserPreset, setDefaultPreset } from './presets';
 
 import { useJobSubmission } from '../hooks/useJobSubmission';
@@ -75,6 +75,7 @@ export default function RedesignApp() {
   const [logs, setLogs] = useState([]);
   const [currentStep, setCurrentStep] = useState(null);
   const [processingMedia, setProcessingMedia] = useState(null);
+  const [paused, setPaused] = useState(false);
   // Seed Create from the user's default preset (if any) so their preferred
   // settings are already applied on load.
   const [opts, setOpts] = useState(() => ({ ...DEFAULT_OPTS, ...(getDefaultPresetOpts() || {}) }));
@@ -152,7 +153,23 @@ export default function RedesignApp() {
         cost: data.result?.cost_analysis?.total_cost || null,
       });
     },
-    onCancelled: () => { setStatus('idle'); setJobId(null); setResults(null); setLogs([]); setCurrentStep(null); },
+    onStopped: (data) => {
+      // Graceful stop kept the finished clips — route to the editable results
+      // view just like a normal completion.
+      setStatus('complete');
+      setPaused(false);
+      pushToast('info', `Stopped — kept ${data.result?.clips?.length || 0} clip(s)`);
+      saveToHistory({
+        jobId,
+        status: 'stopped',
+        timestamp: Date.now(),
+        source: processingMedia?.type === 'url' ? processingMedia.payload : processingMedia?.payload?.name || 'Local file',
+        sourceType: processingMedia?.type || 'file',
+        clipCount: data.result?.clips?.length || 0,
+        cost: data.result?.cost_analysis?.total_cost || null,
+      });
+    },
+    onCancelled: () => { setStatus('idle'); setJobId(null); setResults(null); setLogs([]); setCurrentStep(null); setPaused(false); },
     onFailed: (errorMsg) => {
       setStatus('error');
       setLogs((prev) => [...prev, 'Error: ' + errorMsg]);
@@ -199,8 +216,27 @@ export default function RedesignApp() {
     // just dropping our local handle (which would leave it churning).
     if (status === 'processing' && jobId) cancelJob(jobId);
     setStatus('idle'); setJobId(null); setResults(null); setLogs([]); setProcessingMedia(null);
-    setCurrentStep(null); setViewingHistory(false); setTab('create');
+    setCurrentStep(null); setViewingHistory(false); setTab('create'); setPaused(false);
     try { localStorage.removeItem('clippyme_session'); } catch { /* */ }
+  };
+
+  // Job controls (backend: /api/pause, /api/resume, /api/stop).
+  const pauseCurrent = async () => {
+    if (!jobId) return;
+    try { await pauseJob(jobId); setPaused(true); pushToast('info', 'Job paused'); }
+    catch (e) { pushToast('error', 'Pause failed: ' + String(e.message || e).slice(0, 60)); }
+  };
+  const resumeCurrent = async () => {
+    if (!jobId) return;
+    try { await resumeJob(jobId); setPaused(false); pushToast('info', 'Job resumed'); }
+    catch (e) { pushToast('error', 'Resume failed: ' + String(e.message || e).slice(0, 60)); }
+  };
+  const stopCurrent = async () => {
+    if (!jobId) return;
+    // Graceful stop — the poll loop picks up status 'stopped' and onStopped
+    // routes to the results view with the clips finished so far.
+    try { await stopJob(jobId); pushToast('info', 'Stopping — keeping finished clips…'); }
+    catch (e) { pushToast('error', 'Stop failed: ' + String(e.message || e).slice(0, 60)); }
   };
 
   const openPublish = (clips) => setPublishClips(Array.isArray(clips) ? clips : [clips]);
@@ -244,7 +280,8 @@ export default function RedesignApp() {
       )}
       {tab === 'create' && (status === 'processing' || status === 'error') && (
         <ProcessingView media={processingMedia} status={status} logs={logs} step={currentStep}
-          clips={clips} onCancel={resetToCreate} onRetry={startJob} />
+          clips={clips} onCancel={resetToCreate} onRetry={startJob}
+          paused={paused} onPause={pauseCurrent} onResume={resumeCurrent} onStop={stopCurrent} />
       )}
       {tab === 'create' && status === 'complete' && (
         <ResultsView clips={clips} jobId={jobId} preselections={preselections}

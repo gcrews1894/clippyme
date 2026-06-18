@@ -32,7 +32,8 @@ function MiniClip({ clip }) {
   );
 }
 
-export function ProcessingView({ media, status, logs = [], step, clips = [], onCancel, onRetry }) {
+export function ProcessingView({ media, status, logs = [], step, clips = [], onCancel, onRetry,
+                                 paused = false, onPause, onResume, onStop }) {
   const logRef = useRef(null);
   useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; });
 
@@ -91,7 +92,15 @@ export function ProcessingView({ media, status, logs = [], step, clips = [], onC
               </span>
               <span style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
                 {failed && <Btn variant="secondary" size="sm" icon="wand-sparkles" onClick={onRetry}>Retry</Btn>}
-                <Btn variant="ghost" size="sm" icon="x" onClick={onCancel}>{failed ? 'Start over' : 'Cancel'}</Btn>
+                {!failed && onPause && (
+                  paused
+                    ? <Btn variant="secondary" size="sm" icon="play" onClick={onResume}>Resume</Btn>
+                    : <Btn variant="ghost" size="sm" icon="clock" onClick={onPause}>Pause</Btn>
+                )}
+                {!failed && onStop && clips.length > 0 && (
+                  <Btn variant="secondary" size="sm" icon="check-square" onClick={onStop}>Stop &amp; keep</Btn>
+                )}
+                <Btn variant="ghost" size="sm" icon="x" onClick={onCancel}>{failed ? 'Start over' : 'Discard'}</Btn>
               </span>
             </div>
             <div className="log" ref={logRef}>

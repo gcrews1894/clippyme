@@ -40,6 +40,28 @@ export async function cancelJob(jobId) {
   try { await fetch(getApiUrl(`/api/cancel/${jobId}`), { method: 'POST' }); } catch { /* best-effort */ }
 }
 
+// Suspend the job's process tree (status → paused). Resumable.
+export async function pauseJob(jobId) {
+  const res = await fetch(getApiUrl(`/api/pause/${jobId}`), { method: 'POST' });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json().catch(() => ({}));
+}
+
+// Resume a paused job (status → processing).
+export async function resumeJob(jobId) {
+  const res = await fetch(getApiUrl(`/api/resume/${jobId}`), { method: 'POST' });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json().catch(() => ({}));
+}
+
+// Graceful stop: kill the subprocess but KEEP the clips finished so far
+// (status → stopped). Unlike cancelJob, which hard-discards all output.
+export async function stopJob(jobId) {
+  const res = await fetch(getApiUrl(`/api/stop/${jobId}`), { method: 'POST' });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json().catch(() => ({}));
+}
+
 export async function composeClip(jobId, index, { toggles, hook_params, subtitle_params }) {
   const res = await fetch(getApiUrl(`/api/compose/${jobId}/${index}`), {
     method: 'POST',
