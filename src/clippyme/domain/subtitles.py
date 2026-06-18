@@ -138,8 +138,13 @@ def generate_srt(transcript, clip_start, clip_end, output_path, max_chars=20, ma
             # Decide whether to close block
             current_text_len = sum(len(w['word']) + 1 for w in current_block)
             duration = end - block_start
-            
-            if current_text_len + len(word['word']) > max_chars or duration > max_duration:
+            # Close early on a sentence-final mark so two sentences never share
+            # one caption line (same semantic-boundary rule as the ASS path).
+            sentence_break = _ends_sentence(_word_text(current_block[-1]))
+
+            if (sentence_break
+                    or current_text_len + len(word['word']) > max_chars
+                    or duration > max_duration):
                 # Finalize current block
                 # End time of block is start of this word (gap) or end of last word?
                 # Usually end of last word.
@@ -467,31 +472,119 @@ def generate_ass_karaoke(transcript, clip_start, clip_end, output_path,
     return True
 
 
+# --- Semantic subtitle line-splitting -------------------------------------
+# Ported (idea, not code) from VideoLingo's `spacy_utils/` (split_by_mark /
+# split_by_comma / split_by_connector). VideoLingo runs a heavy spaCy POS pass
+# to break captions at clause boundaries (the "Netflix single-line" standard)
+# so a line never cuts mid-phrase. We don't need spaCy: Deepgram `smart_format`
+# (and Whisper) already attach punctuation to the word tokens, so we can find
+# the same boundaries with a pure lexical pass — zero new deps, host-testable.
+# See docs/videolingo-analysis.md.
+
+# Sentence-final marks → ALWAYS end the current caption (never merge two
+# sentences onto one karaoke line). Includes CJK forms for safety.
+_SENTENCE_END = ".?!…。？！"
+# Soft clause marks → a *preferred* break point once the line is substantial.
+_SOFT_PUNCT = ",;:，；：、"
+# Trailing characters to peel off a token before inspecting its last glyph
+# (closing quotes/brackets sit AFTER the punctuation: `world."` / `(sì)`).
+_TRAIL_STRIP = "\"')]}»”’）」』"
+
+# Connectors to break *before* (VideoLingo splits ahead of the connector so the
+# new line opens on it: "… / and then …"). Languages mirror ClippyMe's filler
+# coverage (EN/IT/ES/FR/DE). Single-letter conjunctions (it `e`/`o`, es `y`)
+# are intentionally included but only ever fire once a line is already long
+# enough (the soft-length guard), so they don't shred short Italian lines.
+_SUB_CONNECTORS = {
+    # English
+    "and", "but", "or", "so", "because", "that", "which", "who", "when",
+    "where", "while", "if", "though", "although", "since", "than", "nor", "yet",
+    # Italian
+    "e", "ma", "o", "perché", "perche", "che", "quale", "dove", "quando",
+    "mentre", "se", "però", "pero", "quindi", "oppure", "anche", "come",
+    # Spanish
+    "y", "pero", "porque", "que", "cuando", "donde", "mientras", "aunque",
+    # French
+    "et", "mais", "ou", "parce", "qui", "où", "quand", "pendant", "donc", "comme",
+    # German
+    "und", "aber", "oder", "weil", "dass", "welche", "wo", "wann", "während",
+    "wenn", "obwohl", "als",
+}
+
+
+def _word_text(w):
+    return (w.get("word") or "").strip()
+
+
+def _ends_sentence(text):
+    t = text.rstrip(_TRAIL_STRIP)
+    return bool(t) and t[-1] in _SENTENCE_END
+
+
+def _ends_soft(text):
+    t = text.rstrip(_TRAIL_STRIP)
+    return bool(t) and t[-1] in _SOFT_PUNCT
+
+
+def _is_connector(text):
+    t = text.strip().lower().strip(".,;:!?…\"'()[]»«")
+    return t in _SUB_CONNECTORS
+
+
 def _group_words_by_count(words, clip_start, count=3):
-    """Group words into chunks of N words."""
+    """Group words into ~N-word karaoke chunks, snapping the break to natural
+    boundaries: a sentence-final mark always closes the chunk, and a comma may
+    close it one word early. Keeps the punchy small-group look while avoiding
+    fragments that straddle a period (`time. The` → two chunks, not one)."""
     groups = []
-    for i in range(0, len(words), count):
-        group = words[i:i + count]
-        if group:
-            groups.append(group)
+    current = []
+    soft_at = max(1, count - 1)
+    for word in words:
+        current.append(word)
+        text = _word_text(word)
+        if (len(current) >= count
+                or _ends_sentence(text)
+                or (len(current) >= soft_at and _ends_soft(text))):
+            groups.append(current)
+            current = []
+    if current:
+        groups.append(current)
     return groups
 
 
-def _group_words(words, clip_start, max_chars=60, max_duration=5.0):
-    """Group words into blocks by char limit and duration (for full_line mode)."""
+def _group_words(words, clip_start, max_chars=60, max_duration=5.0, soft_ratio=0.6):
+    """Group words into full-line blocks at semantic boundaries (for full_line
+    mode). A block closes when:
+      * the next word would blow the char / duration ceiling (hard cap), OR
+      * the current word ends a sentence (always — never merge two sentences), OR
+      * the block is already ``soft_ratio`` of the char budget AND we're at a
+        clean boundary — a comma/clause mark on the current word, or a connector
+        opening the next word (break *before* the connector, VideoLingo-style).
+    The soft boundary keeps lines from cutting mid-clause at the hard cap."""
     groups = []
     current = []
+    soft_chars = max(1, int(max_chars * soft_ratio))
+
+    def char_len(ws):
+        return sum(len(_word_text(w)) + 1 for w in ws)
+
     for word in words:
         if not current:
             current.append(word)
+            continue
+        prev_text = _word_text(current[-1])
+        prospective = char_len(current) + len(_word_text(word))
+        duration = word["end"] - current[0]["start"]
+        hard = prospective > max_chars or duration > max_duration
+        sentence = _ends_sentence(prev_text)
+        soft = char_len(current) >= soft_chars and (
+            _ends_soft(prev_text) or _is_connector(_word_text(word))
+        )
+        if hard or sentence or soft:
+            groups.append(current)
+            current = [word]
         else:
-            text_len = sum(len(w['word']) + 1 for w in current) + len(word['word'])
-            duration = word['end'] - current[0]['start']
-            if text_len > max_chars or duration > max_duration:
-                groups.append(current)
-                current = [word]
-            else:
-                current.append(word)
+            current.append(word)
     if current:
         groups.append(current)
     return groups
