@@ -7,6 +7,7 @@ import { Icon, Social, Btn, Switch, PlatPill, PLATFORMS } from './primitives';
 import { clipVideoSrc } from './realApi';
 import { publishClip, getZernio } from './realApi';
 import { seedToggles, seedHookParams, seedSubtitleParams } from '../lib/seedClipParams';
+import { useModalA11y } from './useModalA11y';
 
 // redesign plat id → backend platform + account key
 const PLAT = {
@@ -72,12 +73,8 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
 
   useEffect(() => { getZernio().then(setZernio).catch(() => setZernio({ configured: false })); }, []);
 
-  // Accessibility: close on Escape so keyboard users aren't trapped.
-  useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  // Accessibility: focus trap + Escape-to-close + focus restore.
+  const panelRef = useModalA11y(onClose);
 
   const accounts = zernio?.accounts || {};
   const toggle = (k) => setPlats((p) => ({ ...p, [k]: !p[k] }));
@@ -145,7 +142,7 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
 
   return (
     <div className="overlay" onClick={onClose}>
-      <div className={'modal' + (all ? ' wide' : '')} onClick={(e) => e.stopPropagation()}
+      <div className={'modal' + (all ? ' wide' : '')} ref={panelRef} onClick={(e) => e.stopPropagation()}
         role="dialog" aria-modal="true" aria-labelledby="publish-modal-title">
         <div className="modal-head">
           <div>

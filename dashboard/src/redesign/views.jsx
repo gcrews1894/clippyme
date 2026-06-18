@@ -1,6 +1,7 @@
 // ClippyMe redesign — HistoryView + SettingsView + ApiKeyModal, wired to the
 // real backend (history list/restore/delete; config keys, cookies, Zernio).
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { useModalA11y } from './useModalA11y';
 import { Icon, Btn, Badge, Switch, Segmented, Panel } from './primitives';
 import { Hero } from './chrome';
 import {
@@ -69,6 +70,9 @@ export function HistoryView({ history, onOpen, onDelete, onClear }) {
 
 function KeyRow({ icon, name, desc, value, onChange, onSave, placeholder, present }) {
   const [reveal, setReveal] = useState(false);
+  // Only persist (and toast) when the field actually changed during this focus
+  // session — tabbing past an already-set key shouldn't spam saves/toasts.
+  const focusVal = useRef(value);
   return (
     <div className="keyrow">
       <div className="ki"><Icon n={icon} /></div>
@@ -78,7 +82,9 @@ function KeyRow({ icon, name, desc, value, onChange, onSave, placeholder, presen
       </div>
       <div className="kr">
         <input className="key-input" type={reveal ? 'text' : 'password'} value={value}
-          placeholder={placeholder} onChange={(e) => onChange(e.target.value)} onBlur={onSave} />
+          placeholder={placeholder} onChange={(e) => onChange(e.target.value)}
+          onFocus={() => { focusVal.current = value; }}
+          onBlur={() => { if (value !== focusVal.current) onSave(); }} />
         <span className="mini" title={reveal ? 'Hide' : 'Show'} onClick={() => setReveal(!reveal)}><Icon n={reveal ? 'eye-off' : 'eye'} /></span>
         {value || present ? <Badge tone="teal" icon="check">set</Badge> : <Badge tone="out">empty</Badge>}
       </div>
@@ -213,10 +219,12 @@ export function SettingsView({ apiKey, onApiKey, cookiesConfigured, pushToast })
 }
 
 export function ApiKeyModal({ onClose, onGoToSettings }) {
+  const panelRef = useModalA11y(onClose);
   return (
     <div className="overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-head"><h3>Add your Gemini key</h3><button className="x" onClick={onClose}><Icon n="x" /></button></div>
+      <div className="modal" ref={panelRef} onClick={(e) => e.stopPropagation()}
+        role="dialog" aria-modal="true" aria-labelledby="apikey-modal-title">
+        <div className="modal-head"><h3 id="apikey-modal-title">Add your Gemini key</h3><button className="x" onClick={onClose} aria-label="Close"><Icon n="x" /></button></div>
         <div className="modal-body">
           <p style={{ color: 'var(--fg-2)', fontSize: 14, lineHeight: 1.55 }}>
             ClippyMe needs a Gemini key to score the transcript and find viral moments. It&apos;s stored locally and never leaves your machine.

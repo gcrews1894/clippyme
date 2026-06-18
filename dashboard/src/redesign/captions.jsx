@@ -1,7 +1,8 @@
 // ClippyMe redesign — CaptionEditModal: live 9:16 preview that updates as you edit.
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Icon, Btn, Segmented } from './primitives';
 import { CLIP_GRADS, SUBTITLE_PRESETS } from './data';
+import { useModalA11y } from './useModalA11y';
 
 export function CaptionEditModal({ clip, idx, initial, preselections, onClose, onSave }) {
   const sp = initial?.subtitleParams || {};
@@ -13,11 +14,7 @@ export function CaptionEditModal({ clip, idx, initial, preselections, onClose, o
     initial?.hookParams?.text || clip.viral_hook_text || clip.hook_text || '',
   );
 
-  useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  const panelRef = useModalA11y(onClose);
 
   const save = () => onSave({
     toggles: { ...(initial?.toggles || {}), subtitles: true, hook: !!hookText.trim() },
@@ -31,7 +28,7 @@ export function CaptionEditModal({ clip, idx, initial, preselections, onClose, o
 
   return (
     <div className="overlay" onClick={onClose}>
-      <div className="modal wide" onClick={(e) => e.stopPropagation()}
+      <div className="modal wide" ref={panelRef} onClick={(e) => e.stopPropagation()}
         role="dialog" aria-modal="true" aria-labelledby="captions-modal-title">
         <div className="modal-head">
           <div><h3 id="captions-modal-title">Edit captions</h3><div className="mh-sub">{clip.title}</div></div>
