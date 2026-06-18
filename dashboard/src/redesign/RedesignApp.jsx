@@ -15,6 +15,7 @@ import { HistoryView, SettingsView, ApiKeyModal } from './views';
 import { EditClipModal } from './captions';
 import { optsToPreselections, restoreJob, listBackendJobIds, cancelJob, pauseJob, resumeJob, stopJob, reframeClip, composeClip } from './realApi';
 import { allPresets, getDefaultPresetOpts, getDefaultPresetId, saveUserPreset, deleteUserPreset, setDefaultPreset } from './presets';
+import { HOOK_STYLE_DEFAULT } from './data';
 
 import { useJobSubmission } from '../hooks/useJobSubmission';
 import { useJobPolling } from '../hooks/useJobPolling';
@@ -29,7 +30,7 @@ const DEFAULT_OPTS = {
   detect: true, reframeMode: 'auto', smartcut: true, zoom: true, model: '',
   subtitles: true, subMode: 'karaoke', subPreset: 'hormozi_bold', subPosition: 'center',
   subFont: 'Montserrat-Black', subColor: '#FFFFFF',
-  hooks: true, hookPos: 'top', hookSize: 'M',
+  hooks: true, hookPos: 'top', hookSize: 'M', hookStyle: { ...HOOK_STYLE_DEFAULT },
   logo: false, logoPos: 'top-right', logoSize: 'M',
   language: 'multi',
   platforms: { tiktok: true, ig: true, yt: false },

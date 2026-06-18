@@ -2,8 +2,9 @@
 import { useState, useRef } from 'react';
 import { Icon, Btn, Panel, Segmented, Switch, Stepper } from './primitives';
 import { Hero } from './chrome';
-import { SUBTITLE_PRESETS, LANGUAGES, GEMINI_MODELS, SUB_COLORS, LOGO_POSITIONS, LOGO_SIZES } from './data';
+import { SUBTITLE_PRESETS, LANGUAGES, GEMINI_MODELS, SUB_COLORS, LOGO_POSITIONS, LOGO_SIZES, HOOK_STYLE_DEFAULT } from './data';
 import { useFontList } from '../hooks/useFontList';
+import { HookStyleControls, HookPreview } from './hookStyle';
 
 function PresetCards({ presets, active, defaultId, onPick, onSetDefault, onDelete, onSaveCurrent }) {
   const corner = { position: 'absolute', top: 12, left: 12, display: 'flex', gap: 8, zIndex: 2 };
@@ -217,9 +218,12 @@ function SubConfig({ opts, set }) {
 }
 
 function HookConfig({ opts, set }) {
+  const hs = opts.hookStyle || HOOK_STYLE_DEFAULT;
+  const setStyle = (partial) => set({ hookStyle: { ...HOOK_STYLE_DEFAULT, ...hs, ...partial } });
   return (
     <div className="cfg-drawer fade-in">
-      <div className="cf-row">
+      <HookPreview text="Your hook text" style={hs} />
+      <div className="cf-row" style={{ marginTop: 12 }}>
         <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Position</span>
         <Segmented full value={opts.hookPos} onChange={(id) => set({ hookPos: id })}
           options={[{ id: 'top', label: 'Top' }, { id: 'center', label: 'Center' }, { id: 'bottom', label: 'Bottom' }]} />
@@ -229,6 +233,7 @@ function HookConfig({ opts, set }) {
         <Segmented full value={opts.hookSize} onChange={(id) => set({ hookSize: id })}
           options={[{ id: 'S', label: 'Small' }, { id: 'M', label: 'Medium' }, { id: 'L', label: 'Large' }]} />
       </div>
+      <HookStyleControls style={hs} set={setStyle} />
     </div>
   );
 }

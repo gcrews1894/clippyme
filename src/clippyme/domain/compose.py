@@ -107,16 +107,23 @@ async def _apply_hook(
     position = hook_params.get("position", "top")
     font_scale = _SIZE_MAP.get(hook_params.get("size", "M"), 1.0)
     offset_y = hook_params.get("offset_y", 0)
+    # Instagram-Stories-style text customisation. Only forward keys the user
+    # actually set so create_hook_image's defaults fill the rest.
+    _style_keys = ("text_color", "bg_enabled", "bg_color", "bg_opacity",
+                   "corner_radius", "outline_color", "outline_width", "font", "shadow")
+    style = {k: hook_params[k] for k in _style_keys if k in hook_params}
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(
         None,
-        add_hook_to_video,
-        current_input,
-        hook_params["text"],
-        hook_output,
-        position,
-        font_scale,
-        offset_y,
+        lambda: add_hook_to_video(
+            current_input,
+            hook_params["text"],
+            hook_output,
+            position,
+            font_scale,
+            offset_y,
+            style or None,
+        ),
     )
     return hook_output
 

@@ -293,7 +293,7 @@ export function optsToPreselections(opts) {
             : {}),
         }
       : false,
-    hook: opts.hooks ? { position: opts.hookPos, size: opts.hookSize } : false,
+    hook: opts.hooks ? { position: opts.hookPos, size: opts.hookSize, ...(opts.hookStyle || {}) } : false,
     // Logo overlay is a compose-time layer (not a process-time arg) — persisted
     // here only so each generated clip inherits the toggle + placement default.
     logo: opts.logo ? { position: opts.logoPos || 'top-right', size: opts.logoSize || 'M' } : false,

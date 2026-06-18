@@ -25,13 +25,24 @@ export function seedLogoParams(preselections) {
     };
 }
 
+// Instagram-Stories-style hook text style keys (mirror domain/hooks.py
+// HOOK_STYLE_DEFAULTS). Forwarded to the compose hook layer.
+const HOOK_STYLE_KEYS = ['bg_enabled', 'bg_color', 'bg_opacity', 'text_color', 'outline_width', 'outline_color', 'font'];
+
 export function seedHookParams(clip, preselections) {
-    return {
+    const h = preselections?.hook || {};
+    const base = {
         text: clip?.viral_hook_text || clip?.hook_text || '',
-        position: preselections?.hook?.position || 'top',
-        size: preselections?.hook?.size || 'S',
+        position: h.position || 'top',
+        size: h.size || 'S',
         offset_y: 0,
     };
+    // Carry any pre-selected style keys through to the per-clip params so the
+    // burn reflects the user's banner/colour/outline/font choices.
+    for (const k of HOOK_STYLE_KEYS) {
+        if (h[k] !== undefined) base[k] = h[k];
+    }
+    return base;
 }
 
 export function seedSubtitleParams(preselections) {

@@ -8,11 +8,20 @@
 // this one renders. The clip card shows a per-clip "processing" spinner.
 import { useState } from 'react';
 import { Icon, Btn, Segmented, Switch } from './primitives';
-import { SUBTITLE_PRESETS, SUB_COLORS, LOGO_POSITIONS, LOGO_SIZES } from './data';
+import { SUBTITLE_PRESETS, SUB_COLORS, LOGO_POSITIONS, LOGO_SIZES, HOOK_STYLE_DEFAULT } from './data';
 import { useModalA11y } from './useModalA11y';
 import { clipPreviewSrc } from './realApi';
 import { useFontList } from '../hooks/useFontList';
+import { HookStyleControls, HookPreview } from './hookStyle';
 import { seedSubtitleParams, seedHookParams, seedLogoParams } from '../lib/seedClipParams';
+
+// Pull the IG-style hook style keys out of a flat hookParams object.
+const HOOK_STYLE_KEYS = ['bg_enabled', 'bg_color', 'bg_opacity', 'text_color', 'outline_width', 'outline_color', 'font'];
+function pickHookStyle(src) {
+  const out = { ...HOOK_STYLE_DEFAULT };
+  for (const k of HOOK_STYLE_KEYS) if (src && src[k] !== undefined) out[k] = src[k];
+  return out;
+}
 
 const REFRAME_OPTS = [
   { id: 'auto', label: 'Auto' },
@@ -48,6 +57,10 @@ export function EditClipModal({ clip, idx, initial, appliedMode, preselections, 
   const [hookText, setHookText] = useState(
     initial?.hookParams?.text || clip.viral_hook_text || clip.hook_text || '',
   );
+  // IG-Stories hook style: seed from a prior edit, else the pre-selection.
+  const [hookStyle, setHookStyle] = useState(
+    () => pickHookStyle(initial?.hookParams || (preselections || {}).hook),
+  );
 
   const panelRef = useModalA11y(onClose);
 
@@ -62,13 +75,11 @@ export function EditClipModal({ clip, idx, initial, appliedMode, preselections, 
   const apply = () => {
     const subtitleParams = { ...seedSubtitleParams(preselections), ...sp, mode, preset, position,
       ...(mode === 'classic' ? { font: subFont, font_color: subColor } : {}) };
-    const hookParams = { ...seedHookParams(clip, preselections), ...(initial?.hookParams || {}), text: hookText };
+    const hookParams = { ...seedHookParams(clip, preselections), ...(initial?.hookParams || {}), ...hookStyle, text: hookText };
     const logoParams = { position: logoPos, size: logoSize };
     const toggles = { smartcut, subtitles: subsOn, hook: hookOn, logo: logoOn };
     onApply({ reframeMode, baseMode, toggles, subtitleParams, hookParams, logoParams });
   };
-
-  const ps = SUBTITLE_PRESETS.find((p) => p.id === preset) || SUBTITLE_PRESETS[0];
 
   return (
     <div className="overlay" onClick={onClose}>
@@ -165,16 +176,14 @@ export function EditClipModal({ clip, idx, initial, appliedMode, preselections, 
             </div>
             {hookOn && (
               <div className="cfg-drawer fade-in">
-                <div className="cf-row" style={{ marginBottom: 0 }}>
+                <div className="cf-row">
                   <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Hook text</span>
                   <textarea className="ta" rows="2" value={hookText} placeholder="e.g. THIS changed everything"
                     onChange={(e) => setHookText(e.target.value)}></textarea>
-                  <div className="prev" style={{ marginTop: 10, padding: '14px 10px', background: '#0c0c11', borderRadius: 'var(--r-sm)', textAlign: 'center' }}>
-                    <span style={{ ...ps.style, fontSize: 15, fontWeight: 800, lineHeight: 1.1 }}>
-                      {hookText.split(' ').slice(0, 2).join(' ')} <span style={{ color: ps.hi }}>{hookText.split(' ').slice(2).join(' ') || 'NOW'}</span>
-                    </span>
-                  </div>
+                  <div style={{ marginTop: 10 }}><HookPreview text={hookText} style={hookStyle} /></div>
                 </div>
+                <HookStyleControls style={hookStyle}
+                  set={(partial) => setHookStyle((s) => ({ ...s, ...partial }))} />
               </div>
             )}
 

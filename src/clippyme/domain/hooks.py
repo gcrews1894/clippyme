@@ -79,26 +79,92 @@ def has_emoji(text):
     return bool(emoji_pattern.search(text))
 
 
-def create_hook_image(text, target_width, output_image_path="hook_overlay.png", font_scale=1.0):
-    """
-    Generates a white rounded-corner box with black serif text.
-    target_width: max width the box should occupy (e.g. 85% of video width).
-    """
-    download_font_if_needed()
+_HEX_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 
-    padding_x = 30
-    padding_y = 25
+
+def _hex_to_rgba(hex_str, alpha=255, default=(0, 0, 0)):
+    """#RRGGBB → (r, g, b, alpha). Falls back to `default` on a bad value so a
+    malformed colour can never crash the render."""
+    if isinstance(hex_str, str) and _HEX_RE.match(hex_str):
+        h = hex_str.lstrip("#")
+        return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16), int(alpha))
+    return (*default, int(alpha))
+
+
+def _resolve_hook_font_path(font_name):
+    """Map a font NAME (e.g. 'Anton-Regular', an uploaded 'Stratos-Medium') to a
+    TTF/OTF path. Searches the bundled fonts dir + the writable user-fonts dir
+    (shared with the subtitle pipeline). Falls back to the bundled serif."""
+    if font_name:
+        dirs = [FONT_DIR]
+        try:
+            from clippyme.domain.subtitles import USER_FONTS_DIR
+            dirs.append(USER_FONTS_DIR)
+        except Exception:
+            pass
+        for d in dirs:
+            for ext in (".ttf", ".otf", ".ttc"):
+                p = os.path.join(d, f"{font_name}{ext}")
+                if os.path.exists(p):
+                    return p
+    download_font_if_needed()
+    return FONT_PATH
+
+
+# Instagram-Stories-style defaults: a white rounded banner with black text
+# (reproduces the legacy look so existing hooks render identically when no
+# style is supplied).
+HOOK_STYLE_DEFAULTS = {
+    "text_color": "#000000",
+    "bg_enabled": True,
+    "bg_color": "#FFFFFF",
+    "bg_opacity": 0.94,
+    "corner_radius": 20,
+    "outline_color": "#000000",
+    "outline_width": 0,
+    "font": None,            # None → bundled NotoSerif-Bold
+    "shadow": None,          # None → auto (shadow only when no banner)
+}
+
+
+def create_hook_image(text, target_width, output_image_path="hook_overlay.png",
+                      font_scale=1.0, style=None):
+    """Render a hook text overlay PNG (transparent canvas).
+
+    `style` (all optional, see HOOK_STYLE_DEFAULTS) makes the overlay behave
+    like Instagram Stories text: a toggleable coloured banner behind the text,
+    independent text/background colours, a text outline (stroke) and a font
+    choice. With no style it reproduces the legacy white-box / black-serif look.
+
+    target_width: max width the box should occupy (e.g. 90% of video width).
+    """
+    s = {**HOOK_STYLE_DEFAULTS, **(style or {})}
+    bg_enabled = bool(s["bg_enabled"])
+    bg_opacity = max(0.0, min(1.0, float(s["bg_opacity"])))
+    text_rgba = _hex_to_rgba(s["text_color"], 255, default=(0, 0, 0))
+    bg_rgba = _hex_to_rgba(s["bg_color"], int(round(bg_opacity * 255)), default=(255, 255, 255))
+    outline_w = max(0, min(20, int(s["outline_width"])))
+    outline_rgba = _hex_to_rgba(s["outline_color"], 255, default=(0, 0, 0))
+    corner_radius = max(0, min(80, int(s["corner_radius"])))
+    # Drop shadow lifts text off the video; auto-on only when there's no banner
+    # to provide contrast (matches IG's bannerless styles).
+    shadow = (not bg_enabled) if s["shadow"] is None else bool(s["shadow"])
+
+    padding_x = 30 if bg_enabled else 12
+    padding_y = 25 if bg_enabled else 10
     line_spacing = 20
-    corner_radius = 20
-    shadow_offset = (5, 5)
 
     base_font_size = int(target_width * 0.05)
-    font_size = int(base_font_size * font_scale)
+    font_size = max(8, int(base_font_size * font_scale))
 
+    font_path = _resolve_hook_font_path(s["font"])
     try:
-        font = ImageFont.truetype(FONT_PATH, font_size)
+        font = ImageFont.truetype(font_path, font_size)
     except Exception:
-        font = ImageFont.load_default()
+        try:
+            font = ImageFont.truetype(FONT_PATH, font_size)
+        except Exception:
+            font = ImageFont.load_default()
 
     # Pixel-based word wrapping
     dummy_img = Image.new("RGBA", (1, 1))
@@ -113,7 +179,7 @@ def create_hook_image(text, target_width, output_image_path="hook_overlay.png", 
         current_line = []
         for word in paragraph.split():
             test_line = " ".join(current_line + [word])
-            bbox = draw.textbbox((0, 0), test_line, font=font)
+            bbox = draw.textbbox((0, 0), test_line, font=font, stroke_width=outline_w)
             if bbox[2] - bbox[0] <= max_text_width:
                 current_line.append(word)
             else:
@@ -130,32 +196,50 @@ def create_hook_image(text, target_width, output_image_path="hook_overlay.png", 
         if not line:
             text_heights.append(font_size)
             continue
-        bbox = draw.textbbox((0, 0), line, font=font)
+        bbox = draw.textbbox((0, 0), line, font=font, stroke_width=outline_w)
         max_line_width = max(max_line_width, bbox[2] - bbox[0])
         text_heights.append(bbox[3] - bbox[1])
 
-    box_width = max(max_line_width + 2 * padding_x, int(target_width * 0.3))
+    min_box = int(target_width * 0.3) if bg_enabled else max_line_width
+    box_width = max(max_line_width + 2 * padding_x, min_box)
     total_text_height = sum(text_heights) + (len(text_heights) - 1) * line_spacing if text_heights else font_size
     box_height = total_text_height + 2 * padding_y
 
-    # Canvas with shadow
-    canvas_w = box_width + 40
-    canvas_h = box_height + 40
+    # Canvas margin leaves room for the soft shadow / stroke overflow.
+    margin = 20
+    canvas_w = box_width + 2 * margin
+    canvas_h = box_height + 2 * margin
     img = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
 
-    # Shadow
-    shadow_box = [
-        (20 + shadow_offset[0], 20 + shadow_offset[1]),
-        (20 + box_width + shadow_offset[0], 20 + box_height + shadow_offset[1]),
-    ]
-    draw.rounded_rectangle(shadow_box, radius=corner_radius, fill=(0, 0, 0, 100))
-    img = img.filter(ImageFilter.GaussianBlur(5))
+    if shadow:
+        shadow_offset = (4, 4)
+        draw = ImageDraw.Draw(img)
+        if bg_enabled:
+            draw.rounded_rectangle(
+                [(margin + shadow_offset[0], margin + shadow_offset[1]),
+                 (margin + box_width + shadow_offset[0], margin + box_height + shadow_offset[1])],
+                radius=corner_radius, fill=(0, 0, 0, 110))
+        else:
+            # Bannerless: a soft text-shaped shadow for legibility.
+            cy = margin + padding_y - 2
+            for i, line in enumerate(lines):
+                if line:
+                    bb = draw.textbbox((0, 0), line, font=font, stroke_width=outline_w)
+                    lw = bb[2] - bb[0]
+                    lx = margin + (box_width - lw) // 2
+                    draw.text((lx + shadow_offset[0], cy + shadow_offset[1]), line, font=font,
+                              fill=(0, 0, 0, 150), stroke_width=outline_w)
+                cy += (text_heights[i] if i < len(text_heights) else font_size) + line_spacing
+        img = img.filter(ImageFilter.GaussianBlur(5))
 
-    # White box
     draw_final = ImageDraw.Draw(img)
-    main_box = [(20, 20), (20 + box_width, 20 + box_height)]
-    draw_final.rounded_rectangle(main_box, radius=corner_radius, fill=(255, 255, 255, 240))
+    if bg_enabled:
+        # Pillow throws / renders lobes when radius exceeds half the shorter
+        # side — clamp it for short single-line banners.
+        r = min(corner_radius, box_height // 2, box_width // 2)
+        draw_final.rounded_rectangle(
+            [(margin, margin), (margin + box_width, margin + box_height)],
+            radius=r, fill=bg_rgba)
 
     # Emoji font (loaded lazily only when needed)
     emoji_font = None
@@ -166,20 +250,24 @@ def create_hook_image(text, target_width, output_image_path="hook_overlay.png", 
         except Exception:
             emoji_font = None
 
-    # Text
-    current_y = 20 + padding_y - 2
+    current_y = margin + padding_y - 2
     for i, line in enumerate(lines):
         if not line:
             current_y += font_size + line_spacing
             continue
-        bbox = draw_final.textbbox((0, 0), line, font=font)
+        bbox = draw_final.textbbox((0, 0), line, font=font, stroke_width=outline_w)
         line_w = bbox[2] - bbox[0]
-        x = 20 + (box_width - line_w) // 2
+        x = margin + (box_width - line_w) // 2
 
+        # Pillow rejects stroke_width together with embedded_color (emoji), so
+        # emoji lines render without the outline.
         if emoji_font and has_emoji(line):
-            draw_final.text((x, current_y), line, font=font, fill="black", embedded_color=True)
+            draw_final.text((x, current_y), line, font=font, fill=text_rgba, embedded_color=True)
+        elif outline_w > 0:
+            draw_final.text((x, current_y), line, font=font, fill=text_rgba,
+                            stroke_width=outline_w, stroke_fill=outline_rgba)
         else:
-            draw_final.text((x, current_y), line, font=font, fill="black")
+            draw_final.text((x, current_y), line, font=font, fill=text_rgba)
 
         current_y += (text_heights[i] if i < len(text_heights) else bbox[3] - bbox[1]) + line_spacing
 
@@ -187,12 +275,15 @@ def create_hook_image(text, target_width, output_image_path="hook_overlay.png", 
     return output_image_path, canvas_w, canvas_h
 
 
-def add_hook_to_video(video_path, text, output_path, position="top", font_scale=1.0, offset_y=0):
+def add_hook_to_video(video_path, text, output_path, position="top", font_scale=1.0,
+                      offset_y=0, style=None):
     """
     Overlays a text hook box onto a video.
     position: 'top', 'center', 'bottom'
     font_scale: float multiplier (0.8 = small, 1.0 = medium, 1.3 = large)
     offset_y: vertical offset as percentage of video height (-50 to +50)
+    style: optional Instagram-Stories-style dict (see HOOK_STYLE_DEFAULTS) —
+      banner toggle/colour/opacity, text colour, outline, font.
     """
     if not os.path.exists(video_path):
         raise FileNotFoundError(f"Video {video_path} not found")
@@ -209,7 +300,8 @@ def add_hook_to_video(video_path, text, output_path, position="top", font_scale=
     hook_filename = f"temp_hook_{os.getpid()}_{os.path.basename(video_path)}.png"
 
     try:
-        img_path, box_w, box_h = create_hook_image(text, target_box_width, hook_filename, font_scale=font_scale)
+        img_path, box_w, box_h = create_hook_image(text, target_box_width, hook_filename,
+                                                    font_scale=font_scale, style=style)
 
         overlay_x = (video_width - box_w) // 2
         position_norm = "center" if position == "middle" else position

@@ -82,6 +82,22 @@ export const SUBTITLE_PRESETS = [
   { id: 'fire_impact', label: 'Fire', hi: '#FF4444', style: { color: '#fff', fontFamily: 'Impact,sans-serif', textShadow: '0 0 3px #f44,-1px -1px 0 #000,1px 1px 0 #000', letterSpacing: '.03em' } },
 ];
 
+// Instagram-Stories-style hook text defaults. Keys match the backend
+// create_hook_image `style` dict (domain/hooks.py:HOOK_STYLE_DEFAULTS). The
+// default reproduces the legacy white-banner / black-text look so existing
+// hooks render unchanged until the user customises them.
+export const HOOK_STYLE_DEFAULT = {
+  bg_enabled: true,
+  bg_color: '#FFFFFF',
+  bg_opacity: 0.94,
+  text_color: '#000000',
+  outline_width: 0,
+  outline_color: '#000000',
+  font: '',
+};
+// Outline thickness presets → px stroke width.
+export const HOOK_OUTLINE = [['0', 'None'], ['4', 'Thin'], ['8', 'Thick']];
+
 export const LANGUAGES = [
   ['multi', 'Multi-language'], ['en', 'English'], ['it', 'Italiano'], ['es', 'Español'],
   ['fr', 'Français'], ['de', 'Deutsch'], ['pt', 'Português'], ['nl', 'Nederlands'],
