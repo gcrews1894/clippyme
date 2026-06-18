@@ -10,6 +10,7 @@ on:
     branches: ["**"]
   pull_request:
     branches: ["**"]
+  workflow_dispatch: {}
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -34,7 +35,14 @@ jobs:
           # suite imports (numpy/pydantic/fastapi/yt-dlp/…). `pip install -e .`
           # alone installs no runtime deps; the heavy CV/ML stack stays in Docker.
           pip install -e ".[host-tests]"
-          pip install pytest pip-audit
+          pip install pytest pip-audit ruff
+
+      # Lint for real bugs only — undefined names (F82, the class behind the
+      # silently-swallowed MAR NameError regression), syntax errors (E9),
+      # logic mistakes (F7) and assert/comparison bugs (F63). Style/unused-import
+      # noise (F401/F841) is intentionally NOT gated to keep this green + signal.
+      - name: Lint (ruff — bug-class rules)
+        run: ruff check src/clippyme tests --select E9,F63,F7,F82
 
       - name: Run host test suite (excludes integration)
         run: pytest -m "not integration" -q
@@ -75,3 +83,16 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  # Heavy CV/ML integration suite (cv2 + mediapipe + scenedetect + the reframe
+  # render path). Too slow/large for every PR, so it's gated to main pushes and
+  # manual runs. Mirrors the documented local command in CLAUDE.md.
+  integration:
+    name: Integration (Docker — reframe/pipeline)
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run integration suite in the backend image
+        run: docker compose run --rm -u root backend sh -lc "pip install -q pytest && pytest -m integration -q"
