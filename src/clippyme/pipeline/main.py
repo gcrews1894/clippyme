@@ -241,6 +241,7 @@ from clippyme.pipeline.download import (  # noqa: E402
 
 # Audio normalize + Ken Burns zoom live in a cv2-free, host-testable module.
 from clippyme.pipeline.postprocess import normalize_audio, apply_subtle_zoom  # noqa: E402
+from clippyme.pipeline import texttiling_ops  # noqa: E402
 
 
 
@@ -698,6 +699,41 @@ def get_viral_clips(transcript_result, video_duration, instructions=None):
         logging.getLogger("clippyme").exception("Unexpected error in Gemini response processing")
         return None
 
+
+def build_texttiling_fallback(transcript_result, video_title):
+    """No-AI fallback: topic-segment the transcript into clips via lexical TextTiling.
+
+    Returns a ``{"shorts": [...]}`` dict shaped like ``get_viral_clips`` output so
+    the clips flow through the identical downstream clip loop, or ``None`` when
+    the transcript can't be usefully segmented (caller then renders whole-video).
+    Clips carry ``viral_score=0`` and an explicit ``viral_reason`` so the UI shows
+    they are heuristic, not AI-judged. See docs/clipsai-analysis.md.
+    """
+    try:
+        segments = (transcript_result or {}).get('segments') or []
+        topic_clips = texttiling_ops.find_topic_clips(segments)
+        if not topic_clips:
+            return None
+        print(f"🧩 Gemini unavailable — lexical TextTiling found {len(topic_clips)} topic clips.")
+        shorts = []
+        for i, tc in enumerate(topic_clips):
+            snippet = (tc.get('text') or '').strip()
+            shorts.append({
+                'start': float(tc['start']),
+                'end': float(tc['end']),
+                'video_title_for_youtube_short': f"{video_title} — part {i + 1}",
+                'tiktok_caption': snippet[:150],
+                'viral_score': 0,
+                'viral_reason': "Topic-segmented fallback (no AI scoring — Gemini was unavailable).",
+                'hook': '',
+            })
+        return {"shorts": shorts}
+    except Exception as e:  # noqa: BLE001 — fallback must never break the pipeline
+        print(f"⚠️  TextTiling fallback failed ({e}); will render whole video instead.")
+        logging.getLogger("clippyme").exception("TextTiling fallback failed")
+        return None
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="AutoCrop-Vertical with Viral Clip Detection.")
     
@@ -872,8 +908,19 @@ if __name__ == '__main__':
 
         # 4. Gemini Analysis
         clips_data = get_viral_clips(transcript, duration, instructions=args.instructions)
-        
+
+        # Smarter no-AI fallback: when Gemini is unavailable (no key) or its
+        # output is unusable, segment the transcript into topic-coherent clips
+        # via dependency-light lexical TextTiling instead of dumping the entire
+        # source as one giant vertical clip. Topic clips flow through the exact
+        # same proven clip loop below (source slice → reframe → zoom/normalize/
+        # cover). If TextTiling can't find usable segments we fall through to the
+        # original whole-video render. (Ported from ClipsAI — see
+        # docs/clipsai-analysis.md.)
         if not clips_data or 'shorts' not in clips_data:
+            clips_data = build_texttiling_fallback(transcript, video_title)
+
+        if not clips_data or not clips_data.get('shorts'):
             print("❌ Failed to identify clips. Converting whole video as fallback.")
             output_file = os.path.join(output_dir, f"{video_title}_vertical.mp4")
             process_video_to_vertical(input_video, output_file, reframe_mode=args.reframe_mode)
