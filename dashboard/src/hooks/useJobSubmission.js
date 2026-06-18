@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { submitProcessJob, submitBatchJob } from '../lib/api';
 import { getApiUrl } from '../config';
 
@@ -19,6 +20,17 @@ export function useJobSubmission({
   // coupling this hook to a tab state machine.
   onBatchFinished,
 }) {
+  // Hold the batch poll interval so it can be cleared on unmount (the interval
+  // is created inside an async handler, not a useEffect, so without this it
+  // leaks and keeps calling fetch/setState on an unmounted component).
+  const pollRef = useRef(null);
+  useEffect(
+    () => () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    },
+    [],
+  );
+
   const handleProcess = async (data) => {
     if (!apiKey) {
       setShowKeyModal(true);
@@ -122,6 +134,9 @@ export function useJobSubmission({
 
       const TAIL = 6; // how many recent lines per job to show in the panel
 
+      // Clear any interval still running from a previous batch submission
+      // before starting a new one (rapid re-submit would otherwise stack them).
+      if (pollRef.current) clearInterval(pollRef.current);
       const pollAll = setInterval(async () => {
         for (const jid of allJobIds) {
           try {
@@ -130,7 +145,10 @@ export function useJobSubmission({
             const s = await r.json();
             if (Array.isArray(s.logs)) lastLogs.set(jid, s.logs);
             if (!finished.has(jid)) {
-              if (s.status === 'completed') {
+              // 'stopped' is terminal-with-clips (graceful stop keeps finished
+              // clips), so count it as a success. Without it the batch never
+              // reaches all-terminal and the poll loop hangs forever.
+              if (s.status === 'completed' || s.status === 'stopped') {
                 finished.add(jid);
                 succeeded += 1;
               } else if (s.status === 'failed' || s.status === 'cancelled') {
@@ -165,6 +183,7 @@ export function useJobSubmission({
 
         if (finished.size >= total) {
           clearInterval(pollAll);
+          pollRef.current = null;
           setStatus('complete');
           setLogs((l) => [
             ...l,
@@ -188,6 +207,7 @@ export function useJobSubmission({
           }
         }
       }, 2000);
+      pollRef.current = pollAll;
     } catch (e) {
       setStatus('error');
       setLogs((l) => [...l, `Batch error: ${e.message}`]);

@@ -739,8 +739,16 @@ def _render_with_ffmpeg(
             if rc == 0 and os.path.exists(seg_path):
                 segment_files.append(seg_path)
 
-        if len(segment_files) < 2:
+        if not segment_files:
             return False
+        # A single kept segment is a valid edit (e.g. a manual trim that drops
+        # only the head/tail, leaving one continuous run). The concat demuxer
+        # needs ≥2 inputs, so move the lone segment straight to the output
+        # instead of failing — otherwise a one-segment trim silently produces
+        # no smartcut output when auto-editor is unavailable.
+        if len(segment_files) == 1:
+            shutil.move(segment_files[0], output_path)
+            return os.path.exists(output_path)
 
         concat_list = os.path.join(temp_dir, "concat.txt")
         with open(concat_list, "w") as f:

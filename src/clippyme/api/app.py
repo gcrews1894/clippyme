@@ -50,6 +50,7 @@ from clippyme.api.schemas import (
     PublishRequest,
     ReframeRequest,
     ZernioConfigRequest,
+    _validate_drop_ranges,
 )
 from clippyme.api.security import (
     ALLOWED_ORIGINS,
@@ -129,7 +130,19 @@ async def lifespan(app: FastAPI):
     from clippyme.integrations.auto_editor_updater import background_updater_loop
     ae_updater_task = asyncio.create_task(background_updater_loop())
     yield
-    ae_updater_task.cancel()
+    # Cancel ALL background tasks on shutdown — not just the updater. Leaving
+    # the worker/cleanup loops pending blocks uvicorn's graceful exit and logs
+    # "Task was destroyed but it is pending!" tracebacks.
+    _bg_tasks = (worker_task, cleanup_task, ae_updater_task)
+    for _t in _bg_tasks:
+        _t.cancel()
+    for _t in _bg_tasks:
+        try:
+            await _t
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.exception("background task raised during shutdown")
 
 app = FastAPI(lifespan=lifespan)
 
@@ -895,6 +908,13 @@ async def smart_cut_clip(job_id: str, clip_index: int, request: Request):
             drop_ranges = body.get("drop_ranges")
     except Exception:
         pass
+    # This raw-body path bypasses Pydantic, so apply the same bound check the
+    # ComposeRequest/PublishRequest schemas use — rejects an oversized or
+    # malformed list before the engine iterates it (DoS gate).
+    try:
+        _validate_drop_ranges(drop_ranges)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid drop_ranges: {exc}")
     return await run_smart_cut(
         job_id=job_id,
         clip_index=clip_index,

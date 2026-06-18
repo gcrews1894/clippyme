@@ -75,9 +75,15 @@ def download_youtube_video(url, output_dir=".", cookies_file_path=None):
 
     # Common yt-dlp options to work around YouTube bot detection.
     # Avoid the OAuth/PO-token checks that block server IPs.
+    # yt-dlp verbose mode prints the resolved cookies path, request URLs, and
+    # HTTP headers — all of which end up in the job's log buffer that
+    # /api/status returns to any client holding the job_id. Default it OFF so
+    # those internals don't leak; opt back in with YTDLP_VERBOSE=1 for debugging
+    # YouTube bot-detection issues.
+    _ydl_verbose = os.environ.get('YTDLP_VERBOSE') == '1'
     _COMMON_YDL_OPTS = {
-        'quiet': False,
-        'verbose': True,
+        'quiet': not _ydl_verbose,
+        'verbose': _ydl_verbose,
         'no_warnings': False,
         'cookiefile': cookies_path if cookies_path else None,
         'socket_timeout': 30,

@@ -76,9 +76,18 @@ async def _apply_smartcut(
     # different hand-picked drops would otherwise serve a stale cut. smart_cut
     # itself plan-hashes the output, so manual trims still cache correctly.
     smartcut_path = current_input.replace(".mp4", "_smartcut.mp4")
+    # Only reuse the sidecar if it's newer than its source. A post-run reframe
+    # overwrites the clip .mp4 in place, so a stale _smartcut.mp4 from before the
+    # reframe must NOT be served — re-cut instead. (smart_cut itself plan-hashes,
+    # but this fixed-name shortcut bypasses that check, hence the explicit mtime.)
     if not drop_ranges and os.path.exists(smartcut_path):
-        intermediate_files.append(smartcut_path)
-        return smartcut_path
+        try:
+            fresh = os.path.getmtime(smartcut_path) >= os.path.getmtime(current_input)
+        except OSError:
+            fresh = False
+        if fresh:
+            intermediate_files.append(smartcut_path)
+            return smartcut_path
     transcript = metadata.get("transcript", {})
     loop = asyncio.get_event_loop()
     sc_output, _ = await loop.run_in_executor(

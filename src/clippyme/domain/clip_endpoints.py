@@ -40,7 +40,7 @@ async def run_smart_cut(
         raise ValidationError("Transcript not found in metadata.")
 
     clips = data.get("shorts", [])
-    if clip_index >= len(clips):
+    if clip_index < 0 or clip_index >= len(clips):
         raise NotFoundError("Clip not found")
 
     clip_data = clips[clip_index]
