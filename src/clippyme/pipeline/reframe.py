@@ -679,9 +679,12 @@ def _object_weights():
     return weights or None
 
 
-def _weighted_object_general_crop(frame, output_width, output_height):
+def _weighted_object_general_crop(frame, output_width, output_height, weights=None):
     """Object-aware crop for faceless (GENERAL) scenes — opt-in via
     REFRAME_OBJECT_WEIGHTS.
+
+    ``weights`` overrides the env-derived map (used by the ``object`` reframe
+    mode, which forces the curated defaults on regardless of the env flag).
 
     Reuses the existing lazily-loaded YOLOv8 model (no second network) to detect
     every COCO object in the frame, weights each by ``class_weight * area *
@@ -697,7 +700,8 @@ def _weighted_object_general_crop(frame, output_width, output_height):
     uses; only the output class filter differs, so the marginal cost is NMS, not
     a second inference.
     """
-    weights = _object_weights()
+    if weights is None:
+        weights = _object_weights()
     if not weights:
         return None
     try:
@@ -769,7 +773,7 @@ def _salient_general_crop(frame, output_width, output_height):
         return None
 
 
-def create_general_frame(frame, output_width, output_height):
+def create_general_frame(frame, output_width, output_height, force_object_weights=False):
     """
     Creates a 'General Shot' frame:
     - Background: Blurred zoom of original
@@ -782,8 +786,16 @@ def create_general_frame(frame, output_width, output_height):
       2. REFRAME_SALIENT_GENERAL=1 — centre on the Sobel-salient column band
          (_salient_general_crop)
     Both default-off, keeping the letterbox path below byte-identical.
+
+    ``force_object_weights=True`` (used by the ``object`` reframe mode) turns the
+    object-centroid crop on with the curated default weights regardless of the
+    env flag, so element-aware framing is the primary path and the blurred
+    letterbox below is only the no-element fallback.
     """
-    obj = _weighted_object_general_crop(frame, output_width, output_height)
+    obj = _weighted_object_general_crop(
+        frame, output_width, output_height,
+        weights=dict(_DEFAULT_OBJECT_WEIGHTS) if force_object_weights else None,
+    )
     if obj is not None:
         return obj
 
@@ -1199,6 +1211,9 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
     if reframe_mode == 'disabled':
         print("   🚫 Reframe mode: DISABLED — clip placed inside a 9:16 frame with letterbox (black bars top & bottom).")
         print("      (Scene detection still runs for consistency; face tracking is skipped.)")
+    elif reframe_mode == 'object':
+        print("   🧩 Reframe mode: OBJECT — element-aware 9:16 crop (objects → saliency → blurred bands).")
+        print("      (Face tracking is skipped; the camera frames the most salient on-screen elements.)")
     else:
         print("   🎯 Reframe mode: AUTO — face tracking + dynamic 9:16 crop.")
     print("   Step 1: Detecting scenes...")
@@ -1242,6 +1257,9 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
     if reframe_mode == 'disabled':
         print("\n   🤖 Step 3: Skipping scene analysis (reframe disabled).")
         scene_strategies = ['DISABLED'] * len(scenes)
+    elif reframe_mode == 'object':
+        print("\n   🤖 Step 3: Skipping scene analysis (object mode — every scene is element-cropped).")
+        scene_strategies = ['OBJECT'] * len(scenes)
     else:
         print("\n   🤖 Step 3: Analyzing Scenes for Strategy (Single vs Group)...")
         scene_strategies = analyze_scenes_strategy(input_video, scenes)
@@ -1293,10 +1311,13 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
         # When on, a dedicated track-then-render pass handles all frames and the
         # single-pass streaming loop below is skipped (its `while` short-circuits
         # on `not global_smooth`). Default-off keeps the proven path byte-identical.
+        # Global-smooth is a face-tracking pan smoother → only meaningful in AUTO.
+        # OBJECT (per-frame element crop) and DISABLED (static) run the streaming
+        # loop below.
         global_smooth = (
             (os.getenv("REFRAME_GLOBAL_SMOOTH", "").strip().lower() in ("1", "true", "yes", "on")
              or _reframe_comfort_enabled())
-            and reframe_mode != 'disabled'
+            and reframe_mode == 'auto'
         )
         if global_smooth:
             _render_global_smooth(
@@ -1328,6 +1349,14 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
                 try:
                     if current_strategy == 'DISABLED':
                         output_frame = create_disabled_reframe(frame, OUTPUT_WIDTH, OUTPUT_HEIGHT)
+
+                    elif current_strategy == 'OBJECT':
+                        # Element-aware crop everywhere: object centroid → Sobel
+                        # saliency → blurred letterbox bands (the create_general_frame
+                        # fallback chain) with the curated object weights forced on.
+                        output_frame = create_general_frame(
+                            frame, OUTPUT_WIDTH, OUTPUT_HEIGHT, force_object_weights=True
+                        )
 
                     elif current_strategy == 'GENERAL':
                         # No faces detected anywhere in scene → letterbox fallback

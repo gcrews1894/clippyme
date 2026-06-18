@@ -61,14 +61,14 @@ Config is persisted in `data/config.json` (git-ignored). Cookies in `data/cookie
 
 ## Post-hoc reframe switching
 
-After a job completes, every clip can be flipped between **`auto`** (face tracking) and **`disabled`** (4:3 + black bars) without re-running the entire pipeline. To enable this the clip generator (`main.py`) now **preserves the 16:9 source slice per clip** on disk as `source_<clip_filename>.mp4` (never deleted at the end of the pipeline). The new endpoint `POST /api/reframe/{job_id}/{clip_index}` spawns `python -m clippyme.pipeline.main --reframe-only -i <source> -o <target> --reframe-mode <mode>` which:
+After a job completes, every clip can be flipped between the **three reframe modes** — **`auto`** (face tracking), **`object`** (element-aware crop), and **`disabled`** (4:3 + black bars) — without re-running the entire pipeline. To enable this the clip generator (`main.py`) now **preserves the 16:9 source slice per clip** on disk as `source_<clip_filename>.mp4` (never deleted at the end of the pipeline). The new endpoint `POST /api/reframe/{job_id}/{clip_index}` spawns `python -m clippyme.pipeline.main --reframe-only -i <source> -o <target> --reframe-mode <mode>` which:
 1. Calls `process_video_to_vertical` with the new mode
 2. Re-runs `apply_subtle_zoom` (unless `--no-zoom`), `normalize_audio`, `select_cover_frame`
 3. Overwrites the same clip filename so all downstream references (subtitle/hook/compose) keep working
 
 The endpoint updates metadata.json (`clip.video_url` + `clip.reframe_mode`) and the in-memory `jobs[job_id]['result']['clips'][i]`, and returns a cache-busted `new_video_url` (with a `?v=<timestamp>` query string appended) so the browser `<video>` element re-fetches instead of serving the stale reframed clip from the HTTP cache.
 
-**Frontend**: `ResultCard.jsx` has a new toolbar button (top-left, next to the eye/trash icons). It cycles between `auto` (pink Crop icon) and `disabled` (zinc Square icon) with a Loader2 spinner while the subprocess runs. State is persisted per-clip via `useClipStates.reframeMode`. Legacy jobs (created before this feature landed and therefore missing the `source_*.mp4` slice) return HTTP 409 and the frontend shows a toast explaining the clip must be reprocessed.
+**Frontend**: the results `ClipCard` (`redesign/results.jsx`) has a toolbar button (top-left, next to the eye/trash icons) that **cycles `auto` → `object` → `disabled` → `auto`** — Crop icon (auto), Layers icon (object), Square icon (disabled), active (pink) for any non-disabled mode, with a Loader2 spinner while the subprocess runs. State is persisted per-clip via `useClipStates.reframeMode`. The Create tab's **Clip Options** exposes the same three modes as a `Segmented` control (Auto / Object / Off → `opts.reframeMode`, persisted in preselections; the old boolean `opts.reframe` is read only as a back-compat fallback in `optsToPreselections`). Legacy jobs (created before the source-slice feature landed and therefore missing the `source_*.mp4` slice) return HTTP 409 and the frontend shows a toast explaining the clip must be reprocessed.
 
 **Why subprocess, not in-process import**: importing `main.py` into the FastAPI worker would eagerly load YOLO + MediaPipe models. We want the reframe endpoint to be latency-tolerant but not pay that startup cost on every API boot. Spawning `main.py --reframe-only` reuses the exact same code path the initial run used (same reframe algorithm, same zoom/normalize/cover) with zero code duplication.
 
@@ -190,7 +190,7 @@ The redesign uses hand-rolled primitives in `dashboard/src/redesign/primitives.j
 python -m clippyme.pipeline.main <url_or_path> [options]
   --instructions "focus on hooks"        # Directive injected into Gemini prompt
   --no-zoom                              # Disable Ken Burns auto-zoom (1.0→1.05x)
-  --reframe-mode auto|disabled           # Auto face tracking or 4:3 crop with black bars
+  --reframe-mode auto|object|disabled    # auto=face tracking · object=element-aware crop · disabled=4:3 crop w/ black bars
   --model gemini-2.5-pro                 # Override the Gemini model for THIS job (else GEMINI_MODEL)
 ```
 
@@ -203,7 +203,7 @@ python -m clippyme.pipeline.main <url_or_path> [options]
 | GET | `/api/status/{job_id}` | Poll job progress |
 | POST | `/api/compose/{job_id}/{clip_index}` | Compose final video from active toggles |
 | POST | `/api/smartcut/{job_id}/{clip_index}` | Generate smart-cut version of a clip |
-| POST | `/api/reframe/{job_id}/{clip_index}` | Switch a clip between `auto` / `disabled` reframe mode (requires preserved source slice) |
+| POST | `/api/reframe/{job_id}/{clip_index}` | Switch a clip between `auto` / `object` / `disabled` reframe mode (requires preserved source slice) |
 | POST | `/api/config/cookies` | Upload persistent cookies file |
 | GET | `/api/config/cookies/status` | Check if cookies are configured |
 | DELETE | `/api/config/cookies` | Remove cookies file |
@@ -250,12 +250,17 @@ The apply buttons are labelled **"Apply Hook"** / **"Apply Karaoke Subtitles"** 
 
 ## Reframing Modes
 
-`analyze_scenes_strategy()` samples 7 frames per scene → 3 modes:
+There are **two layers** of "mode". The **user-facing `--reframe-mode`** (`auto` | `object` | `disabled`) selects the whole-clip policy; within `auto`, **per-scene strategies** are then chosen automatically.
+
+**User-facing `--reframe-mode`** (CLI / `ProcessRequest.reframe_mode` / per-clip post-hoc `/api/reframe`):
+- **`auto`** (default) — face tracking; runs `analyze_scenes_strategy()` to pick a per-scene strategy (below). The comfort 2-pass / global-smooth path applies here only.
+- **`object`** — element-aware crop everywhere: every scene is forced to the `OBJECT` strategy → `create_general_frame(force_object_weights=True)`, which crops on the weighted-object centroid → Sobel saliency → blurred letterbox bands (fallback). Skips face tracking and scene analysis; the curated `_DEFAULT_OBJECT_WEIGHTS` are forced on regardless of the `REFRAME_OBJECT_WEIGHTS` env flag. This is the FrameShift-style "crop to the elements present, fall back to bands" mode. Streaming loop only (no global-smooth — that's a face-pan smoother).
+- **`disabled`** — overrides all scenes → 4:3 center crop + black bars (`create_disabled_reframe`).
+
+**Per-scene strategies** (only used inside `auto`; `analyze_scenes_strategy()` samples 7 frames per scene):
 - `TRACK`: single speaker → `SpeakerTracker` + `SmoothedCameraman`
 - `WIDE`: multi-speaker → same tracker with longer cooldown (45 frames ≈ 1.5s)
-- `GENERAL`: no faces → letterbox via `create_general_frame()`
-
-`--reframe-mode disabled` overrides all scenes → 4:3 center crop + black bars.
+- `GENERAL`: no faces → `create_general_frame()` (letterbox, or content-aware crop if the `REFRAME_OBJECT_WEIGHTS` / `REFRAME_SALIENT_GENERAL` env flags are set)
 
 **`SpeakerTracker`**: mouth-aspect-ratio (MAR) variance from MediaPipe FaceMesh (landmarks 13/14/78/308, defined as `_MOUTH_TOP/_BOTTOM/_LEFT/_RIGHT` module constants **in `reframe.py`**), 1s sliding window per speaker. Score = `0.3 * face_size_norm + 1.0 * MAR_variance`. 3× sticky bonus on the active speaker, switches require `cooldown_frames=45`. **Regression note:** these constants were once defined only in `main.py` while `compute_mouth_aspect_ratio` was extracted to `reframe.py`, so the MAR call raised `NameError` every frame — silently swallowed by the corrupt-frame guard, disabling active-speaker selection and duplicating ~37% of frames. Guarded by `tests/pipeline/test_reframe_mar.py` (asserts no undefined globals in the function) and surfaced by `REFRAME_DEBUG_EXC=1` (prints the first 5 swallowed per-frame tracebacks to stderr).
 

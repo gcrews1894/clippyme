@@ -27,10 +27,14 @@ function ClipCard({ clip, index, jobId, state, preselections, onUpdate, selectMo
     }
   };
 
+  // Cycle through the three reframe modes: auto (face-track) → object
+  // (element crop) → disabled (letterbox bands) → auto.
+  const REFRAME_CYCLE = { auto: 'object', object: 'disabled', disabled: 'auto' };
+  const REFRAME_ICON = { auto: 'crop', object: 'layers', disabled: 'square' };
   const cycleReframe = async (e) => {
     e.stopPropagation();
     if (reframing) return;
-    const next = mode === 'auto' ? 'disabled' : 'auto';
+    const next = REFRAME_CYCLE[mode] || 'auto';
     setReframing(true);
     try {
       await reframeClip(jobId, index, next);
@@ -53,9 +57,9 @@ function ClipCard({ clip, index, jobId, state, preselections, onUpdate, selectMo
           <span className="score"><Icon n="flame" style={{ width: 12, height: 12 }} />{score}</span>
           {selectMode
             ? <span className="clip-check"><Icon n="check" /></span>
-            : <button className={'cfg' + (mode === 'auto' ? ' active' : '')} title={`Reframe: ${mode}`} onClick={cycleReframe}
+            : <button className={'cfg' + (mode !== 'disabled' ? ' active' : '')} title={`Reframe: ${mode} (click to cycle)`} onClick={cycleReframe}
                 style={{ position: 'relative', zIndex: 4, width: 30, height: 30, borderRadius: 'var(--r-sm)' }}>
-                <Icon n={reframing ? 'loader' : (mode === 'auto' ? 'crop' : 'square')} />
+                <Icon n={reframing ? 'loader' : (REFRAME_ICON[mode] || 'crop')} />
               </button>}
         </div>
         <div className="clip-bottom" style={{ padding: 10 }}>

@@ -26,7 +26,7 @@ import { useSessionPersistence } from '../hooks/useSessionPersistence';
 const DEFAULT_OPTS = {
   mode: 'single', source: 'url', url: '', file: null, fileName: '', batch: '', batchFiles: [], instructions: '',
   clipsAuto: true, clips: 7, aspect: '9:16',
-  detect: true, reframe: true, smartcut: true, zoom: true,
+  detect: true, reframeMode: 'auto', smartcut: true, zoom: true,
   subtitles: true, subMode: 'karaoke', subPreset: 'hormozi_bold', subPosition: 'center',
   hooks: true, hookPos: 'top', hookSize: 'M',
   language: 'multi',

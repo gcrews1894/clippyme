@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 /**
  * Per-clip state: { selected: boolean, deleted: boolean, publishedAt: number,
- *                    reframeMode: 'auto' | 'disabled', reframing: boolean,
+ *                    reframeMode: 'auto' | 'object' | 'disabled', reframing: boolean,
  *                    toggles: {...}, hookParams: {...}, subtitleParams: {...} }
  * Keyed by clip index. Persisted in localStorage under `clippyme_clip_states_{jobId}`
  * so user choices (selection, published flags, deleted clips) survive page

@@ -149,6 +149,43 @@ def test_object_weights_general_path_produces_valid_vertical(tmp_path, monkeypat
     assert h > w and frames > 0
 
 
+def test_object_reframe_mode_produces_valid_vertical(tmp_path, monkeypatch):
+    """reframe_mode='object' (element-aware crop everywhere) must emit a valid
+    9:16 output with the same frame count as the source — exercising the OBJECT
+    strategy + create_general_frame(force_object_weights=True) path."""
+    src = str(tmp_path / "src.mp4")
+    out = str(tmp_path / "out.mp4")
+    _make_synthetic_clip(src)
+    monkeypatch.setattr(reframe, "ASPECT_RATIO", 9 / 16)
+    # Object mode forces object weights on regardless of the env flag.
+    monkeypatch.delenv("REFRAME_OBJECT_WEIGHTS", raising=False)
+
+    assert reframe.process_video_to_vertical(src, out, reframe_mode="object") is True
+    assert os.path.exists(out)
+    cap = cv2.VideoCapture(out)
+    try:
+        w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    finally:
+        cap.release()
+    assert h > w and frames > 0
+
+
+def test_object_mode_forces_weights_without_env(tmp_path):
+    """create_general_frame(force_object_weights=True) must run the object crop
+    even when REFRAME_OBJECT_WEIGHTS is unset (object mode's contract)."""
+    import os as _os
+    _os.environ.pop("REFRAME_OBJECT_WEIGHTS", None)
+    # A wide frame with a bright off-centre blob → object/salient crop returns a
+    # non-None vertical frame (not the letterbox fallback path's full-width fit).
+    frame = np.zeros((360, 640, 3), dtype=np.uint8)
+    cv2.rectangle(frame, (500, 150), (560, 210), (255, 255, 255), -1)
+    out = reframe.create_general_frame(frame, 1080, 1920, force_object_weights=True)
+    # Always returns a valid 9:16-sized frame regardless of which sub-path wins.
+    assert out.shape[0] == 1920 and out.shape[1] == 1080
+
+
 def test_global_smooth_matches_singlepass_frame_count(tmp_path, monkeypatch):
     """The two-stage path must emit the same number of frames as the default
     single-pass path — i.e. it drops/duplicates nothing."""

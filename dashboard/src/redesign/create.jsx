@@ -232,8 +232,12 @@ function OptionsPanel({ opts, set }) {
       <div className="label" style={{ margin: '16px 0 4px' }}>AI &amp; reframe</div>
       <OptRow icon="sparkles" label="Find viral moments" desc="Gemini scores the transcript · off = whole video"
         on={opts.detect} set={(v) => set({ detect: v })} />
-      <OptRow icon="scan-face" label="Auto reframe" desc={`Face-tracking crop to ${opts.aspect || '9:16'} · off = letterbox`}
-        on={opts.reframe} set={(v) => set({ reframe: v })} />
+      <div className="opt">
+        <div className="oico"><Icon n="scan-face" /></div>
+        <div className="otxt"><div className="ot">Reframe</div><div className="od">Auto face-track · Object element-crop · Off letterbox bands</div></div>
+        <div className="r"><Segmented value={opts.reframeMode || (opts.reframe === false ? 'disabled' : 'auto')} onChange={(id) => set({ reframeMode: id })}
+          options={[{ id: 'auto', label: 'Auto' }, { id: 'object', label: 'Object' }, { id: 'disabled', label: 'Off' }]} /></div>
+      </div>
       <OptRow icon="scissors" label="Smart cut" desc="Remove silence & filler words"
         on={opts.smartcut} set={(v) => set({ smartcut: v })} />
       <OptRow icon="zoom-in" label="Subtle zoom" desc="Gentle Ken Burns motion (1.0→1.05x)"
@@ -264,7 +268,7 @@ function SummaryBar({ opts, ready, count, onCreate }) {
     opts.aspect || '9:16',
     opts.clipsAuto ? 'auto clips' : `~${opts.clips} clips`,
     opts.detect ? 'viral detect' : 'whole video',
-    opts.reframe && 'reframe',
+    (() => { const m = opts.reframeMode || (opts.reframe === false ? 'disabled' : 'auto'); return m === 'object' ? 'object crop' : m === 'disabled' ? 'letterbox' : 'reframe'; })(),
     opts.smartcut && 'smart-cut',
     opts.subtitles && (opts.subMode + ' subs'),
     opts.hooks && 'hooks',

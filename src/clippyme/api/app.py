@@ -781,7 +781,7 @@ async def smart_cut_clip(job_id: str, clip_index: int, request: Request):
 
 @app.post("/api/reframe/{job_id}/{clip_index}")
 async def reframe_clip(job_id: str, clip_index: int, req: ReframeRequest, request: Request):
-    """Switch a clip between reframe modes (auto ↔ disabled) after generation.
+    """Switch a clip between reframe modes (auto / object / disabled) after generation.
 
     Requires the per-clip 16:9 source slice (``source_<clip>.mp4``) to still
     exist on disk. Spawns ``main.py --reframe-only`` as a subprocess to reuse
@@ -794,8 +794,8 @@ async def reframe_clip(job_id: str, clip_index: int, req: ReframeRequest, reques
     if not is_valid_job_id(job_id):
         raise HTTPException(status_code=400, detail="Invalid job_id")
     mode = (req.reframe_mode or "auto").strip().lower()
-    if mode not in ("auto", "disabled"):
-        raise HTTPException(status_code=400, detail="reframe_mode must be 'auto' or 'disabled'")
+    if mode not in ("auto", "disabled", "object"):
+        raise HTTPException(status_code=400, detail="reframe_mode must be 'auto', 'object', or 'disabled'")
 
     output_dir = os.path.join(OUTPUT_DIR, job_id)
     if not os.path.isdir(output_dir):

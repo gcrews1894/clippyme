@@ -59,6 +59,12 @@ def test_reframe_mode_auto_is_omitted():
     assert "--reframe-mode" not in cmd
 
 
+def test_reframe_mode_object_is_forwarded():
+    # 'object' (element-aware crop) is a non-default mode → passed through.
+    cmd = build_main_cmd(url="https://x.com/v", output_dir="o", reframe_mode="object")
+    assert cmd[cmd.index("--reframe-mode") + 1] == "object"
+
+
 # --- per-job model override ------------------------------------------------
 
 def test_model_forwarded_when_valid():

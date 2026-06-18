@@ -6,7 +6,7 @@ import json
 import os
 import re
 
-ALLOWED_REFRAME_MODES = frozenset({"auto", "disabled"})
+ALLOWED_REFRAME_MODES = frozenset({"auto", "disabled", "object"})
 MAX_INSTRUCTIONS_LEN = 2000
 
 # Per-job Gemini model override must look like a real Gemini model id. We don't

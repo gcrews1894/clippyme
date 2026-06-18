@@ -202,7 +202,9 @@ export async function discoverZernioAccounts() {
 // hooks + seedClipParams expect (subtitles/hook as truthy objects).
 export function optsToPreselections(opts) {
   return {
-    reframe_mode: opts.reframe ? 'auto' : 'disabled',
+    // Tri-state reframe mode. Fall back to the legacy boolean (`reframe`) for
+    // any persisted preselections saved before the 3-mode selector landed.
+    reframe_mode: opts.reframeMode || (opts.reframe === false ? 'disabled' : 'auto'),
     aspect: opts.aspect || '9:16',
     language: opts.language,
     no_zoom: !opts.zoom,
