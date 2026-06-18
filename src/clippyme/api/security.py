@@ -41,10 +41,19 @@ def _trust_proxy_enabled() -> bool:
 def client_ip(request: Request) -> str:
     """Best-effort real client IP used for trust + rate-limit decisions.
 
-    Only consults forwarded headers when TRUST_PROXY=1; otherwise uses the
-    socket peer address so the value can't be spoofed by the client.
+    Forwarded headers (X-Forwarded-For / X-Real-IP) are honoured ONLY when
+    both (a) TRUST_PROXY=1 and (b) the immediate TCP peer is itself a trusted
+    private/loopback address — i.e. the reverse proxy. This second gate means
+    that even if TRUST_PROXY is accidentally left on while the app is also
+    reachable directly from the internet, a public attacker connecting
+    straight to the socket cannot spoof its IP (its peer address is public, so
+    its forged X-Forwarded-For is ignored and the real peer IP is used). A
+    legitimate LAN client behind the proxy is unaffected: its real address
+    arrives via X-Forwarded-For while the peer is the (private) proxy.
+    Otherwise we use the socket peer address, which the client can't spoof.
     """
-    if _trust_proxy_enabled():
+    peer = request.client.host if request.client else ""
+    if _trust_proxy_enabled() and is_trusted_client_host(peer):
         fwd = request.headers.get("x-forwarded-for")
         if fwd:
             # First hop is the original client (proxy appends its own IP).
@@ -52,7 +61,7 @@ def client_ip(request: Request) -> str:
         real = request.headers.get("x-real-ip")
         if real:
             return real.strip()
-    return request.client.host if request.client else ""
+    return peer
 
 
 def is_trusted_origin(origin: Optional[str]) -> bool:
