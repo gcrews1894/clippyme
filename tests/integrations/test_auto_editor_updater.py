@@ -17,6 +17,31 @@ pytest.importorskip("fcntl")
 import clippyme.integrations.auto_editor_updater as au  # noqa: E402
 
 
+def test_auto_update_disabled_by_default(monkeypatch):
+    monkeypatch.delenv("AUTO_EDITOR_AUTO_UPDATE", raising=False)
+    assert au.auto_update_enabled() is False
+
+
+def test_auto_update_enabled_via_env(monkeypatch):
+    monkeypatch.setenv("AUTO_EDITOR_AUTO_UPDATE", "1")
+    assert au.auto_update_enabled() is True
+
+
+def test_check_and_update_once_short_circuits_when_disabled(monkeypatch):
+    # With the flag off, no network / asset detection must happen — the
+    # function returns 'disabled' before touching GitHub (H1 regression).
+    monkeypatch.delenv("AUTO_EDITOR_AUTO_UPDATE", raising=False)
+
+    def _boom(*a, **k):
+        raise AssertionError("network/asset access must not happen when disabled")
+
+    monkeypatch.setattr(au, "_fetch_latest_release_tag", _boom)
+    monkeypatch.setattr(au, "_detect_asset_name", _boom)
+    monkeypatch.setattr(au, "_read_local_version", lambda: "30.1.0")
+    result = au.check_and_update_once()
+    assert result["action"] == "disabled"
+
+
 def test_versions_equal_strips_v_prefix():
     assert au._versions_equal("v30.1.0", "30.1.0") is True
     assert au._versions_equal("30.1.0", "30.1.0 ") is True

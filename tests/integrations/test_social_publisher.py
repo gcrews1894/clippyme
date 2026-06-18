@@ -16,6 +16,31 @@ from clippyme.integrations.social_publisher import SmartScheduler
 DEFAULT = "https://zernio.com/api/v1"
 
 
+# --- _scrub_secrets (key-in-error-body redaction, M6) ----------------------
+
+def test_scrub_secrets_redacts_own_api_key():
+    client = sp.ZernioClient("sk_live_supersecret_abc123")
+    body = '{"error":"invalid key sk_live_supersecret_abc123","platform":"youtube"}'
+    scrubbed = client._scrub_secrets(body)
+    assert "sk_live_supersecret_abc123" not in scrubbed
+    assert "***REDACTED***" in scrubbed
+    # Platform info preserved so the batch-publish 429 parser still works.
+    assert '"platform":"youtube"' in scrubbed
+
+
+def test_scrub_secrets_redacts_bearer_token():
+    client = sp.ZernioClient("unrelated-key")
+    body = "Authorization: Bearer abc.DEF-123_xyz failed"
+    scrubbed = client._scrub_secrets(body)
+    assert "abc.DEF-123_xyz" not in scrubbed
+    assert "Bearer ***REDACTED***" in scrubbed
+
+
+def test_scrub_secrets_handles_empty():
+    client = sp.ZernioClient("k")
+    assert client._scrub_secrets("") == ""
+
+
 # --- _safe_zernio_base_url (SSRF guard) ------------------------------------
 
 def test_default_when_env_unset(monkeypatch):

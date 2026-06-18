@@ -29,8 +29,12 @@ class _FakeRequest:
     and ``client.host``, so a dict + namespace is enough.
     """
 
-    def __init__(self, origin=None, client_host=None):
-        self.headers = {"origin": origin} if origin is not None else {}
+    def __init__(self, origin=None, client_host=None, sec_fetch_site=None):
+        self.headers = {}
+        if origin is not None:
+            self.headers["origin"] = origin
+        if sec_fetch_site is not None:
+            self.headers["sec-fetch-site"] = sec_fetch_site
         self.client = _FakeClient(client_host) if client_host is not None else None
 
 
@@ -138,6 +142,46 @@ def test_require_trusted_request_rejects_when_no_client():
     with pytest.raises(HTTPException) as exc:
         require_trusted_config_request(req)
     assert exc.value.status_code == 403
+
+
+# --- Sec-Fetch-Site CSRF guard (regression for the IP-fallback bypass) ------
+
+@pytest.mark.parametrize("site", ["cross-site", "same-site"])
+def test_require_trusted_request_rejects_cross_site_sec_fetch(site):
+    # A cross-origin browser request (e.g. an HTML form POST that omits Origin)
+    # still carries a browser-set Sec-Fetch-Site header that JS cannot forge.
+    # Even from a private/loopback client it must be rejected — this is the
+    # CSRF hole the IP-fallback branch used to leave open.
+    req = _FakeRequest(origin=None, client_host="127.0.0.1", sec_fetch_site=site)
+    with pytest.raises(HTTPException) as exc:
+        require_trusted_config_request(req)
+    assert exc.value.status_code == 403
+
+
+def test_require_trusted_request_cross_site_beats_trusted_origin(monkeypatch):
+    # Sec-Fetch-Site is checked first, so a spoofed-but-allow-listed Origin
+    # cannot rescue a cross-site request.
+    monkeypatch.setattr(security, "ALLOWED_ORIGINS", ["http://localhost:5175"])
+    req = _FakeRequest(origin="http://localhost:5175", client_host="127.0.0.1",
+                       sec_fetch_site="cross-site")
+    with pytest.raises(HTTPException) as exc:
+        require_trusted_config_request(req)
+    assert exc.value.status_code == 403
+
+
+def test_require_trusted_request_allows_same_origin_sec_fetch(monkeypatch):
+    # The real frontend sends Sec-Fetch-Site: same-origin with a trusted Origin.
+    monkeypatch.setattr(security, "ALLOWED_ORIGINS", ["http://localhost:5175"])
+    req = _FakeRequest(origin="http://localhost:5175", client_host="127.0.0.1",
+                       sec_fetch_site="same-origin")
+    assert require_trusted_config_request(req) is None
+
+
+def test_require_trusted_request_allows_cli_no_sec_fetch():
+    # curl / CLI tools send no Sec-Fetch-Site and no Origin → fall through to
+    # the private-IP check, which still works.
+    req = _FakeRequest(origin=None, client_host="127.0.0.1")
+    assert require_trusted_config_request(req) is None
 
 
 # --- rate limiting ---------------------------------------------------------

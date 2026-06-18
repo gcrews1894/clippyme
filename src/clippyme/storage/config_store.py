@@ -41,6 +41,15 @@ def _write_raw_config(data: dict) -> bool:
         fd = os.open(CONFIG_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w") as f:
             json.dump(data, f, indent=4)
+        # O_CREAT only applies the mode at *creation* (and the umask narrows
+        # it further); an already-existing file keeps its old, possibly
+        # world-readable perms. chmod unconditionally so the file holding the
+        # API keys is always owner-only. Best-effort on platforms (Windows)
+        # where POSIX perms don't fully apply.
+        try:
+            os.chmod(CONFIG_FILE, 0o600)
+        except OSError as e:
+            logger.warning("Could not enforce 0o600 on config.json: %s", e)
         return True
     except OSError as e:
         logger.error("Error writing config.json: %s", e)

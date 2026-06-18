@@ -1,9 +1,19 @@
 """Gemini API service helpers."""
+import re
 from typing import List, Optional
 
 from google import genai
 
 ALLOWED_MODEL_PREFIXES = ("gemini-2.5-", "gemini-3")
+
+# Google API keys look like ``AIza`` + 35 url-safe chars. Redact any such token
+# from an error string before it is returned to the client / written to logs,
+# so a malformed-key SDK error can't echo the key back.
+_API_KEY_RE = re.compile(r"AIza[0-9A-Za-z_\-]{20,}")
+
+
+def _redact_key(text: str) -> str:
+    return _API_KEY_RE.sub("***REDACTED***", text or "")
 
 
 def list_available_models(api_key: Optional[str]) -> dict:
@@ -41,4 +51,4 @@ def list_available_models(api_key: Optional[str]) -> dict:
             )
         return {"models": models}
     except Exception as e:
-        return {"models": [], "error": str(e)}
+        return {"models": [], "error": _redact_key(str(e))}

@@ -25,11 +25,17 @@ def filename_from_video_url(video_url: Optional[str]) -> str:
       - Leading/trailing whitespace
       - Trailing slashes
       - Backslashes on Windows-style paths
+      - Path traversal: only the last path component is kept (everything
+        up to the final forward- or back-slash separator is discarded), and
+        a result of ``.`` / ``..`` — or anything that would still carry a
+        separator or null byte — is rejected to ``""``. So a crafted
+        ``/videos/<job>/../../etc/passwd`` collapses to ``passwd`` and a
+        join with the job directory cannot escape it.
 
-    This does NOT sanitize the filename against path traversal — callers
-    that join it with an output directory are already expected to
-    validate the result with ``is_valid_job_id`` + path containment
-    checks before opening the file.
+    The returned value is therefore always a single, separator-free
+    filename safe to ``os.path.join`` with a job directory. Callers should
+    still validate the ``job_id`` portion of the path with
+    ``is_valid_job_id`` and confirm the file exists.
     """
     if not video_url or not isinstance(video_url, str):
         return ""

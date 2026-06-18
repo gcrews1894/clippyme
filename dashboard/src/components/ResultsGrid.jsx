@@ -286,9 +286,9 @@ export default function ResultsGrid({
     for (const { clip, originalIndex } of selectedClips) {
       try {
         const a = document.createElement('a');
-        a.href = clip.video_url && clip.video_url.startsWith('http')
-          ? clip.video_url
-          : `${window.location.origin}${clip.video_url || ''}`;
+        // Route through getApiUrl so a server-supplied external absolute URL
+        // can't turn a bulk download into a request to an attacker host.
+        a.href = getApiUrl(clip.video_url || '');
         a.download = `clip_${originalIndex + 1}.mp4`;
         a.style.display = 'none';
         document.body.appendChild(a);

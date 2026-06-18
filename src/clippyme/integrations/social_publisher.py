@@ -26,6 +26,7 @@ from __future__ import annotations
 import logging
 import os
 import random
+import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from typing import Any, Optional
@@ -148,6 +149,20 @@ class ZernioClient:
 
     # -- internal --------------------------------------------------------
 
+    def _scrub_secrets(self, text: str) -> str:
+        """Redact this client's API key (and any Bearer token) from a string.
+
+        Zernio error bodies are surfaced to the caller / UI and may be logged.
+        If the upstream API ever echoes the supplied credential back in an
+        error message, this stops it from leaking. Cheap literal replacement
+        of our own key plus a regex for ``Bearer <token>`` patterns.
+        """
+        if not text:
+            return text
+        if self._api_key:
+            text = text.replace(self._api_key, "***REDACTED***")
+        return re.sub(r"(?i)Bearer\s+[A-Za-z0-9._\-]+", "Bearer ***REDACTED***", text)
+
     def _request(self, method: str, path: str, **kwargs) -> Any:
         url = f"{self._base}{path}"
         kwargs.setdefault("timeout", HTTP_TIMEOUT_SECONDS)
@@ -159,7 +174,7 @@ class ZernioClient:
             raise ZernioError(
                 f"Zernio {method} {path} → HTTP {r.status_code}",
                 status_code=r.status_code,
-                body=r.text[:500],
+                body=self._scrub_secrets(r.text[:500]),
             )
         try:
             return r.json()
@@ -215,7 +230,7 @@ class ZernioClient:
         if r.status_code >= 400:
             raise ZernioError(
                 f"upload PUT failed: HTTP {r.status_code}",
-                status_code=r.status_code, body=r.text[:300],
+                status_code=r.status_code, body=self._scrub_secrets(r.text[:300]),
             )
 
     def create_post(

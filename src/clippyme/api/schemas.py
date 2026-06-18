@@ -123,10 +123,50 @@ class ReframeRequest(BaseModel):
     reframe_mode: Optional[str] = Field(None, pattern=r"^(auto|disabled)$")
 
 
+# Overlay params (hook_params / subtitle_params) are intentionally left as
+# free-form dicts so the frontend can evolve fields without a schema bump, but
+# they flow into Pillow text rendering and ffmpeg numeric filter args. Without
+# bounds, a single authenticated request with a multi-megabyte ``text`` or an
+# absurd ``font_size`` can pin a worker (DoS). This validator enforces flat,
+# bounded values without changing the downstream ``.get()`` access pattern.
+_OVERLAY_MAX_KEYS = 40
+_OVERLAY_MAX_STR = 1000
+_OVERLAY_MAX_ABS_NUM = 100_000
+
+
+def _validate_overlay_params(v):
+    if v is None:
+        return v
+    if not isinstance(v, dict):
+        raise ValueError("must be an object")
+    if len(v) > _OVERLAY_MAX_KEYS:
+        raise ValueError(f"too many keys (max {_OVERLAY_MAX_KEYS})")
+    for key, val in v.items():
+        if isinstance(val, str):
+            if len(val) > _OVERLAY_MAX_STR:
+                raise ValueError(f"value for {key!r} too long (max {_OVERLAY_MAX_STR})")
+        elif isinstance(val, bool):
+            continue
+        elif isinstance(val, (int, float)):
+            if abs(val) > _OVERLAY_MAX_ABS_NUM:
+                raise ValueError(f"value for {key!r} out of range")
+        elif val is None:
+            continue
+        else:
+            # Reject nested dicts/lists — overlay params are flat scalars.
+            raise ValueError(f"value for {key!r} must be a scalar")
+    return v
+
+
 class ComposeRequest(BaseModel):
     toggles: dict = {}
     hook_params: dict = {}
     subtitle_params: dict = {}
+
+    @field_validator("hook_params", "subtitle_params")
+    @classmethod
+    def _bound_overlay(cls, v):
+        return _validate_overlay_params(v)
 
 
 class PublishRequest(BaseModel):
@@ -183,6 +223,44 @@ class PublishRequest(BaseModel):
     toggles: Optional[dict] = None
     hook_params: Optional[dict] = None
     subtitle_params: Optional[dict] = None
+
+    @field_validator("hook_params", "subtitle_params")
+    @classmethod
+    def _bound_overlay(cls, v):
+        return _validate_overlay_params(v)
+
+    @field_validator("platforms")
+    @classmethod
+    def _validate_platforms(cls, v: List[dict]) -> List[dict]:
+        # Each entry is forwarded verbatim into Zernio's create-post payload.
+        # Require it to be a small, flat object with a known platform + an
+        # accountId, so an attacker can't smuggle arbitrary control keys
+        # (publishNow, scheduledFor, webhookUrl, …) into the upstream request.
+        allowed = {"tiktok", "instagram", "youtube"}
+        for item in v:
+            if not isinstance(item, dict):
+                raise ValueError("each platform must be an object")
+            platform = item.get("platform")
+            if platform not in allowed:
+                raise ValueError(f"platform must be one of {sorted(allowed)}")
+            acct = item.get("accountId")
+            if not isinstance(acct, str) or not acct or len(acct) > 256:
+                raise ValueError("accountId must be a non-empty string (max 256)")
+            extra = set(item) - {"platform", "accountId", "platformSpecificData"}
+            if extra:
+                raise ValueError(f"unexpected platform keys: {sorted(extra)}")
+            # Bound the free-form per-platform payload too — it is forwarded
+            # verbatim to Zernio, so cap size/depth like the overlay params.
+            if "platformSpecificData" in item:
+                _validate_overlay_params(item["platformSpecificData"])
+        return v
+
+    @field_validator("tiktok_settings")
+    @classmethod
+    def _bound_tiktok_settings(cls, v):
+        # Forwarded verbatim into Zernio's create-post body; bound it so an
+        # authenticated client can't smuggle a huge/nested object through.
+        return _validate_overlay_params(v)
 
 
 class ZernioConfigRequest(BaseModel):

@@ -78,7 +78,24 @@ def is_trusted_client_host(client_host: Optional[str]) -> bool:
 
 
 def require_trusted_config_request(request: Request) -> None:
-    """Protect config endpoints from cross-site browser access."""
+    """Protect config + state-changing endpoints from cross-site browser access.
+
+    Three layers, checked in order:
+
+    1. ``Sec-Fetch-Site`` — a *forbidden* request header set by the browser and
+       not writable from JavaScript. Any value of ``cross-site`` / ``same-site``
+       means a different origin initiated the request, so we reject outright.
+       This closes the CSRF hole where a plain HTML ``<form>`` POST (which omits
+       ``Origin`` in some browser/network configs) would otherwise fall through
+       to the private-IP branch below and be trusted.
+    2. ``Origin`` — when present it must match the allow-list.
+    3. Private/loopback client IP — only reached for non-browser clients (curl,
+       CLI scripts) that send neither ``Sec-Fetch-Site`` nor ``Origin``.
+    """
+    sec_fetch_site = request.headers.get("sec-fetch-site")
+    if sec_fetch_site in ("cross-site", "same-site"):
+        raise HTTPException(status_code=403, detail="Cross-site requests are not allowed.")
+
     origin = request.headers.get("origin")
     if origin:
         if is_trusted_origin(origin):

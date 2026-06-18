@@ -47,6 +47,22 @@ CHECK_INTERVAL_SECONDS = 24 * 3600  # daily
 HTTP_TIMEOUT = 15
 
 
+def auto_update_enabled() -> bool:
+    """Whether the runtime auto-updater is allowed to fetch + exec a new binary.
+
+    OFF by default. The Dockerfile already installs a *pinned, sha256-verified*
+    auto-editor binary at build time. The runtime updater, by contrast, pulls
+    from the floating ``releases/latest/download`` URL with no checksum or
+    signature — only TLS, a magic-byte check, and a ``--version`` sanity run.
+    A compromised upstream release (or a registry/CDN/DNS hijack that survives
+    TLS) could therefore land a malicious native binary that is then executed
+    as ``appuser`` with access to every API key in the environment. Because the
+    build-time binary is sufficient, we make the runtime fetch strictly
+    opt-in: set ``AUTO_EDITOR_AUTO_UPDATE=1`` to accept that supply-chain risk.
+    """
+    return os.environ.get("AUTO_EDITOR_AUTO_UPDATE", "0") == "1"
+
+
 def _detect_asset_name() -> Optional[str]:
     """Map (system, machine) → GitHub release asset filename. None if unsupported."""
     system = platform.system().lower()
@@ -215,8 +231,12 @@ def check_and_update_once() -> dict:
 
     Returns a dict with keys: action, current, latest, message.
     action ∈ {"updated", "up_to_date", "skipped", "unsupported", "no_local",
-              "github_unreachable", "download_failed", "locked"}
+              "github_unreachable", "download_failed", "locked", "disabled"}
     """
+    if not auto_update_enabled():
+        return {"action": "disabled", "current": _read_local_version(), "latest": None,
+                "message": "Runtime auto-update disabled (set AUTO_EDITOR_AUTO_UPDATE=1 to enable)"}
+
     asset = _detect_asset_name()
     if asset is None:
         return {"action": "unsupported", "current": None, "latest": None,
@@ -268,6 +288,12 @@ async def background_updater_loop():
     every CHECK_INTERVAL_SECONDS. Designed to be launched from FastAPI lifespan.
     Cancellation-safe: catches CancelledError and exits cleanly.
     """
+    if not auto_update_enabled():
+        logger.info(
+            "auto-editor updater: runtime auto-update disabled "
+            "(AUTO_EDITOR_AUTO_UPDATE != 1); using the pinned build-time binary"
+        )
+        return
     while True:
         try:
             result = await asyncio.to_thread(check_and_update_once)

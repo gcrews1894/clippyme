@@ -17,7 +17,12 @@ def sanitize_filename(filename):
     """Remove invalid characters from filename."""
     filename = re.sub(r'[<>:"/\\|?*]', '', filename)
     filename = filename.replace(' ', '_')
-    return filename[:100]
+    # Strip leading dashes/dots so the name can never be mistaken for a CLI
+    # flag by a downstream tool that takes it as a positional argument, and so
+    # it can't become a hidden dotfile. Fall back to a safe default if nothing
+    # is left.
+    filename = filename.lstrip('-.')
+    return filename[:100] or 'video'
 
 
 def _resolve_cookies_path(explicit: str | None) -> str | None:

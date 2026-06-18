@@ -23,6 +23,18 @@ def tmp_config(tmp_path, monkeypatch):
     return cfg
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX file permissions only")
+def test_write_config_enforces_owner_only_perms(tmp_config):
+    # Pre-create the file world-readable to simulate a legacy/umask-widened
+    # config.json; the write must clamp it back to 0o600 (M5 regression).
+    tmp_config.parent.mkdir(parents=True, exist_ok=True)
+    tmp_config.write_text("{}")
+    os.chmod(str(tmp_config), 0o644)
+    assert config_store._write_raw_config({"GEMINI_API_KEY": "secret"}) is True
+    mode = os.stat(str(tmp_config)).st_mode & 0o777
+    assert mode == 0o600, f"expected 0o600, got {oct(mode)}"
+
+
 def test_read_raw_missing_file_returns_empty(tmp_config):
     assert config_store._read_raw_config() == {}
 

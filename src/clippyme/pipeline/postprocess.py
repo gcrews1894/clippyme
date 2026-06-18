@@ -13,6 +13,21 @@ import os
 import subprocess
 
 
+def _safe_float(value, name):
+    """Coerce a loudnorm-measured value to float, rejecting anything else.
+
+    The measured values come from ffmpeg's own stderr JSON, but that JSON is
+    produced while analysing an attacker-supplied media file. Splicing the raw
+    strings into the pass-2 ``-af`` filter would let a crafted value containing
+    ``,`` / ``;`` / ``[`` break out of the loudnorm filter into the wider
+    filter graph. Forcing ``float()`` makes any such value a hard error.
+    """
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"Unexpected loudnorm value for {name}: {value!r}")
+
+
 def normalize_audio(video_path):
     """
     Two-pass EBU R128 loudness normalization to -14 LUFS (social media standard).
@@ -36,16 +51,24 @@ def normalize_audio(video_path):
             return
         measured = json.loads(stderr[json_start:json_end])
 
+        # Validate every measured value as a float before it reaches the
+        # ffmpeg filter string — stops filter-graph injection via crafted media.
+        m_i = _safe_float(measured['input_i'], 'input_i')
+        m_tp = _safe_float(measured['input_tp'], 'input_tp')
+        m_lra = _safe_float(measured['input_lra'], 'input_lra')
+        m_thresh = _safe_float(measured['input_thresh'], 'input_thresh')
+        m_offset = _safe_float(measured['target_offset'], 'target_offset')
+
         # Pass 2: Apply
         apply_cmd = [
             'ffmpeg', '-y', '-i', video_path,
             '-af', (
                 f"loudnorm=I=-14:TP=-1.5:LRA=7"
-                f":measured_I={measured['input_i']}"
-                f":measured_TP={measured['input_tp']}"
-                f":measured_LRA={measured['input_lra']}"
-                f":measured_thresh={measured['input_thresh']}"
-                f":offset={measured['target_offset']}"
+                f":measured_I={m_i}"
+                f":measured_TP={m_tp}"
+                f":measured_LRA={m_lra}"
+                f":measured_thresh={m_thresh}"
+                f":offset={m_offset}"
                 f":linear=true"
             ),
             '-c:v', 'copy',

@@ -97,10 +97,11 @@ const ProcessingAnimation = ({ media, isComplete, syncedTime, isSyncedPlaying, s
             <iframe
               ref={iframeRef}
               className={`w-full h-full ${isSyncedPlaying ? '' : 'pointer-events-none scale-105'}`}
-              src={`https://www.youtube.com/embed/${videoSrc}?autoplay=1&mute=1&controls=0&loop=1&playlist=${videoSrc}&modestbranding=1&showinfo=0&rel=0&enablejsapi=1`}
+              src={`https://www.youtube.com/embed/${encodeURIComponent(videoSrc)}?autoplay=1&mute=1&controls=0&loop=1&playlist=${encodeURIComponent(videoSrc)}&modestbranding=1&showinfo=0&rel=0&enablejsapi=1`}
               title="Processing Video"
               frameBorder="0"
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              sandbox="allow-scripts allow-same-origin allow-presentation"
+              allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture"
             />
           ) : videoSrc ? (
             <video

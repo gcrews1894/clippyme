@@ -17,9 +17,12 @@ export default defineConfig({
     hmr: {
       clientPort: 5175,
     },
+    // Dev-server Host allow-list. Only local names — the unrelated upstream
+    // 'openshorts.app' was removed (DNS-rebinding hardening). Add your own
+    // hostname here if you proxy the dev server through a custom domain.
     allowedHosts: [
-      'openshorts.app',
-      'www.openshorts.app'
+      'localhost',
+      '127.0.0.1',
     ],
     proxy: {
       '/api': {
