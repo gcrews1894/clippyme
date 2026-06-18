@@ -886,12 +886,22 @@ async def smart_cut_clip(job_id: str, clip_index: int, request: Request):
         metadata_path, data = load_job_metadata(job_id, OUTPUT_DIR)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Metadata not found")
+    # Optional manual-trim spans (flycut-style interactive cut). Legacy callers
+    # POST no body — tolerate that and fall back to pure auto Smart Cut.
+    drop_ranges = None
+    try:
+        body = await request.json()
+        if isinstance(body, dict):
+            drop_ranges = body.get("drop_ranges")
+    except Exception:
+        pass
     return await run_smart_cut(
         job_id=job_id,
         clip_index=clip_index,
         output_dir=output_dir,
         metadata_path=metadata_path,
         data=data,
+        drop_ranges=drop_ranges,
     )
 
 

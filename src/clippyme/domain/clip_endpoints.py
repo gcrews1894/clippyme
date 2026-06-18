@@ -22,7 +22,8 @@ def _resolve_clip_path(metadata_path: str, clip_data: dict, clip_index: int, out
 
 
 async def run_smart_cut(
-    *, job_id: str, clip_index: int, output_dir: str, metadata_path: str, data: dict
+    *, job_id: str, clip_index: int, output_dir: str, metadata_path: str, data: dict,
+    drop_ranges=None,
 ) -> dict:
     """Execute smart_cut for a single clip. Returns endpoint response payload.
 
@@ -57,6 +58,7 @@ async def run_smart_cut(
             clip_data["start"],
             clip_data["end"],
             transcript.get("language", "en"),
+            drop_ranges,
         )
         if result_path is None:
             return {

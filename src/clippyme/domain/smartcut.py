@@ -272,10 +272,75 @@ def _run(cmd: list[str], *, timeout: Optional[int] = None) -> tuple[int, str, st
 
 
 # ---------------------------------------------------------------------------
+# Manual trim — interactive transcript-driven cut (ported idea from
+# x007xyz/flycut-caption, see docs/flycut-caption-analysis.md). flycut lets a
+# user delete subtitle segments and cuts the matching video intervals; our
+# Smart Cut was auto-only. `drop_ranges` lets a caller hand-pick spans to
+# remove ON TOP OF (or instead of) the automatic filler/silence detection.
+# Pure-math + host-unit-tested — no ffmpeg, no cv2.
+# ---------------------------------------------------------------------------
+
+def normalize_drop_ranges(raw, *, max_ranges: int = 500):
+    """Coerce caller-supplied drop spans into a clean list of (start, end)
+    float tuples in clip-relative seconds.
+
+    Tolerant by design — the input comes straight off an HTTP body. Accepts
+    `[[s, e], ...]` or `[{"start": s, "end": e}, ...]`. Silently discards
+    malformed entries, non-positive spans, and anything past `max_ranges`
+    (an abuse cap). Returns `[]` for falsy/garbage input so the caller can
+    treat "no manual drops" uniformly.
+    """
+    if not raw:
+        return []
+    out: list[tuple[float, float]] = []
+    for item in raw:
+        try:
+            if isinstance(item, dict):
+                s, e = float(item["start"]), float(item["end"])
+            else:
+                s, e = float(item[0]), float(item[1])
+        except (TypeError, ValueError, KeyError, IndexError):
+            continue
+        if e > s >= 0:
+            out.append((s, e))
+        if len(out) >= max_ranges:
+            break
+    return out
+
+
+def subtract_ranges(keep_segments, drop_ranges):
+    """Remove `drop_ranges` from `keep_segments`. Both are lists of (start, end)
+    seconds; returns the trimmed keep list, splitting a kept span when a drop
+    falls inside it. Pure interval arithmetic — the engine behind manual trim.
+
+    Example: keep [(0, 10)] minus drop [(3, 5)] → [(0, 3), (5, 10)].
+    """
+    if not drop_ranges:
+        return [seg for seg in keep_segments if seg[1] > seg[0]]
+    drops = sorted((s, e) for s, e in drop_ranges if e > s)
+    result: list[tuple[float, float]] = []
+    for ks, ke in keep_segments:
+        if ke <= ks:
+            continue
+        cursor = ks
+        for ds, de in drops:
+            if de <= cursor or ds >= ke:
+                continue  # no overlap with the remaining kept span
+            if ds > cursor:
+                result.append((cursor, min(ds, ke)))
+            cursor = max(cursor, de)
+            if cursor >= ke:
+                break
+        if cursor < ke:
+            result.append((cursor, ke))
+    return [seg for seg in result if seg[1] > seg[0]]
+
+
+# ---------------------------------------------------------------------------
 # Stage 1A — analyze the transcript
 # ---------------------------------------------------------------------------
 
-def analyze_silences(transcript, clip_start, clip_end, language=None):
+def analyze_silences(transcript, clip_start, clip_end, language=None, drop_ranges=None):
     """Inspect word timestamps and produce a list of (start, end) segments
     to KEEP, expressed in seconds relative to `clip_start`.
 
@@ -303,15 +368,29 @@ def analyze_silences(transcript, clip_start, clip_end, language=None):
                     'end': max(0, word_info['end'] - clip_start),
                 })
 
+    clip_duration = clip_end - clip_start
+    drops = normalize_drop_ranges(drop_ranges)
+
     if not words:
         # Whisper sometimes returns segment-level timestamps without per-word
-        # timing (faster_whisper word_timestamps=False). Log so the operator
-        # knows why smart cut is a no-op.
+        # timing (faster_whisper word_timestamps=False). Manual drops don't
+        # need word timing — they're absolute spans — so still honour them by
+        # cutting against the whole clip. Auto detection just no-ops.
+        if drops:
+            kept = subtract_ranges([(0.0, clip_duration)], drops)
+            kept_dur = sum(e - s for s, e in kept)
+            return kept, {
+                "original_duration": round(clip_duration, 1),
+                "new_duration": round(kept_dur, 1),
+                "time_saved": round(clip_duration - kept_dur, 1),
+                "silences_removed": 0,
+                "fillers_removed": 0,
+                "manual_drops": len(drops),
+                "segments": len(kept),
+            }
         if not any('words' in s for s in transcript.get('segments', [])):
             logger.info("smartcut: transcript has no word-level timestamps; nothing to cut")
         return [], {"error": "No words found in clip range"}
-
-    clip_duration = clip_end - clip_start
 
     # Pre-compute filler skip mask using n-gram lookahead.
     # word_skip[i] = True if `words[i]` is part of a filler phrase
@@ -370,8 +449,12 @@ def analyze_silences(transcript, clip_start, clip_end, language=None):
         else:
             merged.append(seg)
 
+    # Manual trim: subtract caller-picked spans on top of the auto cut.
+    if drops:
+        merged = subtract_ranges(merged, drops)
+
     new_duration = sum(end - start for start, end in merged)
-    return merged, {
+    stats = {
         "original_duration": round(clip_duration, 1),
         "new_duration": round(new_duration, 1),
         "time_saved": round(clip_duration - new_duration, 1),
@@ -379,6 +462,9 @@ def analyze_silences(transcript, clip_start, clip_end, language=None):
         "fillers_removed": removed_fillers,
         "segments": len(merged),
     }
+    if drops:
+        stats["manual_drops"] = len(drops)
+    return merged, stats
 
 
 # ---------------------------------------------------------------------------
@@ -750,8 +836,13 @@ def _probe_duration(path: str) -> float:
 # Public API
 # ---------------------------------------------------------------------------
 
-def smart_cut(clip_path, transcript, clip_start, clip_end, language=None):
+def smart_cut(clip_path, transcript, clip_start, clip_end, language=None, drop_ranges=None):
     """Generate a tighter version of `clip_path` by removing silences and fillers.
+
+    `drop_ranges` (optional): caller-picked spans `[[start, end], ...]` in
+    clip-relative seconds, removed ON TOP of the automatic detection — the
+    manual-trim path (interactive transcript editing, flycut-style). When
+    supplied, even a small cut renders (explicit user intent).
 
     Concurrency-safe: a per-clip threading.Lock prevents two simultaneous
     smart_cut calls on the same source from clobbering each other's output.
@@ -770,16 +861,24 @@ def smart_cut(clip_path, transcript, clip_start, clip_end, language=None):
         (None, stats)         on no-op or failure
     """
     with _clip_lock(clip_path):
-        return _smart_cut_inner(clip_path, transcript, clip_start, clip_end, language)
+        return _smart_cut_inner(clip_path, transcript, clip_start, clip_end, language, drop_ranges)
 
 
-def _smart_cut_inner(clip_path, transcript, clip_start, clip_end, language=None):
-    segments, stats = analyze_silences(transcript, clip_start, clip_end, language)
+def _smart_cut_inner(clip_path, transcript, clip_start, clip_end, language=None, drop_ranges=None):
+    segments, stats = analyze_silences(transcript, clip_start, clip_end, language, drop_ranges)
+    manual = bool(normalize_drop_ranges(drop_ranges))
 
-    if not segments or len(segments) < 2:
+    if not segments:
         stats["skipped"] = True
         return None, stats
-    if stats["time_saved"] < 1.0:
+    # A manual trim of a single kept span is still a valid cut; only the
+    # automatic path needs ≥2 segments to be worth a render.
+    if not manual and len(segments) < 2:
+        stats["skipped"] = True
+        return None, stats
+    # Manual trims are explicit user intent — honour even a small cut; the
+    # automatic path stays conservative (≥1s saved) to avoid pointless renders.
+    if stats.get("time_saved", 0) < (0.3 if manual else 1.0):
         stats["skipped"] = True
         return None, stats
 
