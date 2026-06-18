@@ -128,26 +128,12 @@
     --sidebar-ring: oklch(74% 0.175 62);
   }
 
-  body {
-    background-color: oklch(11% 0.008 260);
-    color: oklch(94% 0.01 90);
-    font-family: var(--font-sans);
-    font-feature-settings: "ss01", "cv11", "tnum";
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-    letter-spacing: -0.005em;
-  }
-
-  h1, h2, h3, h4, h5, h6 {
-    font-family: var(--font-display);
-    color: oklch(96% 0.015 85);
-    letter-spacing: -0.022em;
-    font-weight: 500;
-    font-optical-sizing: auto;
-  }
-
-  h1 { font-weight: 400; letter-spacing: -0.035em; }
-  h2 { font-weight: 500; letter-spacing: -0.028em; }
+  /* NOTE: global body + heading typography intentionally lives in
+     redesign/app.css (the live system), not here. This legacy @layer base
+     previously set Geist→Fraunces fonts + amber heading color and collided
+     with app.css; those rules were removed so app.css is the single owner.
+     -moz-osx-font-smoothing kept globally as a harmless rendering hint. */
+  body { -moz-osx-font-smoothing: grayscale; }
 
   /* Mono is used everywhere a number, a timecode or a technical label
      appears. Tabular numerals are enabled globally so columns align. */
