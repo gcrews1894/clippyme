@@ -1,7 +1,55 @@
 """Tests for clippyme.pipeline.download helpers (host-runnable; no network)."""
 import os
 
+import pytest
+
 from clippyme.pipeline import download as dl
+
+
+def _fake_getaddrinfo(*ips):
+    """Build a getaddrinfo stub returning the given IP strings."""
+    def _stub(host, port, *a, **k):
+        return [(None, None, None, "", (ip, 0)) for ip in ips]
+    return _stub
+
+
+def test_reject_rebound_literal_internal_ip_raises():
+    with pytest.raises(ValueError):
+        dl._reject_rebound_internal("http://127.0.0.1/video")
+
+
+def test_reject_rebound_literal_public_ip_passes():
+    # 8.8.8.8 is public — must not raise.
+    dl._reject_rebound_internal("http://8.8.8.8/video")
+
+
+def test_reject_rebound_all_internal_resolution_raises(monkeypatch):
+    monkeypatch.setattr(dl.socket, "getaddrinfo", _fake_getaddrinfo("192.168.1.10", "127.0.0.1"))
+    with pytest.raises(ValueError):
+        dl._reject_rebound_internal("http://rebind.evil.test/x")
+
+
+def test_reject_rebound_public_resolution_passes(monkeypatch):
+    monkeypatch.setattr(dl.socket, "getaddrinfo", _fake_getaddrinfo("93.184.216.34"))
+    dl._reject_rebound_internal("http://example.com/x")  # no raise
+
+
+def test_reject_rebound_mixed_public_and_internal_passes(monkeypatch):
+    # Not ALL internal → allowed (only blocks when every address is internal).
+    monkeypatch.setattr(dl.socket, "getaddrinfo", _fake_getaddrinfo("93.184.216.34", "10.0.0.1"))
+    dl._reject_rebound_internal("http://example.com/x")  # no raise
+
+
+def test_reject_rebound_no_host_returns_none():
+    assert dl._reject_rebound_internal("not a url") is None
+
+
+def test_reject_rebound_resolution_failure_is_swallowed(monkeypatch):
+    def _boom(*a, **k):
+        raise OSError("dns down")
+    monkeypatch.setattr(dl.socket, "getaddrinfo", _boom)
+    # Resolution hiccup must not block a legit download — yt-dlp handles it.
+    assert dl._reject_rebound_internal("http://example.com/x") is None
 
 
 def test_sanitize_filename_strips_invalid_chars():
