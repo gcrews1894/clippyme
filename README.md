@@ -247,19 +247,19 @@ Static mounts: `/videos`, `/thumbnails`, `/gallery`, `/video`, `/fonts` (read-on
 
 ## Editing toggles (compose-on-download)
 
-Each generated clip exposes three independent toggles in the UI:
+Every finished clip has an **Edit & reprocess** panel — one button on the clip card opens a modal that gathers all the options in one place (reframe mode, Smart Cut, Hook, Subtitles) so you set everything first and apply once, instead of the clip reprocessing on every tweak. The three compose layers:
 
 - **Smart Cut** — removes silences and filler words via auto-editor v3 timeline; falls back to ffmpeg concat demuxer if the binary is missing.
 - **Hook** — text overlay with configurable position/size, auto-prefilled from the Gemini hook suggestion. Supports emoji.
 - **Subtitles** — 6 viral karaoke presets (`classic_white`, `hormozi_bold`, `neon_glow`, `mrbeast_box`, `minimal_clean`, `fire_impact`) or classic SRT with font/color/position controls. The frontend preview is **pixel-faithful** with the burned-in output (`dashboard/src/lib/subtitlePresets.js` mirrors the Python preset table 1:1 — keep them in sync).
 
-Toggling is UI-only state. Nothing is processed on click. At download time the active toggles + parameters are sent to `/api/compose/{job_id}/{clip_index}` and the layers are composed in one pass: Smart Cut → Hook → Subtitles.
+Editing is staged: nothing runs while you toggle. **Apply & reprocess** re-renders the framing (only when the reframe mode changed) and then composes the active layers in one pass via `/api/compose/{job_id}/{clip_index}` — order is **Subtitles → Smart Cut → Hook** (subtitles burn first so their absolute timing never drifts when Smart Cut removes silences). The preview updates to the composed result, and downloading runs the same compose, so what you see is what you get.
 
 ---
 
 ## Reframing
 
-Pick one of three modes per job (and per clip after the fact, via the card's cycle button or `POST /api/reframe`):
+Pick one of three modes per job (and per clip after the fact, from the **Edit & reprocess** panel or `POST /api/reframe`):
 
 - **Auto** — face tracking. The default; runs the per-scene strategy picker below.
 - **Object** — element-aware crop, [FrameShift](https://github.com/fralapo/FrameShift)-style. Skips faces entirely and frames the most salient on-screen elements: it crops on a weighted-object centroid (animals, vehicles, held products), falls back to Sobel saliency, and finally to blurred letterbox bands when there's nothing to lock onto. Good for B-roll, product shots, and anything that isn't a talking head.
@@ -277,7 +277,7 @@ Inside **Auto**, three per-scene strategies are decided by sampling 7 frames per
 
 Override per job with `--reframe-mode auto|object|disabled` (`object` = the element-aware crop above; `disabled` = 4:3 center crop with black bars).
 
-After a job completes, every clip can be flipped between all three modes post-hoc via `POST /api/reframe/{job_id}/{clip_index}` (the card's button cycles auto → object → off). The original 16:9 source slice is preserved as `source_<clip>.mp4` to make this latency-tolerant. Legacy jobs without the preserved slice return HTTP 409.
+After a job completes, every clip can be flipped between all three modes post-hoc via `POST /api/reframe/{job_id}/{clip_index}` (the **Edit & reprocess** panel exposes the three modes and applies the switch on **Apply**). The original 16:9 source slice is preserved as `source_<clip>.mp4` to make this latency-tolerant. Legacy jobs without the preserved slice return HTTP 409.
 
 ---
 
