@@ -148,6 +148,7 @@ Runtime env overrides (rarely needed):
 | `REFRAME_COMFORT` | `1` | Anti-nausea default (global-smooth + per-scene stationary + zoom lock). `0` = original single-pass tracker. |
 | `REFRAME_STATIONARY_THRESH` / `REFRAME_ZOOM_LOCK` | `0.30` / on | Comfort tuning: scene-lock threshold / one zoom level per scene. |
 | `REFRAME_SALIENT_GENERAL` | _(off)_ | Content-aware crop for faceless scenes instead of letterboxing. |
+| `REFRAME_OBJECT_WEIGHTS` | _(off)_ | Faceless scenes follow a weighted-object centroid (product/dog/car) by reusing the existing YOLO pass. `1` = curated defaults, or `dog:3,car:2` for custom weights. |
 | `ZERNIO_DEFAULT_TZ` | `Europe/Rome` | |
 | `ZERNIO_MIN_GAP_SECONDS` | `5400` | SmartScheduler min spacing between posts. |
 | `REFRAME_SMOOTHER` | _(blank)_ | `euro` switches the speaker camera to the 1€ adaptive filter; blank keeps the two-speed EMA. |

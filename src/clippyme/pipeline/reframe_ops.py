@@ -9,6 +9,7 @@ Provides:
 - OneEuroFilter               — adaptive jitter-vs-lag camera smoothing
 - drift_to_center             — graceful lost-subject recovery
 - salient_crop_center         — content-aware crop window for faceless scenes
+- weighted_interest_center    — weighted-object centroid for faceless B-roll
 - savgol_1d                    — Savitzky-Golay smoothing for a future two-stage
                                  global-trajectory pass
 """
@@ -341,6 +342,38 @@ def salient_crop_center(column_energy, crop_w: float, frame_w: float,
         elif center < prev_x - max_step:
             center = prev_x - max_step
     return center
+
+
+def weighted_interest_center(boxes):
+    """Weighted centroid of detected interest objects for faceless reframing.
+
+    ``boxes`` is a sequence of ``(cx, cy, weight)`` where ``weight`` is already
+    the product of the object's class weight, pixel area, and confidence — so
+    larger, more important, higher-confidence objects pull the camera harder.
+    Returns the weighted-mean ``(cx, cy)``, or ``None`` when the list is empty
+    or the total weight is non-positive (the caller then falls back to its
+    existing salient/letterbox path).
+
+    Pure math (no cv2) — the YOLO box extraction lives in reframe.py glue. This
+    is the single-centroid analogue of FrameShift's
+    ``calculate_weighted_interest_region``: ClippyMe crops a fixed-AR window
+    around one point rather than fitting a variable region, so a centroid is the
+    right primitive. Only reached on faceless (GENERAL) scenes — people are
+    handled by the upstream face/person tracker — which is why following a
+    non-face subject here never competes with talking-head framing.
+    """
+    total = 0.0
+    sx = 0.0
+    sy = 0.0
+    for cx, cy, w in boxes:
+        if w <= 0:
+            continue
+        total += w
+        sx += cx * w
+        sy += cy * w
+    if total <= 0:
+        return None
+    return (sx / total, sy / total)
 
 
 # --- Savitzky-Golay (future two-stage global smoothing) ---------------------

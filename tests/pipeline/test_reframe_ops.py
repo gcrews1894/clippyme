@@ -119,6 +119,35 @@ def test_salient_crop_respects_max_step():
     assert abs(x - 100.0) <= 20.0 + 1e-6
 
 
+# --- weighted_interest_center -----------------------------------------------
+
+def test_weighted_interest_center_empty_is_none():
+    assert ro.weighted_interest_center([]) is None
+
+
+def test_weighted_interest_center_all_nonpositive_weight_is_none():
+    # Zero/negative weights contribute nothing → total weight 0 → None.
+    assert ro.weighted_interest_center([(10.0, 20.0, 0.0), (30.0, 40.0, -5.0)]) is None
+
+
+def test_weighted_interest_center_single_object_returns_its_center():
+    cx, cy = ro.weighted_interest_center([(100.0, 200.0, 3.0)])
+    assert cx == 100.0 and cy == 200.0
+
+
+def test_weighted_interest_center_pulls_toward_heavier_object():
+    # Object B (weight 3) should dominate object A (weight 1): mean x = (1*0 + 3*100)/4 = 75.
+    cx, cy = ro.weighted_interest_center([(0.0, 0.0, 1.0), (100.0, 80.0, 3.0)])
+    assert abs(cx - 75.0) < 1e-9
+    assert abs(cy - 60.0) < 1e-9
+
+
+def test_weighted_interest_center_skips_nonpositive_among_valid():
+    # A zero-weight box must not shift the centroid away from the valid one.
+    cx, cy = ro.weighted_interest_center([(50.0, 50.0, 2.0), (999.0, 999.0, 0.0)])
+    assert cx == 50.0 and cy == 50.0
+
+
 # --- savgol_1d --------------------------------------------------------------
 
 def test_savgol_preserves_length():

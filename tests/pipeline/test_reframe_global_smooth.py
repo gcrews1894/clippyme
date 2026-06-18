@@ -96,6 +96,59 @@ def test_salient_general_crop_helper_falls_back_when_too_narrow(tmp_path):
     assert reframe._salient_general_crop(tall, 1080, 1920) is None
 
 
+def test_object_weights_parses_flag_and_pairs(monkeypatch):
+    """REFRAME_OBJECT_WEIGHTS: unset → None; bare flag → curated defaults;
+    name:weight list → overrides; junk → None."""
+    monkeypatch.delenv("REFRAME_OBJECT_WEIGHTS", raising=False)
+    assert reframe._object_weights() is None
+
+    monkeypatch.setenv("REFRAME_OBJECT_WEIGHTS", "1")
+    defaults = reframe._object_weights()
+    assert defaults == reframe._DEFAULT_OBJECT_WEIGHTS and defaults is not reframe._DEFAULT_OBJECT_WEIGHTS
+
+    monkeypatch.setenv("REFRAME_OBJECT_WEIGHTS", "dog:3,car:2,bottle:1.5")
+    assert reframe._object_weights() == {"dog": 3.0, "car": 2.0, "bottle": 1.5}
+
+    # Negative/zero/non-numeric weights are dropped; bare junk flag → None.
+    monkeypatch.setenv("REFRAME_OBJECT_WEIGHTS", "dog:-1,cat:0,car:x,truck:2")
+    assert reframe._object_weights() == {"truck": 2.0}
+    monkeypatch.setenv("REFRAME_OBJECT_WEIGHTS", "garbage")
+    assert reframe._object_weights() is None
+
+
+def test_weighted_object_crop_off_by_default_returns_none(tmp_path, monkeypatch):
+    """Feature off (env unset) → helper returns None so GENERAL stays letterbox."""
+    monkeypatch.delenv("REFRAME_OBJECT_WEIGHTS", raising=False)
+    frame = np.zeros((360, 640, 3), dtype=np.uint8)
+    assert reframe._weighted_object_general_crop(frame, 1080, 1920) is None
+
+
+def test_weighted_object_crop_too_narrow_returns_none(monkeypatch):
+    """Even enabled, a source already narrower than 9:16 → None (no crash)."""
+    monkeypatch.setenv("REFRAME_OBJECT_WEIGHTS", "1")
+    tall = np.zeros((400, 100, 3), dtype=np.uint8)
+    assert reframe._weighted_object_general_crop(tall, 1080, 1920) is None
+
+
+def test_object_weights_general_path_produces_valid_vertical(tmp_path, monkeypatch):
+    """End-to-end: REFRAME_OBJECT_WEIGHTS on a faceless clip must still emit a
+    valid 9:16 output (no object present → falls through to letterbox, no crash)."""
+    src = str(tmp_path / "src.mp4")
+    out = str(tmp_path / "out.mp4")
+    _make_synthetic_clip(src)  # faceless → GENERAL strategy
+    monkeypatch.setenv("REFRAME_OBJECT_WEIGHTS", "1")
+    monkeypatch.setattr(reframe, "ASPECT_RATIO", 9 / 16)
+    assert reframe.process_video_to_vertical(src, out, reframe_mode="auto") is True
+    cap = cv2.VideoCapture(out)
+    try:
+        w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    finally:
+        cap.release()
+    assert h > w and frames > 0
+
+
 def test_global_smooth_matches_singlepass_frame_count(tmp_path, monkeypatch):
     """The two-stage path must emit the same number of frames as the default
     single-pass path — i.e. it drops/duplicates nothing."""

@@ -35,6 +35,7 @@ from clippyme.pipeline.reframe_ops import (
     limit_step,
     salient_crop_center,
     smooth_and_clamp,
+    weighted_interest_center,
     zoom_for_face_height,
 )
 from clippyme.pipeline.scene_detection import detect_scenes, get_video_resolution
@@ -633,6 +634,107 @@ def detect_person_yolo(frame):
                 
     return best_box
 
+# Curated COCO classes that read as a "subject" in faceless B-roll, with a pull
+# weight (animals strongest, then vehicles, then commonly-demoed held objects).
+# Person is intentionally absent — people are framed by the face/person tracker
+# upstream, never by this faceless fallback.
+_DEFAULT_OBJECT_WEIGHTS = {
+    "dog": 3.0, "cat": 3.0, "horse": 3.0, "bird": 2.5, "cow": 2.5,
+    "sheep": 2.5, "elephant": 3.0, "bear": 3.0, "zebra": 2.5, "giraffe": 2.5,
+    "car": 2.0, "motorcycle": 2.0, "bicycle": 1.8, "bus": 1.8, "truck": 1.8,
+    "boat": 1.8, "airplane": 1.8, "train": 1.8,
+    "bottle": 1.5, "cup": 1.5, "wine glass": 1.5, "cell phone": 1.8,
+    "laptop": 1.8, "book": 1.3, "handbag": 1.3, "sports ball": 1.5,
+}
+
+
+def _object_weights():
+    """Parse REFRAME_OBJECT_WEIGHTS into a ``{coco_class: weight}`` map.
+
+    Empty/unset → ``None`` (feature off → GENERAL path byte-identical). A bare
+    truthy flag (``1``/``true``/``default``/``auto``) → the curated defaults. A
+    comma list of ``name:weight`` pairs (e.g. ``dog:3,car:2,bottle:1.5``) →
+    those overrides. Returns ``None`` if nothing valid parses, so the caller
+    falls through to the existing salient/letterbox behaviour.
+    """
+    raw = (os.getenv("REFRAME_OBJECT_WEIGHTS") or "").strip()
+    if not raw:
+        return None
+    if ":" not in raw:
+        if raw.lower() in ("1", "true", "yes", "on", "default", "auto"):
+            return dict(_DEFAULT_OBJECT_WEIGHTS)
+        return None
+    weights = {}
+    for pair in raw.split(","):
+        name, sep, wv = pair.partition(":")
+        if not sep:
+            continue
+        name = name.strip().lower()
+        try:
+            w = float(wv.strip())
+        except ValueError:
+            continue
+        if name and w > 0:
+            weights[name] = w
+    return weights or None
+
+
+def _weighted_object_general_crop(frame, output_width, output_height):
+    """Object-aware crop for faceless (GENERAL) scenes — opt-in via
+    REFRAME_OBJECT_WEIGHTS.
+
+    Reuses the existing lazily-loaded YOLOv8 model (no second network) to detect
+    every COCO object in the frame, weights each by ``class_weight * area *
+    confidence``, and crops a full-height 9:16 window centred on the weighted
+    centroid (``reframe_ops.weighted_interest_center``) so a B-roll subject
+    (product, dog, car) stays framed instead of being parked behind the
+    letterbox bars. Returns ``None`` on any failure, when the feature is off, or
+    when no weighted object is present — the caller then falls through to the
+    salient/letterbox path. Person detections are ignored (handled upstream by
+    the face/person tracker), so this never competes with talking-head framing.
+
+    The YOLO call here runs the same forward pass the person-fallback already
+    uses; only the output class filter differs, so the marginal cost is NMS, not
+    a second inference.
+    """
+    weights = _object_weights()
+    if not weights:
+        return None
+    try:
+        orig_h, orig_w = frame.shape[:2]
+        target_ar = output_width / float(output_height)
+        crop_w = int(round(orig_h * target_ar))
+        if crop_w < 1 or crop_w >= orig_w:
+            return None  # already narrower than target → nothing to crop
+        model = _get_yolo_model()
+        results = model(frame, verbose=False)  # all classes, single inference
+        names = getattr(model, "names", {}) or {}
+        boxes_xyw = []
+        for result in results:
+            for box in result.boxes:
+                cls_name = str(names.get(int(box.cls[0]), "")).lower()
+                w = weights.get(cls_name)
+                if not w:
+                    continue
+                x1, y1, x2, y2 = (float(v) for v in box.xyxy[0])
+                area = max(0.0, x2 - x1) * max(0.0, y2 - y1)
+                if area <= 0:
+                    continue
+                conf = float(box.conf[0]) if box.conf is not None else 1.0
+                boxes_xyw.append(((x1 + x2) / 2.0, (y1 + y2) / 2.0, w * area * conf))
+        center = weighted_interest_center(boxes_xyw)
+        if center is None:
+            return None
+        x1 = int(round(center[0] - crop_w / 2.0))
+        x1 = max(0, min(orig_w - crop_w, x1))
+        cropped = frame[:, x1:x1 + crop_w]
+        if cropped.shape[0] < 1 or cropped.shape[1] < 1:
+            return None
+        return _resize_to_output(cropped, output_width, output_height)
+    except Exception:
+        return None
+
+
 def _salient_general_crop(frame, output_width, output_height):
     """Content-aware crop for faceless (GENERAL) scenes — opt-in via
     REFRAME_SALIENT_GENERAL=1.
@@ -673,10 +775,18 @@ def create_general_frame(frame, output_width, output_height):
     - Background: Blurred zoom of original
     - Foreground: Original video scaled to fit width, centered vertically.
 
-    Opt-in: with REFRAME_SALIENT_GENERAL=1, faceless scenes are content-aware
-    cropped to the salient region instead of letterboxed (see
-    _salient_general_crop). Default-off keeps the letterbox path byte-identical.
+    Opt-in crops for faceless scenes (tried most-specific first, each falling
+    through to the next on None):
+      1. REFRAME_OBJECT_WEIGHTS — centre on the weighted-object centroid so a
+         B-roll subject (product/dog/car) stays framed (_weighted_object_general_crop)
+      2. REFRAME_SALIENT_GENERAL=1 — centre on the Sobel-salient column band
+         (_salient_general_crop)
+    Both default-off, keeping the letterbox path below byte-identical.
     """
+    obj = _weighted_object_general_crop(frame, output_width, output_height)
+    if obj is not None:
+        return obj
+
     if os.getenv("REFRAME_SALIENT_GENERAL", "").strip().lower() in ("1", "true", "yes", "on"):
         salient = _salient_general_crop(frame, output_width, output_height)
         if salient is not None:

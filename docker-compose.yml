@@ -81,6 +81,11 @@ services:
       # Opt-in: content-aware crop for faceless (GENERAL) scenes instead of
       # letterboxing (Sobel saliency). Default off = byte-identical letterbox.
       - REFRAME_SALIENT_GENERAL=${REFRAME_SALIENT_GENERAL:-}
+      # Opt-in: in faceless (GENERAL) scenes, follow a weighted-object centroid
+      # (product/dog/car) by reusing the existing YOLO pass — no 2nd network.
+      # `1` = curated COCO defaults; `dog:3,car:2,bottle:1.5` = custom weights.
+      # Takes precedence over SALIENT_GENERAL; default off = byte-identical.
+      - REFRAME_OBJECT_WEIGHTS=${REFRAME_OBJECT_WEIGHTS:-}
       # Transcription: strip to audio-only (FLAC) before sending to the provider.
       # DEFAULT ON; set to false to upload/decode the full video.
       - CLIPPYME_TRANSCRIBE_AUDIO_ONLY=${CLIPPYME_TRANSCRIBE_AUDIO_ONLY:-true}
