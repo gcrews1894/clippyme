@@ -68,6 +68,13 @@ function ClipCard({ clip, index, jobId, state, preselections, onUpdate, selectMo
         <span className="mini" title="Edit captions" onClick={(e) => { e.stopPropagation(); onCaptions(clip, index); }}><Icon n="captions" /></span>
         <span className="mini" title="Download (applies active toggles)" onClick={doDownload}><Icon n={downloading ? 'loader' : 'download'} /></span>
         <span className="mini" title="Publish" onClick={(e) => { e.stopPropagation(); onPublish({ ...clip, _idx: index }); }}><Icon n="send" /></span>
+        <span className="mini" title="Remove clip from the grid (file stays on disk)" onClick={(e) => {
+          e.stopPropagation();
+          if (window.confirm('Remove this clip from the grid? The file stays on disk.')) {
+            onUpdate(index, { deleted: true });
+            pushToast?.('info', 'Clip removed');
+          }
+        }}><Icon n="trash-2" /></span>
       </div>
     </div>
   );
