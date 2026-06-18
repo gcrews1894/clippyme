@@ -2,7 +2,7 @@
 // Visual layer is the Claude Design handoff; data layer reuses the same
 // useJobSubmission / useJobPolling / useHistory / useClipStates the production
 // app uses, so the pipeline behaves identically.
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import './tokens.css';
 import './app.css';
 import { Icon, Btn } from './primitives';
@@ -91,6 +91,10 @@ export default function RedesignApp() {
   const [preselections, setPreselectionsRaw] = useState(null);
   const [confetti, setConfetti] = useState(false);
   const [toasts, setToasts] = useState([]);
+  // Track all auto-dismiss timer ids so they can be cleared if the component
+  // unmounts before any timer fires (prevents setState on an unmounted tree).
+  const toastTimerIds = useRef([]);
+  useEffect(() => () => { toastTimerIds.current.forEach(clearTimeout); }, []);
   const [publishClips, setPublishClips] = useState(null);
   const [editClip, setEditClip] = useState(null);
   const [viewingHistory, setViewingHistory] = useState(false);
@@ -115,7 +119,8 @@ export default function RedesignApp() {
   const pushToast = useCallback((type, msg) => {
     const id = Date.now() + Math.random();
     setToasts((t) => [...t, { id, type, msg }]);
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 3600);
+    const tid = setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 3600);
+    toastTimerIds.current.push(tid);
   }, []);
 
   // Background clip reprocess: the Edit modal stages the changes and hands them

@@ -372,6 +372,9 @@ def transcribe_video(video_path):
                 from clippyme.pipeline.deepgram_transcribe import transcribe_with_deepgram, DeepgramError
                 return transcribe_with_deepgram(asr_input)
             except Exception as exc:  # noqa: BLE001 — broad catch for safe fallback
+                logging.getLogger("clippyme").warning(
+                    "Deepgram transcription failed (%s) — falling back to Faster-Whisper", exc
+                )
                 print(f"⚠️  Deepgram transcription failed ({exc}); falling back to Faster-Whisper.")
 
         device = "cuda" if CUDA_AVAILABLE else "cpu"

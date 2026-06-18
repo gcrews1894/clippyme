@@ -89,32 +89,41 @@ MAX_POLISH_CUT_RATIO = float(os.environ.get("AE_MAX_POLISH_CUT_RATIO", "0.5"))
 # same source clip from clobbering each other's _smartcut.mp4 output.
 # Lazily populated by _clip_lock(). Workers from FastAPI's executor pool
 # may hit the same clip when the user spam-clicks Download.
-_CLIP_LOCKS: dict[str, threading.Lock] = {}
+#
+# path -> [lock, refcount]. The refcount keeps an entry alive for exactly as
+# long as some caller holds or waits on it, so eviction can never hand two
+# callers different locks for one path (the bug a plain size-cap eviction had).
+_CLIP_LOCKS: dict[str, list] = {}
 _CLIP_LOCKS_GUARD = threading.Lock()
 
 
-def _clip_lock(clip_path: str) -> threading.Lock:
-    """Return a process-wide lock unique to `clip_path`. Lazy + thread-safe."""
+@contextlib.contextmanager
+def _clip_lock(clip_path: str):
+    """Process-wide per-path mutex, reference-counted and self-bounding.
+
+    Usage: ``with _clip_lock(path): ...`` — serialises smart_cut on one clip.
+    """
     abs_path = os.path.abspath(clip_path)
     with _CLIP_LOCKS_GUARD:
-        lock = _CLIP_LOCKS.get(abs_path)
-        if lock is None:
-            lock = threading.Lock()
-            _CLIP_LOCKS[abs_path] = lock
-            # Bound the registry WITHOUT ever evicting a lock another thread
-            # may still hold — handing two callers different locks for one
-            # path would defeat the mutex. Only drop currently-free locks.
-            if len(_CLIP_LOCKS) > 256:
-                for k in list(_CLIP_LOCKS.keys()):
-                    if len(_CLIP_LOCKS) <= 256:
-                        break
-                    other = _CLIP_LOCKS[k]
-                    if other is not lock and other.acquire(blocking=False):
-                        try:
-                            del _CLIP_LOCKS[k]
-                        finally:
-                            other.release()
-        return lock
+        entry = _CLIP_LOCKS.get(abs_path)
+        if entry is None:
+            entry = [threading.Lock(), 0]
+            _CLIP_LOCKS[abs_path] = entry
+        entry[1] += 1
+        lock = entry[0]
+    try:
+        with lock:
+            yield lock
+    finally:
+        with _CLIP_LOCKS_GUARD:
+            entry[1] -= 1
+            # Drop only when no one else references this exact entry AND the
+            # registry has grown past the soft cap. Safe: refcount 0 means no
+            # holder/waiter could be handed a stale lock.
+            if entry[1] <= 0 and len(_CLIP_LOCKS) > 256:
+                # Only delete if it's still the same entry object.
+                if _CLIP_LOCKS.get(abs_path) is entry:
+                    del _CLIP_LOCKS[abs_path]
 
 
 # Regex that strips ALL non-alphanumeric chars (unicode-aware) for the

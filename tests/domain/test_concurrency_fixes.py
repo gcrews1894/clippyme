@@ -4,12 +4,13 @@ Covers two pure (no cv2/ffmpeg) fixes:
   * ``job_worker.enqueue_output`` caps the per-job log buffer at
     ``MAX_LOG_LINES`` so a verbose/long job can't grow it without bound
     (the list is also returned verbatim on every 2s status poll).
-  * ``smartcut._clip_lock`` never evicts a lock that another caller may
-    still hold — handing two callers different locks for one path would
-    defeat the per-clip mutex and let two renders clobber one output file.
+  * ``smartcut._clip_lock`` is a reference-counted context manager: an entry
+    survives exactly as long as some caller holds or waits on it, so eviction
+    can never hand two callers different locks for one path (which would
+    defeat the per-clip mutex and let two renders clobber one output file).
 """
 import io
-import threading
+import os
 
 import clippyme.domain.job_worker as job_worker
 from clippyme.domain.smartcut import _CLIP_LOCKS, _clip_lock
@@ -33,22 +34,33 @@ def test_enqueue_output_unknown_job_is_noop():
     assert jobs == {}
 
 
-def test_clip_lock_same_path_same_object():
-    a = _clip_lock("/tmp/clip_same.mp4")
-    b = _clip_lock("/tmp/clip_same.mp4")
-    assert a is b
+def test_clip_lock_registry_identity_and_refcount():
+    path = "/tmp/clip_identity.mp4"
+    abs_path = os.path.abspath(path)
+    with _clip_lock(path) as lock:
+        entry = _CLIP_LOCKS.get(abs_path)
+        assert entry is not None
+        assert entry[0] is lock      # the yielded object is the registry lock
+        assert entry[1] == 1         # exactly one holder counted
+    # Refcount returns to zero after the `with` exits.
+    entry = _CLIP_LOCKS.get(abs_path)
+    if entry is not None:            # may have been evicted past the cap
+        assert entry[1] == 0
 
 
-def test_clip_lock_does_not_evict_held_lock():
-    """Overflow the registry while one path's lock is held; the held lock
-    must remain the *same* object on a re-fetch (eviction skipped it)."""
+def test_clip_lock_does_not_evict_held_entry():
+    """While one path's lock is held, overflow the registry far past the 256
+    cap with fresh free locks. The held entry must never be evicted — its
+    lock object must stay identical on a re-check inside the `with`."""
     held_path = "/tmp/clip_held.mp4"
-    held = _clip_lock(held_path)
-    with held:  # lock is now busy → must never be evicted
-        # Force the registry well past the 256 cap with fresh free locks.
+    abs_held = os.path.abspath(held_path)
+    with _clip_lock(held_path) as held_lock:
         for i in range(400):
-            _clip_lock(f"/tmp/clip_overflow_{i}.mp4")
-        # Same path must still map to the same held lock object.
-        assert _clip_lock(held_path) is held
-    # Registry stays bounded after the held lock is released.
-    assert len(_CLIP_LOCKS) <= 256 + 1
+            # Each fresh path is acquired+released; with refcount back to 0 it
+            # self-evicts once the registry is over the cap.
+            with _clip_lock(f"/tmp/clip_overflow_{i}.mp4"):
+                pass
+        entry = _CLIP_LOCKS.get(abs_held)
+        assert entry is not None         # held entry survived the eviction sweep
+        assert entry[0] is held_lock     # same lock object — mutex intact
+        assert entry[1] == 1

@@ -9,10 +9,14 @@ suite.
 Transcripts are keyed by ``SHA256(url)[:16]`` and stored as JSON under
 ``data/cache/``. Entries older than ``CACHE_TTL_DAYS`` are pruned on read.
 """
+import contextlib
 import hashlib
 import json
+import logging
 import os
 import time
+
+logger = logging.getLogger("clippyme")
 
 # Resolve to an absolute path anchored at the repo root (../../../data/cache
 # from this file), so transcripts are never written outside the data tree when
@@ -43,7 +47,15 @@ def load_cached_transcript(url: str):
             data = json.load(f)
         print(f"📦 Loaded cached transcript ({os.path.basename(cache_path)})")
         return data
-    except Exception:
+    except FileNotFoundError:
+        return None
+    except json.JSONDecodeError as exc:
+        logger.warning("Corrupt transcript cache %s (%s) — removing", cache_path, exc)
+        with contextlib.suppress(OSError):
+            os.remove(cache_path)
+        return None
+    except OSError as exc:
+        logger.warning("Failed reading transcript cache %s: %s", cache_path, exc)
         return None
 
 

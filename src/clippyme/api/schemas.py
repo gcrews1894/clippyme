@@ -224,7 +224,7 @@ class PublishRequest(BaseModel):
     caption: str = Field("", max_length=2200)
     platforms: List[dict] = Field(..., min_length=1, max_length=14)
     schedule_mode: str = Field("now", pattern=r"^(now|auto|manual)$")
-    scheduled_for: Optional[str] = None
+    scheduled_for: Optional[str] = Field(None, max_length=64)
     # Optional YYYY-MM-DD that defines the day the SmartScheduler should
     # start picking slots from when schedule_mode="auto". Ignored by
     # "now" / "manual". Defaults to today if omitted.
@@ -312,6 +312,21 @@ class PublishRequest(BaseModel):
 
 class ZernioConfigRequest(BaseModel):
     """Persisted Zernio settings (saved to data/config.json)."""
-    api_key: Optional[str] = None
+    api_key: Optional[str] = Field(None, max_length=512)
     accounts: Optional[dict] = None  # {"tiktok": "...", "instagram": "...", "youtube": "..."}
-    timezone: Optional[str] = None
+    timezone: Optional[str] = Field(None, max_length=64)
+
+    @field_validator("accounts")
+    @classmethod
+    def _validate_accounts(cls, v):
+        if v is None:
+            return v
+        if len(v) > 16:
+            raise ValueError("too many account entries")
+        allowed = {"tiktok", "instagram", "youtube"}
+        for k, val in v.items():
+            if k not in allowed:
+                raise ValueError(f"unknown account platform: {k!r}")
+            if val is not None and (not isinstance(val, str) or len(val) > 256):
+                raise ValueError(f"account id for {k!r} must be a string <= 256 chars")
+        return v

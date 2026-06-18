@@ -5,12 +5,51 @@ Extracted from ``pipeline.main`` as part of the decomposition. Depends only on
 the host. The bot-detection-resistant yt-dlp options and the cookies-resolution
 precedence are preserved verbatim from the original ``main``.
 """
+import ipaddress
 import os
 import re
+import socket
 import sys
 import time
+from urllib.parse import urlparse
 
 import yt_dlp
+
+
+def _reject_rebound_internal(url: str) -> None:
+    """Re-resolve the URL host at download time and refuse if it now points
+    only at internal/loopback ranges (defeats DNS-rebinding past the API-layer
+    SSRF check). Best-effort: resolution failures are left to yt-dlp."""
+    try:
+        host = urlparse(url).hostname
+        if not host:
+            return
+        try:
+            ip_obj = ipaddress.ip_address(host)
+            addrs = [ip_obj]
+        except ValueError:
+            _prev_timeout = socket.getdefaulttimeout()
+            socket.setdefaulttimeout(5)
+            try:
+                infos = socket.getaddrinfo(host, None)
+            finally:
+                socket.setdefaulttimeout(_prev_timeout)
+            addrs = []
+            for info in infos:
+                try:
+                    addrs.append(ipaddress.ip_address(info[4][0]))
+                except ValueError:
+                    continue
+        if addrs and all(
+            a.is_private or a.is_loopback or a.is_link_local or a.is_reserved or a.is_unspecified
+            for a in addrs
+        ):
+            raise ValueError(f"refusing download: {host} resolves only to internal addresses")
+    except ValueError:
+        raise
+    except Exception:
+        # resolution hiccup — don't block legit downloads; yt-dlp will handle it
+        return
 
 
 def sanitize_filename(filename):
@@ -63,6 +102,7 @@ def download_youtube_video(url, output_dir=".", cookies_file_path=None):
     Downloads a YouTube video using yt-dlp.
     Returns the path to the downloaded video and the video title.
     """
+    _reject_rebound_internal(url)
     print(f"🔍 Debug: yt-dlp version: {yt_dlp.version.__version__}")
     print("📥 Downloading video from YouTube...")
     step_start_time = time.time()

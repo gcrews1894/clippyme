@@ -3,8 +3,11 @@ from __future__ import annotations
 
 import glob
 import json
+import logging
 import os
 import re
+
+logger = logging.getLogger("clippyme")
 
 ALLOWED_REFRAME_MODES = frozenset({"auto", "disabled", "object"})
 MAX_INSTRUCTIONS_LEN = 2000
@@ -112,10 +115,10 @@ def _build_clips(data: dict, base_name: str, job_id: str, output_dir: str, only_
                     'e': w.get('end', 0.0),
                 })
         backfill_hook_text(clips, words, fallback_title=base_name)
-    except Exception:
+    except Exception as exc:
         # Never break result loading because of backfill logic —
         # stale metadata should still render even if hooks are empty.
-        pass
+        logger.debug("backfill_hook_text failed: %s", exc)
 
     result = []
     for i, clip in enumerate(clips):

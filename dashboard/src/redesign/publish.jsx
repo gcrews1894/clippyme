@@ -2,7 +2,7 @@
 // Every selected clip is published in parallel (Promise.allSettled) — the fix
 // for the old sequential stall — each row showing live queued→uploading→
 // live/error status. Per-clip compose_first honours the clip's toggles.
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Icon, Social, Btn, Switch, PlatPill, PLATFORMS } from './primitives';
 import { clipVideoSrc } from './realApi';
 import { publishClip, getZernio } from './realApi';
@@ -76,6 +76,11 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
   // Accessibility: focus trap + Escape-to-close + focus restore.
   const panelRef = useModalA11y(onClose);
 
+  // Guard the post-publish setTimeout so it never calls setState after the
+  // modal has been unmounted (e.g. parent closes it while the delay is in flight).
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
+
   const accounts = zernio?.accounts || {};
   const toggle = (k) => setPlats((p) => ({ ...p, [k]: !p[k] }));
   const platTargets = () => Object.keys(plats)
@@ -133,6 +138,7 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
     const ok = results.filter((r) => r.status === 'fulfilled' && r.value).length;
     const fail = clips.length - ok;
     setTimeout(() => {
+      if (!mountedRef.current) return;
       setStage('done');
       pushToast?.(fail === 0 ? 'success' : 'warn', `Published ${ok}/${clips.length}${fail ? `, ${fail} failed` : ''}`);
     }, 500);

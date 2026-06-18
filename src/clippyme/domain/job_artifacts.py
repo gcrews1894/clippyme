@@ -1,9 +1,12 @@
 """Filesystem helpers for locating and relocating job artifacts written by main.py."""
 import glob
 import json
+import logging
 import os
 import shutil
 from typing import Tuple
+
+logger = logging.getLogger("clippyme")
 
 
 def find_job_metadata_path(job_id: str, output_dir: str) -> str:
@@ -94,5 +97,6 @@ def relocate_root_job_artifacts(job_id: str, job_output_dir: str, output_dir: st
                 shutil.move(clip_path, dest_clip)
 
         return True
-    except Exception:
+    except Exception as exc:
+        logger.warning("relocate_root_job_artifacts failed for %s: %s", job_id, exc)
         return False

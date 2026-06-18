@@ -80,9 +80,10 @@ def extract_audio_to_wav(video_path: str) -> str | None:
                 out_path,
             ],
             check=True,
+            timeout=1800,
         )
         return out_path
-    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as exc:
         print(f"   ⚠️  Could not extract audio for diarization: {exc}")
         return None
 

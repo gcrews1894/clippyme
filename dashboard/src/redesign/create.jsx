@@ -14,7 +14,7 @@ function PresetCards({ presets, active, defaultId, onPick, onSetDefault, onDelet
         // role=button (not a real <button>) so the star/trash actions inside
         // can be real, keyboard-operable <button>s — interactive-in-interactive
         // is invalid HTML.
-        <div key={p.id} role="button" tabIndex={0} className={'preset' + (active === p.id ? ' on' : '')}
+        <div key={p.id} role="button" tabIndex={0} aria-pressed={active === p.id} className={'preset' + (active === p.id ? ' on' : '')}
           onClick={() => onPick(p)}
           onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onPick(p); } }}>
           <span className="pcheck"><Icon n="check" /></span>

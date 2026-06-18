@@ -519,6 +519,9 @@ async def batch_process(req: BatchRequest, request: Request):
                 model=getattr(req, "model", None),
             )
         except ValueError as exc:
+            # This item's output dir was already created above but it never
+            # made it into `jobs` — clean it up so a bad URL can't orphan a dir.
+            await asyncio.to_thread(shutil.rmtree, job_output_dir, True)
             raise HTTPException(status_code=400, detail=str(exc))
 
         env = os.environ.copy()
@@ -536,8 +539,10 @@ async def batch_process(req: BatchRequest, request: Request):
             job_queue.put_nowait(job_id)
             batch_jobs.append({"url": url, "job_id": job_id})
         except asyncio.QueueFull:
-            del jobs[job_id]
-            shutil.rmtree(job_output_dir, ignore_errors=True)
+            # Only the item that failed to enqueue is cleaned up — already
+            # enqueued jobs stay running. Mirrors the single /api/process path.
+            jobs.pop(job_id, None)
+            await asyncio.to_thread(shutil.rmtree, job_output_dir, True)
             # Stop adding more — queue is full
             break
 
@@ -1080,14 +1085,22 @@ async def reframe_clip(job_id: str, clip_index: int, req: ReframeRequest, reques
     clean_video_url = f"/videos/{job_id}/{original_clip_filename}"
     new_video_url = f"{clean_video_url}?v={cache_bust}"
 
-    # Update metadata.json and in-memory job state with the CLEAN url
+    # Update in-memory metadata structures with the CLEAN url, then persist.
+    clips[clip_index]["video_url"] = clean_video_url
+    clips[clip_index]["reframe_mode"] = mode
+    data["shorts"] = clips
+
+    # A persistence failure must NOT silently succeed: the clip on disk has
+    # already been re-rendered with the new mode, so if metadata.json still
+    # carries the OLD reframe_mode/video_url the divergence is invisible until
+    # a restart reloads stale state. Update in-memory job state regardless
+    # (so the live session is correct), but surface the save failure as a 500.
+    save_failed = None
     try:
-        clips[clip_index]["video_url"] = clean_video_url
-        clips[clip_index]["reframe_mode"] = mode
-        data["shorts"] = clips
         save_job_metadata(metadata_path, data)
     except Exception as e:
-        logger.warning("Failed to update metadata.json after reframe: %s", e)
+        logger.error("Failed to persist metadata.json after reframe: %s", e)
+        save_failed = e
 
     if (
         job_id in jobs
@@ -1099,6 +1112,12 @@ async def reframe_clip(job_id: str, clip_index: int, req: ReframeRequest, reques
         # its own cache-bust via `new_video_url` below on the <video> tag.
         jobs[job_id]["result"]["clips"][clip_index]["video_url"] = clean_video_url
         jobs[job_id]["result"]["clips"][clip_index]["reframe_mode"] = mode
+
+    if save_failed is not None:
+        raise HTTPException(
+            status_code=500,
+            detail="Reframe succeeded but metadata persistence failed; reload may show stale state",
+        )
 
     return {
         "success": True,

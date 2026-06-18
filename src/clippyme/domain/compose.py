@@ -63,29 +63,14 @@ async def _apply_smartcut(
     intermediate_files: list,
     drop_ranges=None,
 ) -> str:
-    # Cache key must follow the ACTUAL input. The previous implementation
-    # keyed off `base_clip` unconditionally, which meant that if we'd
-    # smart-cut the raw clip before, we'd return the stale raw smart-cut
-    # even when the current call is operating on a subtitled/hooked
-    # variant. Use current_input instead so each input gets its own
-    # sidecar _smartcut.mp4.
-    # Legacy fixed-name sidecar shortcut — only safe for the plain auto cut.
-    # A manual trim (drop_ranges) must NOT reuse it: the same input with
-    # different hand-picked drops would otherwise serve a stale cut. smart_cut
-    # itself plan-hashes the output, so manual trims still cache correctly.
-    smartcut_path = current_input.replace(".mp4", "_smartcut.mp4")
-    # Only reuse the sidecar if it's newer than its source. A post-run reframe
-    # overwrites the clip .mp4 in place, so a stale _smartcut.mp4 from before the
-    # reframe must NOT be served — re-cut instead. (smart_cut itself plan-hashes,
-    # but this fixed-name shortcut bypasses that check, hence the explicit mtime.)
-    if not drop_ranges and os.path.exists(smartcut_path):
-        try:
-            fresh = os.path.getmtime(smartcut_path) >= os.path.getmtime(current_input)
-        except OSError:
-            fresh = False
-        if fresh:
-            intermediate_files.append(smartcut_path)
-            return smartcut_path
+    # Smart Cut caching is delegated entirely to smart_cut() itself, which
+    # writes a plan-hashed output (`{base}_smartcut_{hash}.mp4`) and validates
+    # cache hits against the source mtime (plus a legacy bare-`_smartcut.mp4`
+    # back-compat candidate). The previous fixed-name sidecar shortcut here
+    # built `{base}_smartcut.mp4` — a name smart_cut NEVER produces under the
+    # current Subtitles→Smart Cut ordering (current_input is `composed_sub_N.mp4`)
+    # — so it could only ever match stale artifacts that smart_cut already
+    # handles itself. Removed: always delegate to smart_cut's own correct cache.
     transcript = metadata.get("transcript", {})
     sc_output, _ = await asyncio.to_thread(
         smart_cut,

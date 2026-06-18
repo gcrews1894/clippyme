@@ -56,18 +56,33 @@ def _get_yolo_model():
     return _yolo_model
 
 mp_face_detection = mp.solutions.face_detection
-
-face_detection = mp_face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.5)
-
 mp_face_mesh = mp.solutions.face_mesh
 
-face_mesh = mp_face_mesh.FaceMesh(
-    static_image_mode=False,
-    max_num_faces=1,
-    refine_landmarks=False,
-    min_detection_confidence=0.5,
-    min_tracking_confidence=0.5,
-)
+_face_detection = None
+_face_mesh = None
+
+
+def _get_face_detection():
+    """Lazy-init MediaPipe FaceDetection on first use (avoids ~300ms TFLite
+    load at import time on every subprocess, incl. --reframe-only switches)."""
+    global _face_detection
+    if _face_detection is None:
+        _face_detection = mp_face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.5)
+    return _face_detection
+
+
+def _get_face_mesh():
+    """Lazy-init MediaPipe FaceMesh on first use (see _get_face_detection)."""
+    global _face_mesh
+    if _face_mesh is None:
+        _face_mesh = mp_face_mesh.FaceMesh(
+            static_image_mode=False,
+            max_num_faces=1,
+            refine_landmarks=False,
+            min_detection_confidence=0.5,
+            min_tracking_confidence=0.5,
+        )
+    return _face_mesh
 
 # MediaPipe FaceMesh mouth landmark indices (inner lips + corners). Defined here
 # because compute_mouth_aspect_ratio was extracted from main.py during the
@@ -103,7 +118,7 @@ def compute_mouth_aspect_ratio(frame_bgr, face_box) -> float | None:
     roi = frame_bgr[y1:y2, x1:x2]
     rgb = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)
     rgb.flags.writeable = False
-    res = face_mesh.process(rgb)
+    res = _get_face_mesh().process(rgb)
     if not res.multi_face_landmarks:
         return None
     lm = res.multi_face_landmarks[0].landmark
@@ -441,7 +456,7 @@ class SpeakerTracker:
     SIZE_WEIGHT = 0.3     # face size still contributes (proximity to camera)
     MOUTH_WEIGHT = 1.0    # mouth motion is the dominant signal
 
-    def __init__(self, stabilization_frames=15, cooldown_frames=30):
+    def __init__(self, cooldown_frames=30):
         self.active_speaker_id = None
         self.speaker_scores = {}  # {id: smoothed_score}
         self.mar_history = {}     # {id: [mar0, mar1, ...]} sliding window
@@ -449,7 +464,6 @@ class SpeakerTracker:
         self.locked_counter = 0
 
         # Hyperparameters
-        self.stabilization_threshold = stabilization_frames
         self.switch_cooldown = cooldown_frames
         self.last_switch_frame = -1000
 
@@ -584,7 +598,7 @@ def detect_face_candidates(frame):
     """
     height, width, _ = frame.shape
     rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    results = face_detection.process(rgb_frame)
+    results = _get_face_detection().process(rgb_frame)
     
     candidates = []
     

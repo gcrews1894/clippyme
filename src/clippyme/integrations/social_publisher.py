@@ -85,14 +85,20 @@ def _reject_internal_upload_url(url: str) -> None:
     try:
         candidates.add(ipaddress.ip_address(host))
     except ValueError:
+        # Bound the DNS resolution so a hung resolver can't pin a thread-pool
+        # slot indefinitely. Restore the previous default in a finally.
+        _old_timeout = socket.getdefaulttimeout()
+        socket.setdefaulttimeout(5)
         try:
             for info in socket.getaddrinfo(host, None):
                 try:
                     candidates.add(ipaddress.ip_address(info[4][0]))
                 except ValueError:
                     continue
-        except (socket.gaierror, UnicodeError):
+        except (socket.gaierror, UnicodeError, OSError):
             return
+        finally:
+            socket.setdefaulttimeout(_old_timeout)
     for ip in candidates:
         if (ip.is_private or ip.is_loopback or ip.is_link_local
                 or ip.is_reserved or ip.is_multicast or ip.is_unspecified):
@@ -435,6 +441,7 @@ def publish_clip(
         else:
             target_day = now.date() + timedelta(days=1) if now.hour >= 22 else now.date()
         date_iso = target_day.strftime("%Y-%m-%d")
+        occupancy_known = True
         try:
             posts = client.list_scheduled_posts(date_iso, date_iso)
             occupied: list[datetime] = []
@@ -447,15 +454,22 @@ def publish_clip(
                 except ValueError:
                     continue
         except ZernioError as e:
-            logger.warning("list_scheduled_posts failed, falling back to empty occupancy: %s", e)
+            logger.warning(
+                "SmartScheduler: scheduling WITHOUT collision data — "
+                "Zernio list_scheduled_posts failed: %s", e,
+            )
             occupied = []
+            occupancy_known = False
 
         # Verbose scheduling trace — lets the operator see exactly which
         # slots were considered occupied and which slot was picked.
         weekday_name = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][target_day.weekday()]
         windows = sched._windows_for(target_day.weekday())
         windows_str = ", ".join(f"{s:02d}-{e:02d}" for s, e in windows)
-        occupied_str = ", ".join(o.strftime("%H:%M") for o in sorted(occupied)) or "none"
+        occupied_str = (
+            ", ".join(o.strftime("%H:%M") for o in sorted(occupied))
+            or ("UNAVAILABLE (collision data missing)" if not occupancy_known else "none")
+        )
         logger.info(
             "SmartScheduler: day=%s (%s), prime-time windows=[%s], already occupied: [%s], min_gap=%ds",
             date_iso, weekday_name, windows_str, occupied_str, sched.min_gap_seconds,
