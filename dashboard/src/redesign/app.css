@@ -331,6 +331,11 @@ select.sel:focus{outline:0;border-color:var(--brand-blue)}
 .edit-opt .eo-t{font-size:13px;font-weight:600;color:var(--fg-1)}
 .edit-opt .eo-d{font-size:11px;color:var(--fg-4);margin-top:1px}
 .edit-dirty{font-family:var(--font-mono);font-size:11px;color:var(--brand-amber);margin-right:auto;align-self:center}
+/* Edit modal preview | controls. Class-based (not inline) so the stacking
+   media query below can reach it — on a phone the 220px preview column would
+   otherwise force horizontal overflow. */
+.edit-grid{display:grid;grid-template-columns:220px 1fr;gap:20px}
+@media(max-width:560px){.edit-grid{grid-template-columns:1fr}}
 
 /* ============================================================ MODAL / SHEET */
 .overlay{position:fixed;inset:0;z-index:90;background:rgba(3,3,5,.7);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:24px;animation:fadein .18s ease both}

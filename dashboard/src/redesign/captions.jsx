@@ -110,7 +110,7 @@ export function EditClipModal({ clip, idx, jobId, initial, appliedMode, preselec
           <button className="x" onClick={onClose} aria-label="Close" disabled={busy}><Icon n="x" /></button>
         </div>
 
-        <div className="modal-body" style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: 20 }}>
+        <div className="modal-body edit-grid">
           {/* Live preview of the clip as it currently stands on disk. */}
           <div className="clip" style={{ cursor: 'default' }}>
             <div className="clip-media" style={{ padding: 0, background: '#000' }}>
