@@ -56,7 +56,7 @@ Given a video URL or upload, ClippyMe runs the following pipeline end-to-end:
 
 1. **Download** with `yt-dlp` (Deno-based JS runtime to bypass YouTube bot detection, optional cookies for age-gated content).
 2. **Transcribe** with **Deepgram Nova-3** by default (multi-language, code-switching EN/IT) — automatic fallback to local **Faster-Whisper** if no key or network failure. The video is stripped to a mono-16 kHz FLAC first, so only audio is uploaded/decoded (a few MB instead of the full mp4). Cached on disk for 7 days keyed by URL hash.
-3. **Detect viral moments** with **Google Gemini** (`gemini-3.5-flash` by default). A 5-axis viral_score rubric (HOOK_STRENGTH, EMOTIONAL_PAYOFF, QUOTABILITY, SELF_CONTAINED, DENSITY) plus a 5-level robust JSON parser tolerates malformed model output.
+3. **Detect viral moments** with **Google Gemini** (`gemini-3.5-flash` by default). A 5-axis viral_score rubric (HOOK_STRENGTH, EMOTIONAL_PAYOFF, QUOTABILITY, SELF_CONTAINED, DENSITY) plus a 5-level robust JSON parser tolerates malformed model output. **No-AI fallback:** if no Gemini key is set or the call fails, the transcript is topic-segmented into several clips by dependency-light lexical **TextTiling** (ported from [ClipsAI](https://github.com/ClipsAI/clipsai)) instead of dumping the whole video as one clip — heuristic, not viral-ranked, but offline and free.
 4. **Reframe to 9:16** with active-speaker tracking: YOLOv8 person detection + MediaPipe FaceMesh mouth-aspect-ratio (MAR) variance to pick who is speaking, then a smoothed cameraman that adapts speed and zoom per scene. Hardened against messy real-world inputs: variable-frame-rate normalization, audio `start_time` compensation (YouTube A/V desync), and corrupt-frame resilience — all no-ops on clean sources.
 5. **Post-process** each clip: Ken Burns auto-zoom (1.0→1.05×), EBU R128 audio normalization to −14 LUFS, automatic cover frame selection.
 6. **Optional editing** at download time (compose-on-demand): **Smart Cut** (filler-word + silence removal via auto-editor v3 timeline + audio polish), **Hook** text overlay (Pillow + emoji, with Instagram-Stories-style banner / colours / outline / font), **Subtitles** (6 ASS karaoke presets or classic SRT, pixel-faithful frontend preview), and a **Brand logo** watermark. Custom subtitle/hook fonts and the logo are uploaded once in Settings.
@@ -175,6 +175,7 @@ src/clippyme/
     deepgram_transcribe.py   Deepgram Nova-3 REST client (retry/backoff, keyterms)
     gemini_parser.py  5-level JSON parsing chain + Pydantic validation + dedupe
     gemini_service.py List available Gemini models
+    texttiling_ops.py Lexical TextTiling topic segmentation (no-AI clip fallback, no cv2/torch → host-tested)
     reframe.py        cv2/YOLO/MediaPipe glue: SpeakerTracker + SmoothedCameraman
     reframe_ops.py    Pure decision math (no cv2 → host-tested): smoothers, zoom
     media_probe.py    cv2-free ffprobe + A/V-sync helpers (VFR, start_time, fps)
@@ -341,5 +342,6 @@ The CPU image runs everywhere (Linux x86_64, ARM64, Apple Silicon via Docker Des
 
 - [OpenShorts](https://github.com/SamurAIGPT/Open-Source-Shorts-Maker) — original starting point.
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp), [Faster-Whisper](https://github.com/SYSTRAN/faster-whisper), [Deepgram](https://deepgram.com), [Google Gemini](https://ai.google.dev), [Ultralytics YOLO](https://github.com/ultralytics/ultralytics), [MediaPipe](https://github.com/google/mediapipe), [auto-editor](https://github.com/WyattBlue/auto-editor), [Zernio](https://zernio.com).
+- [ClipsAI](https://github.com/ClipsAI/clipsai) — TextTiling topic-segmentation algorithm (the no-AI clip-finding fallback is a lexical port; see [`docs/clipsai-analysis.md`](docs/clipsai-analysis.md)).
 - [React](https://react.dev), [Vite](https://vitejs.dev), [Tailwind CSS](https://tailwindcss.com), [lucide](https://lucide.dev).
 - Reframe-algorithm research studied and selectively ported (see `docs/*-analysis.md`): [fralapo/FrameShift](https://github.com/fralapo/FrameShift) (weighted-object interest region → the `object` reframe mode), [gauravzazz/smart-reframe](https://github.com/gauravzazz/smart-reframe), [KazKozDev/auto-vertical-reframe](https://github.com/KazKozDev/auto-vertical-reframe), [obi19999/smart-video-reframe](https://github.com/obi19999/smart-video-reframe), [mfahsold/montage-ai](https://github.com/mfahsold/montage-ai), [kamilstanuch/Autocrop-vertical](https://github.com/kamilstanuch/Autocrop-vertical).
