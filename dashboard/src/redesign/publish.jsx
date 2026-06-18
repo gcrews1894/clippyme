@@ -6,7 +6,7 @@ import { useState, useEffect } from 'react';
 import { Icon, Social, Btn, Switch, PlatPill, PLATFORMS } from './primitives';
 import { clipVideoSrc } from './realApi';
 import { publishClip, getZernio } from './realApi';
-import { seedToggles, seedHookParams, seedSubtitleParams } from '../lib/seedClipParams';
+import { seedToggles, seedHookParams, seedSubtitleParams, seedLogoParams } from '../lib/seedClipParams';
 import { useModalA11y } from './useModalA11y';
 
 // redesign plat id → backend platform + account key
@@ -94,6 +94,7 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
     const any = Object.values(toggles).some(Boolean);
     const hookParams = cs.hookParams ?? seedHookParams(clip, preselections);
     const subtitleParams = cs.subtitleParams ?? seedSubtitleParams(preselections);
+    const logoParams = cs.logoParams ?? seedLogoParams(preselections);
     const title = (clip.video_title_for_youtube_short || `Clip ${idx + 1}`).slice(0, 100);
     return {
       title,
@@ -106,7 +107,7 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
         privacy_level: 'PUBLIC_TO_EVERYONE', allow_comment: true, allow_duet: true,
         allow_stitch: true, content_preview_confirmed: true, express_consent_given: true,
       } : undefined,
-      ...(any ? { compose_first: true, toggles, hook_params: toggles.hook ? hookParams : {}, subtitle_params: toggles.subtitles ? subtitleParams : {} } : {}),
+      ...(any ? { compose_first: true, toggles, hook_params: toggles.hook ? hookParams : {}, subtitle_params: toggles.subtitles ? subtitleParams : {}, logo_params: toggles.logo ? logoParams : {} } : {}),
     };
   };
 

@@ -2,7 +2,7 @@
 // the exact payloads the production components use, so the redesign talks to
 // the same endpoints with the same contracts.
 import { getApiUrl } from '../config';
-import { seedToggles, seedHookParams, seedSubtitleParams } from '../lib/seedClipParams';
+import { seedToggles, seedHookParams, seedSubtitleParams, seedLogoParams } from '../lib/seedClipParams';
 
 // Only http/https absolute URLs are honoured as-is; anything else (javascript:,
 // data:, blob:, or a bare "httpfoo:" that slips past a startsWith check) is
@@ -97,10 +97,12 @@ export async function exportClip(jobId, index, clip, state, preselections) {
   if (!any) { downloadClip(clip, index); return 'raw'; }
   const hook = state?.hookParams ?? seedHookParams(clip, preselections);
   const subs = state?.subtitleParams ?? seedSubtitleParams(preselections);
+  const logo = state?.logoParams ?? seedLogoParams(preselections);
   const { composed_url } = await composeClip(jobId, index, {
     toggles,
     hook_params: toggles.hook ? hook : {},
     subtitle_params: toggles.subtitles ? subs : {},
+    logo_params: toggles.logo ? logo : {},
   });
   const href = safeResolveUrl(composed_url);
   const a = document.createElement('a');

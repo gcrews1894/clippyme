@@ -59,7 +59,7 @@ Given a video URL or upload, ClippyMe runs the following pipeline end-to-end:
 3. **Detect viral moments** with **Google Gemini** (`gemini-3.5-flash` by default). A 5-axis viral_score rubric (HOOK_STRENGTH, EMOTIONAL_PAYOFF, QUOTABILITY, SELF_CONTAINED, DENSITY) plus a 5-level robust JSON parser tolerates malformed model output.
 4. **Reframe to 9:16** with active-speaker tracking: YOLOv8 person detection + MediaPipe FaceMesh mouth-aspect-ratio (MAR) variance to pick who is speaking, then a smoothed cameraman that adapts speed and zoom per scene. Hardened against messy real-world inputs: variable-frame-rate normalization, audio `start_time` compensation (YouTube A/V desync), and corrupt-frame resilience — all no-ops on clean sources.
 5. **Post-process** each clip: Ken Burns auto-zoom (1.0→1.05×), EBU R128 audio normalization to −14 LUFS, automatic cover frame selection.
-6. **Optional editing** at download time (compose-on-demand): **Smart Cut** (filler-word + silence removal via auto-editor v3 timeline + audio polish), **Hook** text overlay (Pillow + emoji), **Subtitles** (6 ASS karaoke presets or classic SRT, pixel-faithful frontend preview).
+6. **Optional editing** at download time (compose-on-demand): **Smart Cut** (filler-word + silence removal via auto-editor v3 timeline + audio polish), **Hook** text overlay (Pillow + emoji, with Instagram-Stories-style banner / colours / outline / font), **Subtitles** (6 ASS karaoke presets or classic SRT, pixel-faithful frontend preview), and a **Brand logo** watermark. Custom subtitle/hook fonts and the logo are uploaded once in Settings.
 7. **Publish or schedule** to TikTok / Instagram / YouTube via **Zernio**, with a SmartScheduler that picks Italian-prime-time slots, avoids same-day collisions, and handles per-platform daily-limit 429s by skipping exhausted platforms across a batch.
 
 While a job runs you stay in control:
@@ -179,7 +179,7 @@ src/clippyme/
     reframe_ops.py    Pure decision math (no cv2 → host-tested): smoothers, zoom
     media_probe.py    cv2-free ffprobe + A/V-sync helpers (VFR, start_time, fps)
   domain/             Endpoint-facing business logic
-    compose.py        Smart Cut → Hook → Subtitles compose pipeline
+    compose.py        Subtitles → Smart Cut → Hook → Logo compose pipeline
     clip_endpoints.py        Smart Cut + history restore helpers
     job_results.py    Worker loop result loaders + main.py command builder (whitelisted)
     job_artifacts.py  Filesystem helpers for job outputs
@@ -187,7 +187,8 @@ src/clippyme/
     history_service.py       Disk-backed job history scan
     smartcut.py       Two-stage filler-word + audio polish (auto-editor v3 timeline)
     subtitles.py      ASS karaoke (6 presets) + SRT + ffmpeg burn (filtergraph-escape hardened)
-    hooks.py          Text overlay with Pillow + NotoColorEmoji
+    hooks.py          Text overlay (Pillow + NotoColorEmoji) w/ IG-style banner/outline/font
+    logo.py           Brand-logo / watermark overlay (ffmpeg overlay, positioned)
   integrations/       External clients
     social_publisher.py      Zernio REST + SmartScheduler + publish_clip orchestrator
     auto_editor_updater.py   Background daily updater for the auto-editor binary
@@ -225,7 +226,7 @@ All routes are JSON in / JSON out. Job IDs are strict UUID4. Config endpoints re
 | `POST` | `/api/resume/{job_id}` | Resume a paused job. |
 | `POST` | `/api/stop/{job_id}` | Stop early but **keep the clips finished so far**. |
 | `POST` | `/api/cancel/{job_id}` | Kill the subprocess **and discard all output**. |
-| `POST` | `/api/compose/{job_id}/{clip_index}` | Compose Smart Cut + Hook + Subtitles on demand. |
+| `POST` | `/api/compose/{job_id}/{clip_index}` | Compose Subtitles + Smart Cut + Hook + Logo on demand. |
 | `POST` | `/api/smartcut/{job_id}/{clip_index}` | Smart Cut a single clip. |
 | `POST` | `/api/reframe/{job_id}/{clip_index}` | Switch a clip's reframe mode. |
 | `GET` | `/api/history` | Past jobs from disk. |
@@ -236,6 +237,8 @@ All routes are JSON in / JSON out. Job IDs are strict UUID4. Config endpoints re
 | `POST` | `/api/config/cookies` | Upload Netscape cookies file (trusted origin, 10 MB cap). |
 | `GET` | `/api/config/cookies/status` | Is a cookie file present? |
 | `DELETE` | `/api/config/cookies` | Remove the cookies file. |
+| `POST`/`GET`/`DELETE` | `/api/config/logo` | Upload / status / remove the brand logo PNG. |
+| `GET`/`POST`/`DELETE` | `/api/config/fonts` | List / upload / remove custom subtitle+hook fonts. |
 | `GET` | `/api/config/zernio` | Masked Zernio config. |
 | `POST` | `/api/config/zernio` | Save/update Zernio credentials. |
 | `GET` | `/api/zernio/accounts` | Discover accounts via Zernio. |
@@ -249,13 +252,16 @@ Static mounts: `/videos`, `/thumbnails`, `/fonts` (read-only).
 
 ## Editing toggles (compose-on-download)
 
-Every finished clip has an **Edit & reprocess** panel — one button on the clip card opens a modal that gathers all the options in one place (reframe mode, Smart Cut, Hook, Subtitles) so you set everything first and apply once, instead of the clip reprocessing on every tweak. The three compose layers:
+Every finished clip has an **Edit & reprocess** panel — one button on the clip card opens a modal that gathers all the options in one place (reframe mode, Smart Cut, Hook, Subtitles, Brand logo) so you set everything first and apply once, instead of the clip reprocessing on every tweak. The compose layers:
 
 - **Smart Cut** — removes silences and filler words via auto-editor v3 timeline; falls back to ffmpeg concat demuxer if the binary is missing.
-- **Hook** — text overlay with configurable position/size, auto-prefilled from the Gemini hook suggestion. Supports emoji.
+- **Hook** — text overlay, auto-prefilled from the Gemini hook suggestion. Beyond position/size it offers **Instagram-Stories-style text styling**: a toggleable coloured banner behind the text (colour + opacity), independent text colour, an outline/stroke (None/Thin/Thick + colour), and a font choice. A live WYSIWYG preview sits above the controls. Supports emoji.
 - **Subtitles** — 6 viral karaoke presets (`classic_white`, `hormozi_bold`, `neon_glow`, `mrbeast_box`, `minimal_clean`, `fire_impact`) or classic SRT with font/color/position controls. The frontend preview is **pixel-faithful** with the burned-in output (`dashboard/src/lib/subtitlePresets.js` mirrors the Python preset table 1:1 — keep them in sync).
+- **Brand logo** — burns an uploaded transparent PNG onto the clip (7 anchor positions × S/M/L size × opacity). Upload it once in Settings → Brand assets.
 
-Editing is staged: nothing runs while you toggle. **Apply & reprocess** re-renders the framing (only when the reframe mode changed) and then composes the active layers in one pass via `/api/compose/{job_id}/{clip_index}` — order is **Subtitles → Smart Cut → Hook** (subtitles burn first so their absolute timing never drifts when Smart Cut removes silences). The preview updates to the composed result, and downloading runs the same compose, so what you see is what you get.
+**Custom fonts**: upload a `.ttf`/`.otf` (e.g. a licensed Stratos) in Settings → Brand assets and it appears in the classic-subtitle and hook font pickers — resolved at burn time from the writable `data/fonts/` dir alongside the bundled faces.
+
+Editing is staged: nothing runs while you toggle. **Apply & reprocess** re-renders the framing (only when the reframe mode changed) and then composes the active layers in one pass via `/api/compose/{job_id}/{clip_index}` — order is **Subtitles → Smart Cut → Hook → Logo** (subtitles burn first so their absolute timing never drifts when Smart Cut removes silences; the logo sits on top of everything). Reprocessing runs in the **background** — Apply closes the modal immediately and the clip card shows a *Reprocessing…* overlay, so you can edit other clips meanwhile. The preview updates to the composed result, and downloading runs the same compose, so what you see is what you get.
 
 **Apply runs in the background.** Hitting Apply closes the modal immediately and the reframe/compose work runs without blocking the page — the clip card shows a *Reprocessing…* overlay while it renders, and you can edit, reprocess, and publish other clips at the same time. Each clip is an independent job, so several can render at once.
 
