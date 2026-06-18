@@ -49,13 +49,12 @@ Run with `uvicorn clippyme.api.app:app` and the pipeline CLI as `python -m clipp
   - **Failure modes**: GitHub unreachable / sanity check fails / arch unsupported → updater logs a warning and the existing binary keeps working. Smart Cut's FFmpeg fallback covers the worst case where no binary exists at all.
 - **Hooks** (`hooks.py`): Text overlay generation with Pillow. Supports emoji via NotoColorEmoji font (lazy-downloaded). Configurable position, size, and `offset_y`.
 - **Frontend** (`dashboard/`): React 18 + Vite 5 + Tailwind CSS v4 + shadcn/ui. Polls backend at 2s intervals for job status. Served on port 5175 (Docker) or 5173 (dev).
-  - **⚠️ LIVE APP IS `dashboard/src/redesign/`.** `main.jsx` renders `redesign/RedesignApp`; the `App.jsx` + `dashboard/src/components/*` tree below is a **dead** earlier implementation kept for reference (unreachable — verify with `grep -r RedesignApp main.jsx`). Edit the `redesign/` files (`RedesignApp.jsx`, `create.jsx`, `results.jsx`, `publish.jsx`, `captions.jsx`, `views.jsx`, `chrome.jsx`, `processing.jsx`, `realApi.js`, `data.js`, `icon.jsx`) for anything user-facing. The `components/` descriptions below document the legacy tree only. (The live `redesign/` has no per-job model picker — Gemini model is driven purely by the backend `GEMINI_MODEL` default.)
+  - **The whole UI lives in `dashboard/src/redesign/`.** `main.jsx` renders `redesign/RedesignApp`. (The earlier `App.jsx` + `dashboard/src/components/*` tree was deleted once it became fully unreachable — git history has it if ever needed.) Edit the `redesign/` files for anything user-facing. The live UI has **no per-job model picker** — Gemini model is driven purely by the backend `GEMINI_MODEL` default.
   - **Custom hooks** (`dashboard/src/hooks/`): `useJobSubmission` (process+batch handlers), `useJobPolling` (status polling loop), `useHistory` (history list state), `useSessionPersistence` (localStorage round-trip), `useBackendStatus` (health check), `useClipStates` (per-clip disable/delete/published flags persisted in localStorage per jobId).
   - **Logo**: Custom SVG with multi-color gradient design (`public/logo.svg`)
   - **Color palette**: Dark foundation (#050507, #0f0f13, #16161d, #1e1e28) + brand colors (blue #0a81d9 primary, pink-purple-indigo gradient accent, teal #02c5bf, cyan #00d9ff)
   - **Design tokens**: Glassmorphism with backdrop-blur, gradient borders, glow shadows, ambient noise texture, responsive single-column layout
-  - **Components** (`dashboard/src/components/`): `TopNav` (logo + tabs + status + cancel), `IdleHero`, `MediaInput` (**Single** tab with URL/Upload toggle + **Batch** tab with mixed URLs+files, pre-selection panel), `ResultCard` (9:16 video + toggles + compose download + disable/delete/publish + `Published` pill), `ResultsGrid` (grid + **`Publish all`** batch button), `SubtitleModal`/`HookModal` (two-column settings/preview with **unified vertical position slider**, `Apply` buttons), `PublishModal` (single-clip publish), `BatchPublishModal` (sequential multi-clip publish with per-clip live status), `ProcessingView` (merges processing + error + partial-results states), `ProcessingAnimation`, `PipelineSteps`, `LogsPanel`, `HistoryTab`, `SettingsTab` (with `ZernioSettings`), `ApiKeyModal`, `ConfettiOverlay`, Landing page
-  - **shadcn/ui components** (`dashboard/src/components/ui/`): Button, Badge, Tooltip, Skeleton, Sonner (toasts), Progress, Dialog, Tabs — all using Radix UI primitives via `radix-ui` monorepo
+  - **Redesign components** (`dashboard/src/redesign/`): `RedesignApp.jsx` (top-level state + tab orchestration), `chrome.jsx` (TopNav + Hero), `create.jsx` (Single/Batch input + Clip Options), `processing.jsx` (`ProcessingView` — live logs, pipeline, partial clips, **pause/resume/stop & keep / discard** controls), `results.jsx` (`ResultsView` + `ClipCard` — video, viral score, reframe toggle, compose-download, publish, **remove**, select-mode batch actions), `publish.jsx` (single + batch publish), `captions.jsx` (subtitle/hook editor), `views.jsx` (Settings + History + ApiKey modal), `primitives.jsx` (Btn/Badge/Panel/etc.), `icon.jsx` (lucide map), `realApi.js` (backend client), `data.js` (presets/options/pipeline). Custom hooks shared from `dashboard/src/hooks/`.
 - **Fonts** (`fonts/`): Bundled TTF fonts for subtitle and hook rendering (Anton, Bangers, Montserrat-Black/ExtraBold, Poppins-Black/Medium, NotoSerif-Bold). Served via `/fonts` static mount.
 
 Config is persisted in `data/config.json` (git-ignored). Cookies in `data/cookies.txt`. API keys, Gemini model, and cookies are managed via the dashboard UI Settings tab, not env files.
@@ -95,8 +94,8 @@ The post-processing workflow uses independent toggles per clip:
 
 **Design Philosophy**: Premium, minimal aesthetic with modern glass morphism effects, responsive mobile-first layout, smooth gradient animations.
 
-**Key Components** (`dashboard/src/components/`):
-- **TopNav**: Slim header with ClippyMe logo/text, step-based tabs (Create/History/Settings), status indicator.
+**Key UI features** (implemented in `dashboard/src/redesign/` — the bullets below describe behaviour; the old `components/` filenames they reference were deleted, but the features live on in the redesign files mapped above):
+- **TopNav** (`chrome.jsx`): Slim header with ClippyMe logo/text, step-based tabs (Create/History/Settings), status indicator.
 - **MediaInput**: **Two tabs** — `Single` (with internal URL/Upload toggle, paste button, drag-drop zone) and `Batch` (textarea for URLs + multi-file upload zone with removable list, total counter URLs+files / 20). AI instructions collapsible. **Clip Options** collapsible panel: reframe mode (auto/disabled), Smart Cut toggle, Subtitles toggle+config (mode-aware: karaoke shows visual preset grid, classic shows font/color/position), Hook toggle+config (position, size — defaults to **S**). Cookie warning banner when cookies not configured.
 - **ResultCard**: 9:16 aspect ratio video player, viral score badge (color-coded: green 80+, yellow 50-79, orange <50 with tooltip), duration. **Toggle buttons** (Smart Cut, Hook, Subtitles) with pink active state + gear icon for config. Compose-on-download: clicking Download calls `/api/compose` with active toggles, or downloads original clip if no toggles active. YouTube title/TikTok caption fields.
 - **SubtitleModal / HookModal**: Two-column layout (settings left, live preview right; stacks vertically on mobile). Modal backdrop blur, gradient apply buttons, color pickers, preset dropdowns. **Vertical offset slider** (-50% to +50%). Font preview loads actual TTFs via FontFace API.
@@ -165,11 +164,8 @@ cd dashboard && npm install && npm run dev
 cd dashboard && npm run build
 ```
 
-### Adding shadcn/ui components
-```
-cd dashboard && npx shadcn add <component>
-```
-Components land in `src/components/ui/`. They use Tailwind v4 class syntax — verify compatibility before adding.
+### UI primitives
+The redesign uses hand-rolled primitives in `dashboard/src/redesign/primitives.jsx` (Btn/Badge/Panel/etc.) + the lucide icon map in `icon.jsx` — **not** the shadcn CLI. Add new primitives there, matching the existing Tailwind v4 token classes.
 
 ## Key Patterns
 
