@@ -268,6 +268,7 @@ select.sel:focus{outline:0;border-color:var(--brand-blue)}
 .stream .slot{aspect-ratio:9/16;border-radius:var(--r-md);border:1px dashed var(--line-1);background:var(--bg-1);display:flex;align-items:center;justify-content:center}
 .stream .slot .sk{width:22px;height:22px;border:2px solid var(--line-2);border-top-color:var(--brand-blue);border-radius:50%;animation:spin .8s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
+.ico-spin{animation:spin .8s linear infinite}
 
 /* ============================================================ RESULTS */
 .results-head{display:flex;align-items:center;gap:14px;margin-bottom:8px;flex-wrap:wrap}

@@ -314,6 +314,10 @@ async def run_job(job_id, job_data):
     except Exception as e:
         jobs[job_id]['status'] = 'failed'
         jobs[job_id]['logs'].append(f"Execution error: {str(e)}")
+        # Surface the full traceback server-side — the user-facing log only gets
+        # str(e), so without this a crash in result-loading/relocation is
+        # invisible to anyone reading the backend logs.
+        logger.exception("run_job failed for job_id=%s", job_id)
 
 @app.post("/api/process")
 async def process_endpoint(

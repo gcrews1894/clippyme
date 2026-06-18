@@ -485,8 +485,14 @@ def publish_clip(
     except OSError:
         size_bytes = None
     presign = client.presign_upload(filename, content_type="video/mp4", size_bytes=size_bytes)
-    upload_url = presign["uploadUrl"]
-    public_url = presign["publicUrl"]
+    # Guard the presign body shape — every other Zernio response is handled
+    # defensively, but a malformed presign (missing uploadUrl/publicUrl) would
+    # otherwise raise a bare KeyError instead of a clear ZernioError.
+    try:
+        upload_url = presign["uploadUrl"]
+        public_url = presign["publicUrl"]
+    except (KeyError, TypeError) as exc:
+        raise ZernioError(f"malformed presign response (missing {exc})") from exc
     client.upload_to_presigned(upload_url, clip_path, content_type="video/mp4")
 
     # 3. Create post

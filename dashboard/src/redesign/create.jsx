@@ -63,7 +63,14 @@ function SourcePanel({ opts, set }) {
               <Icon n="link" />
               <input value={opts.url} placeholder="Paste a video link (YouTube, Twitch, Vimeo, …)"
                 onChange={(e) => set({ url: e.target.value })} />
-              <button type="button" className="paste" onClick={() => set({ url: 'https://youtube.com/watch?v=dQw4w9WgXcQ' })}>
+              <button type="button" className="paste" onClick={async () => {
+                try {
+                  const text = await navigator.clipboard.readText();
+                  if (text) set({ url: text.trim() });
+                } catch {
+                  /* clipboard blocked (no permission / insecure context) — no-op */
+                }
+              }}>
                 <Icon n="clipboard" />Paste
               </button>
             </div>

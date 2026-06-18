@@ -22,7 +22,7 @@ Run with `uvicorn clippyme.api.app:app` and the pipeline CLI as `python -m clipp
 
 - **Backend** (`clippyme.api.app`): Thin FastAPI layer — endpoint handlers + job queue + worker loop. Heavy logic lives in dedicated modules listed below. Config persistence, async job queue, batch processing.
 - **Backend modules** (extracted from `app.py` during 8-round refactor):
-  - `compose.py` — `compose_layers()` runs the Smart Cut → Hook → Subtitles pipeline for `/api/compose`. Owns intermediate-file cleanup.
+  - `compose.py` — `compose_layers()` runs the **Subtitles → Smart Cut → Hook** pipeline for `/api/compose`. Owns intermediate-file cleanup. (Order matters: subtitles are burned onto the full-length base clip first so their absolute-timestamp timing is exact, *then* Smart Cut removes silences — the subs travel with the frames and never drift; Hook overlays last so it shows on every kept frame. Do **not** reorder to Smart-Cut-first or the subtitle drift bug returns — see the comment in `compose_layers`.)
   - `clip_endpoints.py` — `run_smart_cut()` (for `/api/smartcut`) and `restore_job_from_disk()` (for `/api/history/restore`).
   - `job_results.py` — `load_partial_result()` / `load_final_result()` (used by the worker loop) and `build_main_cmd()` (shared between `/api/process` and `/api/batch`).
   - `security.py` — `is_valid_job_id()`, trusted-origin checks.
@@ -48,7 +48,8 @@ Run with `uvicorn clippyme.api.app:app` and the pipeline CLI as `python -m clipp
   - **PATH ordering**: `/app/data/bin` is prepended to `PATH` in the Dockerfile, so the runtime-downloaded binary shadows the build-time install whenever a newer version exists.
   - **Failure modes**: GitHub unreachable / sanity check fails / arch unsupported → updater logs a warning and the existing binary keeps working. Smart Cut's FFmpeg fallback covers the worst case where no binary exists at all.
 - **Hooks** (`hooks.py`): Text overlay generation with Pillow. Supports emoji via NotoColorEmoji font (lazy-downloaded). Configurable position, size, and `offset_y`.
-- **Frontend** (`dashboard/`): React 18 + Vite 5 + Tailwind CSS v4 + shadcn/ui. `App.jsx` (~425 lines) is now a thin orchestrator — wiring + composition only. Toggle-based editing system with compose-on-download. Polls backend at 2s intervals for job status. Served on port 5175 (Docker) or 5173 (dev).
+- **Frontend** (`dashboard/`): React 18 + Vite 5 + Tailwind CSS v4 + shadcn/ui. Polls backend at 2s intervals for job status. Served on port 5175 (Docker) or 5173 (dev).
+  - **⚠️ LIVE APP IS `dashboard/src/redesign/`.** `main.jsx` renders `redesign/RedesignApp`; the `App.jsx` + `dashboard/src/components/*` tree below is a **dead** earlier implementation kept for reference (unreachable — verify with `grep -r RedesignApp main.jsx`). Edit the `redesign/` files (`RedesignApp.jsx`, `create.jsx`, `results.jsx`, `publish.jsx`, `captions.jsx`, `views.jsx`, `chrome.jsx`, `processing.jsx`, `realApi.js`, `data.js`, `icon.jsx`) for anything user-facing. The `components/` descriptions below document the legacy tree only. (The live `redesign/` has no per-job model picker — Gemini model is driven purely by the backend `GEMINI_MODEL` default.)
   - **Custom hooks** (`dashboard/src/hooks/`): `useJobSubmission` (process+batch handlers), `useJobPolling` (status polling loop), `useHistory` (history list state), `useSessionPersistence` (localStorage round-trip), `useBackendStatus` (health check), `useClipStates` (per-clip disable/delete/published flags persisted in localStorage per jobId).
   - **Logo**: Custom SVG with multi-color gradient design (`public/logo.svg`)
   - **Color palette**: Dark foundation (#050507, #0f0f13, #16161d, #1e1e28) + brand colors (blue #0a81d9 primary, pink-purple-indigo gradient accent, teal #02c5bf, cyan #00d9ff)
@@ -80,7 +81,7 @@ The post-processing workflow uses independent toggles per clip:
 - **Hook** — on/off + text (auto-filled from Gemini suggestion), position, size, offset_y
 - **Subtitles** — on/off + preset, mode (karaoke/classic), font, colors, offset_y
 
-**Behavior**: Toggles are UI-only state. No processing happens on toggle click. At download time, `POST /api/compose/{job_id}/{clip_index}` receives active toggles + params and composes the final video in a single pipeline: Smart Cut → Hook → Subtitles.
+**Behavior**: Toggles are UI-only state. No processing happens on toggle click. At download time, `POST /api/compose/{job_id}/{clip_index}` receives active toggles + params and composes the final video in a single pipeline: **Subtitles → Smart Cut → Hook** (this order avoids subtitle drift — see `compose_layers`).
 
 **Pre-selections**: Users can pre-configure toggle states and params before processing (in MediaInput's "Clip Options" panel). These defaults are applied to all generated clips. Each clip can be overridden individually.
 
@@ -178,7 +179,7 @@ Components land in `src/components/ui/`. They use Tailwind v4 class syntax — v
 - **Per-job LLM model override**: the Gemini model for viral detection is global (Settings → `GEMINI_MODEL`) but can be overridden **per job** via `ProcessRequest.model`/`BatchRequest.model` → `build_main_cmd(model=...)` → `--model` CLI arg → `main.py` sets `os.environ["GEMINI_MODEL"]` before `get_viral_clips` (mirrors the `--language` override). Validated at the boundary by `job_results.GEMINI_MODEL_RE` (`^gemini-[A-Za-z0-9.\-]{1,64}$` — blocks argv injection; allows future `gemini-3*`). Frontend: a quick-picker in MediaInput's Clip Options (`preselections.model`) + the live-discovery dropdown in Settings (`/api/config/models`, allow-list prefixes `gemini-2.5-`/`gemini-3` in `gemini_service.py`). Unknown models fall through to a `$0.00` "Pricing not available" cost note (`main.py:MODEL_PRICING`).
 - **Batch processing**: `POST /api/batch` accepts up to 20 URLs, creates one job per URL, and returns the list of `job_id`s. The frontend polls each job individually via `GET /api/status/{job_id}` and aggregates progress client-side. Supports `reframe_mode` parameter.
 - **Mixed batch (URLs + files)**: The frontend `useJobSubmission.handleBatchProcess` supports both. URLs are submitted in one shot to `/api/batch`; each file is submitted individually to `/api/process`. The hook then unifies polling across all returned `job_id`s using `/api/status/{job_id}`, aggregating progress until every job reaches a terminal state. No backend change is needed for mixed batches.
-- **Compose endpoint**: `POST /api/compose/{job_id}/{clip_index}` accepts `toggles` (smartcut/hook/subtitles booleans), `hook_params`, `subtitle_params`. Composes layers in order: Smart Cut → Hook → Subtitles. Returns `composed_url`. Cleans up intermediate files.
+- **Compose endpoint**: `POST /api/compose/{job_id}/{clip_index}` accepts `toggles` (smartcut/hook/subtitles booleans), `hook_params`, `subtitle_params`. Composes layers in order: **Subtitles → Smart Cut → Hook** (subtitle-drift-safe). Returns `composed_url`. Cleans up intermediate files.
 - **Transcription cache**: `data/cache/` stores transcripts keyed by SHA256(url)[:16]. TTL 7 days, pruned by the background cleanup task.
 - **Hardware auto-detection**: CUDA/CPU fallback at runtime for faster-whisper and YOLOv8. No manual config needed.
 - **yt-dlp uses Deno** as JS runtime for YouTube bot-detection bypass.

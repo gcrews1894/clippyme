@@ -84,8 +84,8 @@ def make_workers(
                         try:
                             if now - os.path.getmtime(file_path) > job_retention_seconds:
                                 os.remove(file_path)
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            logger.debug("Cleanup skipped upload %s: %s", filename, exc)
 
                 # Transcript cache (older than 7 days)
                 cache_dir = os.path.join(data_dir, "cache")
@@ -95,8 +95,8 @@ def make_workers(
                         try:
                             if now - os.path.getmtime(cache_path) > 7 * 86400:
                                 os.remove(cache_path)
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            logger.debug("Cleanup skipped cache %s: %s", filename, exc)
 
             except Exception as e:
                 logger.warning("Cleanup error: %s", e)

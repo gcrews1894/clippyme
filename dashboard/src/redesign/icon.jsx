@@ -31,8 +31,12 @@ const MAP = {
 
 export function Icon({ n, cls, style }) {
   const C = MAP[n] || Square;
+  // The loader is a busy indicator — spin it. Only `.stream .slot .sk` had a
+  // spin rule, so every other `loader` icon (download/reframe/export/publish)
+  // rendered frozen. Append the global `.ico-spin` class (app.css) for it.
+  const className = n === 'loader' ? `${cls ? cls + ' ' : ''}ico-spin` : cls;
   // lucide-react renders an <svg>; the design's CSS sizes svgs per context.
-  return <C className={cls} style={style} />;
+  return <C className={className} style={style} />;
 }
 
 // Brand/social marks via Simple Icons CDN (lucide dropped these).
