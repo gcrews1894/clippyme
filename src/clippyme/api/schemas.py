@@ -72,7 +72,7 @@ class ProcessRequest(BaseModel):
     # Optional per-job Gemini model override. Validated against the gemini-
     # family prefix + safe charset (build_main_cmd.GEMINI_MODEL_RE) before it's
     # appended as --model to the pipeline argv. When omitted, the pipeline uses
-    # GEMINI_MODEL from env / Settings (default gemini-2.5-flash).
+    # GEMINI_MODEL from env / Settings (default gemini-3.5-flash).
     model: Optional[str] = Field(None, max_length=72, pattern=r"^gemini-[A-Za-z0-9.\-]{1,64}$")
 
 

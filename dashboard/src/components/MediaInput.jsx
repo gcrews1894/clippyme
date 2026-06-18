@@ -842,8 +842,10 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing }) 
                                         className="w-full bg-white/[0.02] border border-white/[0.08] hover:border-white/[0.16] focus:border-[oklch(74%_0.175_62)]/55 text-zinc-200 text-[12px] font-mono uppercase tracking-[0.1em] px-3 h-9 rounded-[3px] cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/45 appearance-none"
                                     >
                                         <option value="" className="bg-[oklch(9%_0.006_260)]">Default (use Settings)</option>
-                                        <option value="gemini-2.5-flash" className="bg-[oklch(9%_0.006_260)]">Gemini 2.5 Flash · balanced</option>
-                                        <option value="gemini-2.5-pro" className="bg-[oklch(9%_0.006_260)]">Gemini 2.5 Pro · sharpest</option>
+                                        <option value="gemini-3.5-flash" className="bg-[oklch(9%_0.006_260)]">Gemini 3.5 Flash · balanced</option>
+                                        <option value="gemini-3.1-pro-preview" className="bg-[oklch(9%_0.006_260)]">Gemini 3.1 Pro · sharpest</option>
+                                        <option value="gemini-2.5-flash" className="bg-[oklch(9%_0.006_260)]">Gemini 2.5 Flash · budget</option>
+                                        <option value="gemini-2.5-pro" className="bg-[oklch(9%_0.006_260)]">Gemini 2.5 Pro</option>
                                         <option value="gemini-2.5-flash-lite" className="bg-[oklch(9%_0.006_260)]">Gemini 2.5 Flash-Lite · cheapest</option>
                                     </select>
                                     <p className="text-[10px] text-zinc-600 leading-snug">

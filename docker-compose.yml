@@ -49,7 +49,7 @@ services:
       # header, but can also be set here for CLI runs that shell into the
       # container directly.
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
-      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-3.5-flash}
       # yt-dlp hardening. NOCHECKCERT=1 disables SSL verification only in
       # trusted sandboxes; THROTTLED_RATE is the bytes/sec floor below
       # which yt-dlp re-fetches a slow segment (default 102400 = 100 KB/s).
@@ -69,6 +69,18 @@ services:
       - REFRAME_LOST_DRIFT=${REFRAME_LOST_DRIFT:-0.05}
       - REFRAME_EURO_MINCUTOFF=${REFRAME_EURO_MINCUTOFF:-0.014}
       - REFRAME_EURO_BETA=${REFRAME_EURO_BETA:-0.0008}
+      # Comfort mode (anti-nausea, DEFAULT ON): biases the camera toward a locked
+      # crop + fixed per-scene zoom (the research-backed fix for seasickness from
+      # continuous tracking). Costs a second decode pass. Set REFRAME_COMFORT=0
+      # to revert to the original single-pass streaming tracker. STATIONARY_THRESH
+      # / ZOOM_LOCK override the comfort defaults (0.30 / on) when set explicitly.
+      - REFRAME_COMFORT=${REFRAME_COMFORT:-1}
+      - REFRAME_STATIONARY_THRESH=${REFRAME_STATIONARY_THRESH:-}
+      - REFRAME_ZOOM_LOCK=${REFRAME_ZOOM_LOCK:-}
+      - REFRAME_SNAP_CENTER=${REFRAME_SNAP_CENTER:-0.10}
+      # Transcription: strip to audio-only (FLAC) before sending to the provider.
+      # DEFAULT ON; set to false to upload/decode the full video.
+      - CLIPPYME_TRANSCRIBE_AUDIO_ONLY=${CLIPPYME_TRANSCRIBE_AUDIO_ONLY:-true}
     volumes:
       - .:/app
       - /app/__pycache__

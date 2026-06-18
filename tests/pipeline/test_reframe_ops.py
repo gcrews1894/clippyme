@@ -581,3 +581,33 @@ def test_build_trajectory_locks_a_static_segment():
                                        stationary_threshold=0.15)
     cxs = {round(cx, 3) for (cx, _cy, _z) in out}
     assert cxs == {500.0}                   # all frames pinned to one point
+
+
+def test_build_trajectory_lock_zoom_pins_scene_to_single_zoom():
+    """lock_zoom collapses an in-scene zoom ramp to one constant level."""
+    targets = [(500.0, 500.0, 1.0 + i * 0.02) for i in range(20)]  # zoom 1.0→1.38
+    sids = [0] * 20
+    out = ro.build_smoothed_trajectory(targets, sids, 7, 2, 1000, 1000,
+                                       lock_zoom=True)
+    zs = {round(z, 4) for (_cx, _cy, z) in out}
+    assert len(zs) == 1                     # every frame shares one zoom
+
+
+def test_build_trajectory_lock_zoom_default_off_keeps_varying_zoom():
+    targets = [(500.0, 500.0, 1.0 + i * 0.02) for i in range(20)]
+    sids = [0] * 20
+    out = ro.build_smoothed_trajectory(targets, sids, 7, 2, 1000, 1000)
+    zs = {round(z, 4) for (_cx, _cy, z) in out}
+    assert len(zs) > 1                      # zoom still varies when unlocked
+
+
+def test_build_trajectory_lock_zoom_independent_per_scene():
+    """Each scene gets its own locked zoom — change across a cut is allowed."""
+    targets = ([(500.0, 500.0, 1.1)] * 10) + ([(500.0, 500.0, 1.5)] * 10)
+    sids = ([0] * 10) + ([1] * 10)
+    out = ro.build_smoothed_trajectory(targets, sids, 5, 2, 1000, 1000,
+                                       lock_zoom=True)
+    zs_scene0 = {round(z, 4) for (_cx, _cy, z) in out[:10]}
+    zs_scene1 = {round(z, 4) for (_cx, _cy, z) in out[10:]}
+    assert len(zs_scene0) == 1 and len(zs_scene1) == 1
+    assert zs_scene0 != zs_scene1           # different zoom per scene survives

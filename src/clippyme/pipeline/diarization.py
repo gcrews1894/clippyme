@@ -85,3 +85,42 @@ def extract_audio_to_wav(video_path: str) -> str | None:
     except (subprocess.CalledProcessError, FileNotFoundError) as exc:
         print(f"   ⚠️  Could not extract audio for diarization: {exc}")
         return None
+
+
+def extract_audio_for_asr(video_path: str) -> str | None:
+    """ffmpeg-extract a compact mono 16 kHz FLAC track for transcription.
+
+    Both transcription backends (Deepgram REST upload, Faster-Whisper local
+    decode) only need the audio. Stripping the video first turns a 50-200 MB+
+    mp4 into a few-MB FLAC, which:
+
+    - slashes Deepgram upload time (the dominant wall-clock cost) and the odds
+      of a mid-upload network error on long batch jobs;
+    - keeps even hour-long videos far below Deepgram's file-size cap;
+    - skips redundant video-frame demuxing inside Faster-Whisper.
+
+    FLAC is lossless at 16 kHz mono — exactly the resolution ASR models consume
+    internally — so there is zero accuracy cost vs sending the original.
+
+    Returns ``None`` if ffmpeg is missing or extraction fails; the caller then
+    falls back to handing the original video to the transcriber.
+    """
+    out_path = os.path.join(
+        os.path.dirname(os.path.abspath(video_path)) or ".",
+        f".asr_{int(time.time())}_{os.getpid()}.flac",
+    )
+    try:
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                "-i", video_path,
+                "-vn", "-ac", "1", "-ar", "16000",
+                "-c:a", "flac",
+                out_path,
+            ],
+            check=True,
+        )
+        return out_path
+    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+        print(f"   ⚠️  Could not extract audio for transcription ({exc}); using source file.")
+        return None

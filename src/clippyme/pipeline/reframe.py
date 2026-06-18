@@ -818,6 +818,19 @@ def create_disabled_reframe(frame, output_width, output_height):
 
     return canvas
 
+def _reframe_comfort_enabled() -> bool:
+    """Comfort (anti-nausea) reframe policy — default ON.
+
+    When on, the renderer uses the two-pass global-smooth path with an AutoFlip
+    stationary-first decision and per-scene zoom lock, which removes the
+    sustained, variable-velocity camera motion (and breathing zoom) that causes
+    motion sickness. Set ``REFRAME_COMFORT=0`` to fall back to the original
+    single-pass streaming tracker.
+    """
+    return (os.getenv("REFRAME_COMFORT", "1").strip().lower()
+            in ("1", "true", "yes", "on"))
+
+
 def _render_global_smooth(input_video, ffmpeg_process, cameraman, speaker_tracker,
                           detection_smoother, scene_boundaries, scene_strategies,
                           output_width, output_height, original_width, original_height,
@@ -884,14 +897,25 @@ def _render_global_smooth(input_video, ffmpeg_process, cameraman, speaker_tracke
     # mfahsold/montage-ai; default stays savgol so behaviour is unchanged unless
     # opted in via REFRAME_GLOBAL_METHOD.
     global_method = os.getenv("REFRAME_GLOBAL_METHOD", "savgol").strip().lower()
-    # AutoFlip-style per-scene stationary lock (opt-in). 0.0 = off (no-op).
-    stationary_thresh = float(os.getenv("REFRAME_STATIONARY_THRESH", "0.0"))
+    # Comfort mode (default on) biases hard toward a locked/stationary crop and a
+    # fixed per-scene zoom — the research-backed anti-nausea policy (continuous
+    # tracking + breathing zoom is what causes seasickness, not jitter). The
+    # individual env vars still override these comfort defaults when set.
+    comfort = _reframe_comfort_enabled()
+    # AutoFlip-style per-scene stationary lock. Comfort default 0.30 of the frame
+    # dimension (a talking head may drift this far before the camera moves at all);
+    # 0.0 = off (no-op) when comfort is disabled.
+    stationary_thresh = float(os.getenv("REFRAME_STATIONARY_THRESH", "0.30" if comfort else "0.0"))
     snap_center_dist = float(os.getenv("REFRAME_SNAP_CENTER", "0.10"))
+    # Per-scene zoom lock — on by default under comfort.
+    lock_zoom = (os.getenv("REFRAME_ZOOM_LOCK", "1" if comfort else "0").strip().lower()
+                 in ("1", "true", "yes", "on"))
     smoothed = build_smoothed_trajectory(
         targets, scene_ids, window=win, polyorder=2,
         x_max=original_width, y_max=original_height,
         min_zoom=1.0, max_zoom=1.6, method=global_method,
         stationary_threshold=stationary_thresh, snap_center_dist=snap_center_dist,
+        lock_zoom=lock_zoom,
     )
 
     # --- Pass 2: render from the smoothed trajectory -----------------------
@@ -1084,7 +1108,8 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
         # single-pass streaming loop below is skipped (its `while` short-circuits
         # on `not global_smooth`). Default-off keeps the proven path byte-identical.
         global_smooth = (
-            os.getenv("REFRAME_GLOBAL_SMOOTH", "").strip().lower() in ("1", "true", "yes", "on")
+            (os.getenv("REFRAME_GLOBAL_SMOOTH", "").strip().lower() in ("1", "true", "yes", "on")
+             or _reframe_comfort_enabled())
             and reframe_mode != 'disabled'
         )
         if global_smooth:

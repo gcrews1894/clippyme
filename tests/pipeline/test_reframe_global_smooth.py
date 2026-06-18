@@ -78,6 +78,9 @@ def test_global_smooth_matches_singlepass_frame_count(tmp_path, monkeypatch):
             monkeypatch.setenv("REFRAME_GLOBAL_SMOOTH", "1")
         else:
             monkeypatch.delenv("REFRAME_GLOBAL_SMOOTH", raising=False)
+            # Comfort mode (default on) would route to the global path too; force
+            # it off here so this branch exercises the single-pass streaming loop.
+            monkeypatch.setenv("REFRAME_COMFORT", "0")
         assert reframe.process_video_to_vertical(src, out_path, reframe_mode="auto")
         cap = cv2.VideoCapture(out_path)
         try:

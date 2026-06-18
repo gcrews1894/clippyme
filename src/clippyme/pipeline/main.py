@@ -67,7 +67,9 @@ from clippyme.pipeline.hardware import (  # noqa: E402
 
 # Per-model pricing ($ per 1M tokens) — update when Google changes rates
 MODEL_PRICING = {
-    "gemini-2.5-flash": {"input": 0.10, "output": 0.40},
+    "gemini-3.5-flash": {"input": 1.50, "output": 9.00},
+    "gemini-3.1-pro-preview": {"input": 2.00, "output": 12.00},
+    "gemini-2.5-flash": {"input": 0.30, "output": 2.50},
     "gemini-2.5-flash-lite": {"input": 0.10, "output": 0.40},
     "gemini-2.5-pro": {"input": 1.25, "output": 10.00},
     "gemini-2.0-flash": {"input": 0.10, "output": 0.40},
@@ -329,6 +331,7 @@ def _diarize_with_pyannote(audio_path: str) -> list[tuple[float, float, int]] | 
 from clippyme.pipeline.diarization import (  # noqa: E402
     assign_speakers_to_words as _assign_speakers_to_words,
     extract_audio_to_wav as _extract_audio_to_wav,
+    extract_audio_for_asr as _extract_audio_for_asr,
 )
 
 
@@ -349,103 +352,123 @@ def transcribe_video(video_path):
     field as the Deepgram path.
     """
     provider = (os.getenv("TRANSCRIPTION_PROVIDER") or "deepgram").strip().lower()
-    if provider == "deepgram":
-        try:
-            from clippyme.pipeline.deepgram_transcribe import transcribe_with_deepgram, DeepgramError
-            return transcribe_with_deepgram(video_path)
-        except Exception as exc:  # noqa: BLE001 — broad catch for safe fallback
-            print(f"⚠️  Deepgram transcription failed ({exc}); falling back to Faster-Whisper.")
 
-    device = "cuda" if CUDA_AVAILABLE else "cpu"
-    compute_type = "float16" if device == "cuda" else "int8"
-    print(f"🎙️  Transcribing with Faster-Whisper [{WHISPER_MODEL}] ({device.upper()} mode)...")
-    model = _get_whisper_model(WHISPER_MODEL, device, compute_type)
-    # Honor per-job language override (set by main.py --language → CLIPPYME_LANGUAGE).
-    # 'multi' / '' / unset → let Faster-Whisper auto-detect.
-    _lang_override = (os.getenv("CLIPPYME_LANGUAGE") or "").strip().lower()
-    _whisper_lang = _lang_override if _lang_override and _lang_override != "multi" else None
-    if _whisper_lang:
-        print(f"   🌐 Whisper language override: {_whisper_lang}")
-    segments, info = model.transcribe(
-        video_path, word_timestamps=True, language=_whisper_lang
-    )
-    segments = list(segments)
+    # Strip to an audio-only track once so neither backend ingests the full
+    # video (see diarization.extract_audio_for_asr). Massively shrinks the
+    # Deepgram upload and skips Whisper's video demux at zero accuracy cost.
+    # Opt out with CLIPPYME_TRANSCRIBE_AUDIO_ONLY=false; on extraction failure
+    # we transparently fall back to the source file.
+    asr_input = video_path
+    _audio_tmp: str | None = None
+    if (os.getenv("CLIPPYME_TRANSCRIBE_AUDIO_ONLY") or "true").strip().lower() != "false":
+        _audio_tmp = _extract_audio_for_asr(video_path)
+        if _audio_tmp:
+            asr_input = _audio_tmp
 
-    print(f"   Detected language '{info.language}' with probability {info.language_probability:.2f}")
-
-    # Convert to openai-whisper compatible format
-    transcript_segments = []
-    full_text = ""
-
-    for segment in segments:
-        # Print progress to keep user informed (and prevent timeouts feeling)
-        print(f"   [{segment.start:.2f}s -> {segment.end:.2f}s] {segment.text}")
-
-        seg_dict = {
-            'text': segment.text,
-            'start': segment.start,
-            'end': segment.end,
-            'words': []
-        }
-
-        if segment.words:
-            for word in segment.words:
-                seg_dict['words'].append({
-                    'word': word.word,
-                    'start': word.start,
-                    'end': word.end,
-                    'probability': word.probability
-                })
-
-        transcript_segments.append(seg_dict)
-        full_text += segment.text + " "
-
-    # --- Optional speaker diarization (pyannote.audio) ------------------
-    # Runs only when pyannote is installed AND HF token is set AND
-    # WHISPER_DIARIZE != "false". Short-circuit BEFORE extracting audio
-    # so we don't pay the ffmpeg cost when diarization is disabled.
-    wav_tmp: str | None = None
-    diarize_enabled = (
-        (os.getenv("WHISPER_DIARIZE") or "true").strip().lower() != "false"
-        and bool((os.getenv("HUGGINGFACE_TOKEN") or os.getenv("HF_TOKEN") or "").strip())
-    )
     try:
-        if diarize_enabled:
-            wav_tmp = _extract_audio_to_wav(video_path)
-        if wav_tmp:
-            turns = _diarize_with_pyannote(wav_tmp)
-            if turns:
-                # Flatten words, merge speakers, then distribute back to
-                # their parent segments via majority vote.
-                flat_words: list[dict] = []
-                for seg in transcript_segments:
-                    flat_words.extend(seg.get("words") or [])
-                _assign_speakers_to_words(flat_words, turns)
-
-                for seg in transcript_segments:
-                    counts: dict[int, int] = {}
-                    for w in seg.get("words") or []:
-                        sp = w.get("speaker")
-                        if sp is None:
-                            continue
-                        counts[sp] = counts.get(sp, 0) + 1
-                    if counts:
-                        seg["speaker"] = max(counts, key=counts.get)
-
-                speakers_seen = {sp for _, _, sp in turns}
-                print(f"   🗣️  Whisper transcript enriched with {len(speakers_seen)} speaker label(s).")
-    finally:
-        if wav_tmp and os.path.exists(wav_tmp):
+        if provider == "deepgram":
             try:
-                os.remove(wav_tmp)
+                from clippyme.pipeline.deepgram_transcribe import transcribe_with_deepgram, DeepgramError
+                return transcribe_with_deepgram(asr_input)
+            except Exception as exc:  # noqa: BLE001 — broad catch for safe fallback
+                print(f"⚠️  Deepgram transcription failed ({exc}); falling back to Faster-Whisper.")
+
+        device = "cuda" if CUDA_AVAILABLE else "cpu"
+        compute_type = "float16" if device == "cuda" else "int8"
+        print(f"🎙️  Transcribing with Faster-Whisper [{WHISPER_MODEL}] ({device.upper()} mode)...")
+        model = _get_whisper_model(WHISPER_MODEL, device, compute_type)
+        # Honor per-job language override (set by main.py --language → CLIPPYME_LANGUAGE).
+        # 'multi' / '' / unset → let Faster-Whisper auto-detect.
+        _lang_override = (os.getenv("CLIPPYME_LANGUAGE") or "").strip().lower()
+        _whisper_lang = _lang_override if _lang_override and _lang_override != "multi" else None
+        if _whisper_lang:
+            print(f"   🌐 Whisper language override: {_whisper_lang}")
+        segments, info = model.transcribe(
+            asr_input, word_timestamps=True, language=_whisper_lang
+        )
+        segments = list(segments)
+
+        print(f"   Detected language '{info.language}' with probability {info.language_probability:.2f}")
+
+        # Convert to openai-whisper compatible format
+        transcript_segments = []
+        full_text = ""
+
+        for segment in segments:
+            # Print progress to keep user informed (and prevent timeouts feeling)
+            print(f"   [{segment.start:.2f}s -> {segment.end:.2f}s] {segment.text}")
+
+            seg_dict = {
+                'text': segment.text,
+                'start': segment.start,
+                'end': segment.end,
+                'words': []
+            }
+
+            if segment.words:
+                for word in segment.words:
+                    seg_dict['words'].append({
+                        'word': word.word,
+                        'start': word.start,
+                        'end': word.end,
+                        'probability': word.probability
+                    })
+
+            transcript_segments.append(seg_dict)
+            full_text += segment.text + " "
+
+        # --- Optional speaker diarization (pyannote.audio) ------------------
+        # Runs only when pyannote is installed AND HF token is set AND
+        # WHISPER_DIARIZE != "false". Short-circuit BEFORE extracting audio
+        # so we don't pay the ffmpeg cost when diarization is disabled.
+        wav_tmp: str | None = None
+        diarize_enabled = (
+            (os.getenv("WHISPER_DIARIZE") or "true").strip().lower() != "false"
+            and bool((os.getenv("HUGGINGFACE_TOKEN") or os.getenv("HF_TOKEN") or "").strip())
+        )
+        try:
+            if diarize_enabled:
+                wav_tmp = _extract_audio_to_wav(video_path)
+            if wav_tmp:
+                turns = _diarize_with_pyannote(wav_tmp)
+                if turns:
+                    # Flatten words, merge speakers, then distribute back to
+                    # their parent segments via majority vote.
+                    flat_words: list[dict] = []
+                    for seg in transcript_segments:
+                        flat_words.extend(seg.get("words") or [])
+                    _assign_speakers_to_words(flat_words, turns)
+
+                    for seg in transcript_segments:
+                        counts: dict[int, int] = {}
+                        for w in seg.get("words") or []:
+                            sp = w.get("speaker")
+                            if sp is None:
+                                continue
+                            counts[sp] = counts.get(sp, 0) + 1
+                        if counts:
+                            seg["speaker"] = max(counts, key=counts.get)
+
+                    speakers_seen = {sp for _, _, sp in turns}
+                    print(f"   🗣️  Whisper transcript enriched with {len(speakers_seen)} speaker label(s).")
+        finally:
+            if wav_tmp and os.path.exists(wav_tmp):
+                try:
+                    os.remove(wav_tmp)
+                except OSError:
+                    pass
+
+        return {
+            'text': full_text.strip(),
+            'segments': transcript_segments,
+            'language': info.language
+        }
+    finally:
+        if _audio_tmp and os.path.exists(_audio_tmp):
+            try:
+                os.remove(_audio_tmp)
             except OSError:
                 pass
-
-    return {
-        'text': full_text.strip(),
-        'segments': transcript_segments,
-        'language': info.language
-    }
 
 def get_viral_clips(transcript_result, video_duration, instructions=None):
     print("🤖  Analyzing with Gemini...")
@@ -457,13 +480,13 @@ def get_viral_clips(transcript_result, video_duration, instructions=None):
 
     client = genai.Client(api_key=api_key)
     
-    # Use selected model from env, or default to gemini-2.5-flash
-    model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash") 
-    
+    # Use selected model from env, or default to gemini-3.5-flash
+    model_name = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
+
     print(f"🤖  Initializing Gemini with model: {model_name}")
 
     if any(old in model_name for old in ("1.0", "1.5", "2.0")):
-        print(f"⚠️  WARNING: {model_name} is deprecated. Please switch to gemini-2.5-flash or later via the dashboard.")
+        print(f"⚠️  WARNING: {model_name} is deprecated. Please switch to gemini-3.5-flash or later via the dashboard.")
 
     # Extract words
     words = []
@@ -696,8 +719,8 @@ if __name__ == '__main__':
                         help="Output aspect ratio: 9:16 vertical (default), 1:1 square, or 16:9 horizontal.")
     parser.add_argument('--model', type=str, default=None,
                         help="Override the Gemini model for viral detection on THIS job (e.g. "
-                             "'gemini-2.5-pro', 'gemini-3-pro'). When unset, the pipeline uses "
-                             "GEMINI_MODEL from env / Settings (default gemini-2.5-flash).")
+                             "'gemini-2.5-pro', 'gemini-3.1-pro-preview'). When unset, the pipeline uses "
+                             "GEMINI_MODEL from env / Settings (default gemini-3.5-flash).")
 
     args = parser.parse_args()
 

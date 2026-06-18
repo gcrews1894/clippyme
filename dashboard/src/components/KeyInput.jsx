@@ -21,7 +21,7 @@ export default function KeyInput({ onKeySet, onHfTokenSet, onCookiesChange }) {
     const [isSavingCookies, setIsSavingCookies] = useState(false);
 
     const [models, setModels] = useState([]);
-    const [selectedModel, setSelectedModel] = useState('gemini-2.5-flash');
+    const [selectedModel, setSelectedModel] = useState('gemini-3.5-flash');
     const [isLoadingModels, setIsLoadingModels] = useState(false);
 
     const [transcriptionProvider, setTranscriptionProvider] = useState('deepgram');
@@ -318,9 +318,11 @@ export default function KeyInput({ onKeySet, onHfTokenSet, onCookiesChange }) {
                             ))
                         ) : (
                             <>
-                                <option value="gemini-2.5-flash">Gemini 2.5 Flash (Recommended)</option>
-                                <option value="gemini-2.5-pro">Gemini 2.5 Pro (Advanced)</option>
-                                <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash-Lite (Fastest)</option>
+                                <option value="gemini-3.5-flash">Gemini 3.5 Flash (Recommended)</option>
+                                <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro (Advanced)</option>
+                                <option value="gemini-2.5-flash">Gemini 2.5 Flash (Budget)</option>
+                                <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+                                <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash-Lite (Cheapest)</option>
                             </>
                         )}
                     </select>

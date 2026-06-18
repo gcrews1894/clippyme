@@ -549,7 +549,8 @@ def build_smoothed_trajectory(targets, scene_ids, window: int, polyorder: int,
                               min_zoom: float = 1.0, max_zoom: float = 1.6,
                               method: str = "savgol",
                               stationary_threshold: float = 0.0,
-                              snap_center_dist: float = 0.10):
+                              snap_center_dist: float = 0.10,
+                              lock_zoom: bool = False):
     """Smooth a recorded ``(cx, cy, zoom)`` camera trajectory, per scene segment.
 
     ``targets[i]`` is the raw per-frame camera target (or ``None`` for frames
@@ -582,6 +583,14 @@ def build_smoothed_trajectory(targets, scene_ids, window: int, polyorder: int,
         xs = _smooth_axis([t[0] for t in seg], method, window, polyorder, 0.0, x_max)
         ys = _smooth_axis([t[1] for t in seg], method, window, polyorder, 0.0, y_max)
         zs = smooth_and_clamp([t[2] for t in seg], window, polyorder, min_zoom, max_zoom)
+        # Per-scene zoom lock: pin the whole scene to one zoom level (the segment
+        # median) so the frame never breathes mid-shot. Continuous zoom is radial
+        # ("looming") optical flow and a top nausea trigger; a different zoom per
+        # scene is fine because a change across a hard cut reads as a new shot,
+        # not camera motion. Zoom still varies between scenes, never within one.
+        if lock_zoom and len(zs):
+            zlock = float(np.median(zs))
+            zs = [zlock] * len(zs)
         # AutoFlip-style stationary lock: a near-static scene is pinned to a fixed
         # viewpoint (tripod) instead of tracking jitter. Opt-in (threshold > 0);
         # at 0.0 this is a no-op so the smoothed path stays byte-identical.

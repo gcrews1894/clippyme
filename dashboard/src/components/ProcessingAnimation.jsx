@@ -73,7 +73,7 @@ const ProcessingAnimation = ({ media, isComplete, syncedTime, isSyncedPlaying, s
     return (match && match[2].length === 11) ? match[2] : null;
   };
 
-  const modelName = (localStorage.getItem('clippyme_model') || 'gemini-2.5-flash');
+  const modelName = (localStorage.getItem('clippyme_model') || 'gemini-3.5-flash');
 
   return (
     <div className="relative w-full mb-8 animate-[fadeIn_0.5s_ease-out]">

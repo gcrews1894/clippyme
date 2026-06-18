@@ -127,7 +127,7 @@ def load_persistent_config() -> dict:
     """Load core API keys, falling back to env vars."""
     config = {
         "GEMINI_API_KEY": os.environ.get("GEMINI_API_KEY", ""),
-        "GEMINI_MODEL": os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"),
+        "GEMINI_MODEL": os.environ.get("GEMINI_MODEL", "gemini-3.5-flash"),
         "YOUTUBE_COOKIES": os.environ.get("YOUTUBE_COOKIES", ""),
         # Accept either HF_TOKEN or HUGGINGFACE_TOKEN from the environment;
         # persist under HF_TOKEN (the canonical key used by the rest of the code).
