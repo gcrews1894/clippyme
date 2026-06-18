@@ -881,6 +881,11 @@ if __name__ == '__main__':
             # field in place when the user flips the mode later on).
             for _clip_entry in clips_data.get('shorts', []):
                 _clip_entry.setdefault('reframe_mode', args.reframe_mode)
+            # Persist the job's output aspect so the post-hoc /api/reframe
+            # endpoint can re-render at the SAME ratio. Without this it defaults
+            # to 9:16 and silently squashes a 1:1/16:9 job when the user flips
+            # reframe mode after the run.
+            clips_data['aspect'] = args.aspect
             metadata_file = os.path.join(output_dir, f"{video_title}_metadata.json")
             metadata_tmp = metadata_file + ".tmp"
             with open(metadata_tmp, 'w') as f:

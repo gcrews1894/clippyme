@@ -112,7 +112,7 @@ function KeyRow({ icon, name, desc, value, onChange, onSave, placeholder, presen
   );
 }
 
-export function SettingsView({ apiKey, onApiKey, cookiesConfigured, pushToast }) {
+export function SettingsView({ apiKey, onApiKey, cookiesConfigured, onCookiesChange, pushToast }) {
   const [gemini, setGemini] = useState(apiKey || '');
   const [deepgram, setDeepgram] = useState('');
   const [hf, setHf] = useState('');
@@ -197,11 +197,11 @@ export function SettingsView({ apiKey, onApiKey, cookiesConfigured, pushToast })
   const onCookieFile = async (e) => {
     const f = e.target.files?.[0];
     if (!f) return;
-    try { await uploadCookies(f); setCookies(true); pushToast?.('success', 'Cookies uploaded'); }
+    try { await uploadCookies(f); setCookies(true); onCookiesChange?.(true); pushToast?.('success', 'Cookies uploaded'); }
     catch { pushToast?.('error', 'Cookie upload failed'); }
   };
   const removeCookies = async () => {
-    try { await deleteCookies(); setCookies(false); pushToast?.('info', 'Cookies removed'); }
+    try { await deleteCookies(); setCookies(false); onCookiesChange?.(false); pushToast?.('info', 'Cookies removed'); }
     catch { pushToast?.('error', 'Remove failed'); }
   };
 

@@ -998,6 +998,15 @@ async def reframe_clip(job_id: str, clip_index: int, req: ReframeRequest, reques
         "--reframe-mode", mode,
     ]
 
+    # Re-render at the job's ORIGINAL aspect (persisted in metadata at process
+    # time). Omitting this defaults main.py to 9:16 and squashes a 1:1/16:9 clip
+    # when the user flips reframe mode post-run. Validate against the same
+    # allow-list main.py's argparse accepts so a tampered metadata value can't
+    # inject an arbitrary argv token.
+    job_aspect = data.get("aspect")
+    if job_aspect in ("9:16", "1:1", "16:9"):
+        cmd += ["--aspect", job_aspect]
+
     logger.info("Reframe subprocess: %s", " ".join(cmd))
 
     # Propagate persisted config (Deepgram / HF / Gemini keys, transcription

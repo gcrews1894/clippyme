@@ -100,7 +100,7 @@ export default function RedesignApp() {
   const [availableJobIds, setAvailableJobIds] = useState(null);
 
   const { history, saveToHistory, deleteFromHistory, clearHistory } = useHistory();
-  const { cookiesConfigured } = useBackendStatus();
+  const { cookiesConfigured, setCookiesConfigured } = useBackendStatus();
   const { states: clipStates, updateClip: updateClipState } = useClipStates(jobId);
 
   useEffect(() => { if (apiKey) localStorage.setItem('gemini_key', apiKey); }, [apiKey]);
@@ -389,7 +389,7 @@ export default function RedesignApp() {
         </div>
       )}
 
-      {tab === 'settings' && <SettingsView apiKey={apiKey} onApiKey={setApiKey} cookiesConfigured={cookiesConfigured} pushToast={pushToast} />}
+      {tab === 'settings' && <SettingsView apiKey={apiKey} onApiKey={setApiKey} cookiesConfigured={cookiesConfigured} onCookiesChange={setCookiesConfigured} pushToast={pushToast} />}
 
       {publishClips && (
         <PublishModal clips={publishClips} jobId={jobId} clipStates={clipStates} preselections={preselections}

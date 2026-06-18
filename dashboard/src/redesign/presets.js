@@ -9,9 +9,16 @@ const PRESETS_KEY = 'clippyme_user_presets_v1';
 const DEFAULT_KEY = 'clippyme_default_preset_v1';
 
 // The create-options fields a preset captures (everything except the source).
+// Keep this in sync with the Clip Options controls in create.jsx — a missing
+// key means "Save current" silently drops that setting. `reframe` (legacy
+// boolean) is retained only for back-compat reads; `reframeMode` is the live
+// 3-mode control.
 export const PRESET_KEYS = [
-  'clipsAuto', 'clips', 'aspect', 'detect', 'reframe', 'smartcut', 'zoom',
-  'subtitles', 'subMode', 'subPreset', 'subPosition', 'hooks', 'hookPos', 'hookSize', 'language',
+  'clipsAuto', 'clips', 'aspect', 'detect', 'reframe', 'reframeMode', 'model',
+  'smartcut', 'zoom',
+  'subtitles', 'subMode', 'subPreset', 'subPosition', 'subFont', 'subColor',
+  'hooks', 'hookPos', 'hookSize', 'hookStyle',
+  'logo', 'logoPos', 'logoSize', 'language',
 ];
 
 export function captureOpts(opts) {
