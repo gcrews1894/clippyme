@@ -50,12 +50,15 @@ export function detectPipelineStep(logs) {
  * PIPE meta — wrong-but-stable degrades to generic, never to a crash.
  *
  * @param {string[]} logs
- * @param {{ reframeMode?: string, reframe?: boolean }} [opts]
- * @returns {{ transcribe?: string, detect?: string, reframe?: string }}
+ * @param {{ reframeMode?: string, reframe?: boolean, mediaType?: string }} [opts]
+ * @returns {{ download?: string, transcribe?: string, detect?: string, reframe?: string }}
  */
 export function pipelineStepMeta(logs = [], opts = {}) {
   const joined = (logs || []).join(' ');
   const meta = {};
+
+  // --- Download: a local upload is never fetched from a URL ----------------
+  if (opts.mediaType === 'file') meta.download = 'local file';
 
   // --- Transcribe: the provider/model the backend actually used ------------
   // "🎙️  Transcribing with Deepgram [nova-3, lang=multi] …"

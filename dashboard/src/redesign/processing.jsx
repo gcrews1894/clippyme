@@ -51,9 +51,12 @@ export function ProcessingView({ media, status, logs = [], step, clips = [], onC
   const STEP_WORD = { queued: 'queued', downloading: 'fetching', transcribing: 'transcribing', analyzing: 'scoring', processing: 'rendering' };
   const phase = failed ? 'failed' : clips.length > 0 ? 'rendering' : (STEP_WORD[step] || 'working');
   // Auto-adapt each step's sub-label to what actually ran (deepgram vs whisper
-  // fallback, gemini model vs no-AI TextTiling, reframe mode) — falls back to
-  // the static PIPE meta for steps we can't resolve yet.
-  const metaOverride = pipelineStepMeta(logs, opts);
+  // fallback, gemini model vs no-AI TextTiling, reframe mode, local-vs-URL
+  // source) — falls back to the static PIPE meta for steps we can't resolve.
+  const metaOverride = pipelineStepMeta(logs, { ...opts, mediaType: media?.type });
+  // The reframe step name hard-codes "9:16"; reflect the real output aspect so
+  // a 1:1 / 16:9 job isn't mislabelled.
+  const nameOverride = { reframe: `Reframe ${opts.aspect || '9:16'}` };
 
   return (
     <div className="container fade-in">
@@ -69,6 +72,7 @@ export function ProcessingView({ media, status, logs = [], step, clips = [], onC
                 const done = !failed && (i < activeIdx);
                 const active = !failed && i === activeIdx;
                 const meta = metaOverride[s.id] || s.meta;
+                const name = nameOverride[s.id] || s.name;
                 return (
                   <div key={s.id} className={'pstep' + (done ? ' done' : active ? ' active' : '')}>
                     <div className="rail">
@@ -76,7 +80,7 @@ export function ProcessingView({ media, status, logs = [], step, clips = [], onC
                       {i < PIPE.length - 1 && <div className="pseg-v"></div>}
                     </div>
                     <div className="pbody">
-                      <div className="pname">{s.name}</div>
+                      <div className="pname">{name}</div>
                       <div className="pmeta">{active ? meta + ' …' : done ? 'done' : meta}</div>
                     </div>
                   </div>

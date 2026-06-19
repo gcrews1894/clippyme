@@ -109,7 +109,10 @@ export const PIPE = [
   { id: 'transcribe', name: 'Transcribe', icon: 'audio-lines', meta: 'deepgram nova-3' },
   { id: 'detect', name: 'Detect moments', icon: 'sparkles', meta: 'gemini scoring' },
   { id: 'reframe', name: 'Reframe 9:16', icon: 'scan-face', meta: 'face tracking' },
-  { id: 'caption', name: 'Caption & hook', icon: 'captions', meta: 'burn-in' },
+  // Captions/hooks are NOT burned during the main render — they're applied at
+  // compose/download time (user-triggered in results). Worded as a roadmap node
+  // so the live bar doesn't imply the render is doing caption work right now.
+  { id: 'caption', name: 'Caption & hook', icon: 'captions', meta: 'added on export' },
   { id: 'finish', name: 'Finish', icon: 'check', meta: 'render out' },
 ];
 

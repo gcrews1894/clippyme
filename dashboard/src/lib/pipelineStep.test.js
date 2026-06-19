@@ -29,6 +29,12 @@ test('detectPipelineStep ignores the removed dead markers and empties', () => {
   assert.equal(detectPipelineStep(null), null);
 });
 
+test('pipelineStepMeta.download reflects a local upload vs a URL fetch', () => {
+  assert.equal(pipelineStepMeta([], { mediaType: 'file' }).download, 'local file');
+  assert.equal(pipelineStepMeta([], { mediaType: 'url' }).download, undefined); // keeps static "fetch source"
+  assert.equal(pipelineStepMeta([], {}).download, undefined);
+});
+
 test('pipelineStepMeta.transcribe reflects the provider/model that actually ran', () => {
   assert.equal(
     pipelineStepMeta(['🎙️  Transcribing with Deepgram [nova-3, lang=multi] (1.2 MB)'], {}).transcribe,
