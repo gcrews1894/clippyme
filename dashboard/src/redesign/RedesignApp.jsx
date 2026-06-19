@@ -366,7 +366,7 @@ export default function RedesignApp() {
       )}
       {tab === 'create' && (status === 'processing' || status === 'error') && (
         <ProcessingView media={processingMedia} status={status} logs={logs} step={currentStep}
-          clips={clips} onCancel={resetToCreate} onRetry={startJob}
+          clips={clips} opts={opts} onCancel={resetToCreate} onRetry={startJob}
           paused={paused} onPause={pauseCurrent} onResume={resumeCurrent} onStop={stopCurrent} />
       )}
       {tab === 'create' && status === 'complete' && (

@@ -5,6 +5,7 @@ import { useEffect, useRef } from 'react';
 import { Icon, Btn, Badge, Panel } from './primitives';
 import { Hero } from './chrome';
 import { PIPE } from './data';
+import { pipelineStepMeta } from '../lib/pipelineStep';
 import { clipVideoSrc, fmtDuration } from './realApi';
 
 // Map the backend's detected pipeline step to an approximate % + pipe index.
@@ -33,7 +34,7 @@ function MiniClip({ clip }) {
 }
 
 export function ProcessingView({ media, status, logs = [], step, clips = [], onCancel, onRetry,
-                                 paused = false, onPause, onResume, onStop }) {
+                                 paused = false, onPause, onResume, onStop, opts = {} }) {
   const logRef = useRef(null);
   useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; });
 
@@ -49,6 +50,10 @@ export function ProcessingView({ media, status, logs = [], step, clips = [], onC
   // ground truth from the detected step).
   const STEP_WORD = { queued: 'queued', downloading: 'fetching', transcribing: 'transcribing', analyzing: 'scoring', processing: 'rendering' };
   const phase = failed ? 'failed' : clips.length > 0 ? 'rendering' : (STEP_WORD[step] || 'working');
+  // Auto-adapt each step's sub-label to what actually ran (deepgram vs whisper
+  // fallback, gemini model vs no-AI TextTiling, reframe mode) — falls back to
+  // the static PIPE meta for steps we can't resolve yet.
+  const metaOverride = pipelineStepMeta(logs, opts);
 
   return (
     <div className="container fade-in">
@@ -63,6 +68,7 @@ export function ProcessingView({ media, status, logs = [], step, clips = [], onC
               {PIPE.map((s, i) => {
                 const done = !failed && (i < activeIdx);
                 const active = !failed && i === activeIdx;
+                const meta = metaOverride[s.id] || s.meta;
                 return (
                   <div key={s.id} className={'pstep' + (done ? ' done' : active ? ' active' : '')}>
                     <div className="rail">
@@ -71,7 +77,7 @@ export function ProcessingView({ media, status, logs = [], step, clips = [], onC
                     </div>
                     <div className="pbody">
                       <div className="pname">{s.name}</div>
-                      <div className="pmeta">{active ? s.meta + ' …' : done ? 'done' : s.meta}</div>
+                      <div className="pmeta">{active ? meta + ' …' : done ? 'done' : meta}</div>
                     </div>
                   </div>
                 );
