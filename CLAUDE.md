@@ -112,7 +112,7 @@ The post-processing workflow uses independent toggles per clip:
 - Custom animations: `gradient-shift` (8s cycle), `float`, `shimmer`, `pulseRing`, `scanLine`
 - Custom shadows: `glow-primary`, `glow-accent`, `glow-pink`, `elevated`, `glass`
 - `@` path alias configured in `vite.config.js` and `jsconfig.json` → resolves to `dashboard/src/`
-- **Vite dev proxy** (`vite.config.js`): `/api`, `/videos`, `/thumbnails`, **`/fonts`** → all proxied to `http://backend:8000`. (`server.watch.usePolling` is on — Windows/macOS Docker bind mounts don't deliver inotify, so without polling Vite never sees host edits and HMR silently dies.) The `/fonts` proxy is **mandatory** for the SubtitleModal font preview to work — without it, `FontFace` requests 404 and the preview falls back silently to the system font (this was a real bug).
+- **Vite dev proxy** (`vite.config.js`): `/api`, `/videos`, `/thumbnails`, **`/fonts`** → all proxied to `http://backend:8000`. (`server.watch.usePolling` is on — Windows/macOS Docker bind mounts don't deliver inotify, so without polling Vite never sees host edits and HMR silently dies.) The `/fonts` proxy is **mandatory** for the subtitle/hook font preview to work — without it, `FontFace` requests 404 and the preview falls back silently to the system font (this was a real bug).
 
 **CSS Features** (`dashboard/src/index.css`):
 - Tailwind v4 syntax: `@import "tailwindcss"` + `@import "tw-animate-css"`
@@ -126,18 +126,13 @@ The post-processing workflow uses independent toggles per clip:
 - `prefers-reduced-motion` media query disables all animations for accessibility
 - `:focus-visible` ring for keyboard navigation accessibility
 
-**App State & Flow** (`dashboard/src/App.jsx`):
-- Default export is `AppWithProviders` which wraps `App` in `TooltipProvider` (Radix requirement)
-- `<Toaster position="bottom-right" richColors closeButton />` rendered inside App for sonner toasts
-- Step-based workflow: idle (input) → processing (logs) → complete (results/history)
-- Session persistence: `localStorage` for credentials (`gemini_key`), model (`clippyme_model`), history (`clippyme_history`), session (`clippyme_session`)
-- Job polling: 2-second interval via `setInterval`, cleared on unmount
-- Batch processing: `batchId` and `batchJobs` state for multi-URL submissions
-- `preselections` state: stores user's pre-selected toggle options, passed to ResultCards
-- `cookiesConfigured` state: fetched on mount, passed to MediaInput for warning display
-- Error toasts via sonner replace inline error banners
-- Confetti animation (40 particles) triggered on job completion
-- Auto-apply: when smartcut pre-selected and job completes, fires `/api/smartcut` for each clip
+**App State & Flow** (`dashboard/src/redesign/RedesignApp.jsx` + `dashboard/src/hooks/`):
+- `main.jsx` renders `RedesignApp` (the old `App.jsx` / `AppWithProviders` wrapper was deleted with the `components/` tree). Toasts use an in-app `pushToast` callback threaded to the views, not sonner.
+- Tab-based workflow: Create (input) → live processing with partial clips → results / history.
+- Session persistence: `useSessionPersistence` round-trips opts + pre-selections to localStorage — pre-selections under `clippyme_preselections_v3`, per-clip state under `clippyme_clip_states_{jobId}` (`useClipStates`).
+- Job polling: `useJobPolling` (2s interval, cleared on unmount); `useJobSubmission` aggregates polling across batch job ids.
+- `preselections` state: user's pre-selected toggle options, seeded into each clip's params via `lib/seedClipParams.js`.
+- Backend/asset status (`useBackendStatus`, cookies / logo / fonts / zernio probes) fetched on mount; the Create tab warns when cookies are missing.
 
 ## Commands
 
@@ -187,7 +182,7 @@ The redesign uses hand-rolled primitives in `dashboard/src/redesign/primitives.j
 - **Cookie management**: Uploaded once in Settings, persisted at `data/cookies.txt`. Used automatically for all downloads. Fallback chain: `data/cookies.txt` → `YOUTUBE_COOKIES` env var → none.
 - **Security**: `job_id` validated with strict regex to prevent path traversal. Config endpoints require trusted origin or private network client. Containers run as non-root users. A secret-scan **pre-commit hook** lives at `.githooks/pre-commit` (blocks API keys, HF/OpenAI tokens, Deepgram tokens, Netscape cookie files, and the secret files `data/cookies.txt` / `data/config.json` / `.env`). Enable it once per clone with `git config core.hooksPath .githooks`; bypass a confirmed false positive with `git commit --no-verify`.
 - **Temp files**: Uploads go to `uploads/`, outputs to `output/`. Both are transient and git-ignored.
-- **Font serving**: `/fonts` static mount serves bundled TTFs to frontend for SubtitleModal preview (loaded via FontFace API).
+- **Font serving**: `/fonts` static mount serves bundled TTFs to frontend for the subtitle/hook font preview (loaded via FontFace API).
 
 ## main.py CLI Args
 
@@ -256,12 +251,10 @@ The apply button is the unified **"Apply & reprocess"** in `EditClipModal` (the 
 ## Clip lifecycle & batch publish
 
 - **`useClipStates(jobId)`** (`dashboard/src/hooks/useClipStates.js`) — per-clip state keyed by index, persisted in localStorage under `clippyme_clip_states_{jobId}`. Shape: `{ disabled, deleted, publishedAt }`. Survives page reloads without a backend round-trip.
-- **`ResultCard.jsx`** top-left action toolbar: Eye/Eye-off (disable → opacity 50%, excluded from batch publish), Trash (with confirm → hides from grid, file stays on disk). Top-right: green **"Published"** pill when `publishedAt` is set.
-- **`BatchPublishModal.jsx`** — launched from the `Publish all (N)` button in `ResultsGrid`. Iterates every clip where `!disabled && !deleted && !publishedAt` and calls `POST /api/publish/{jobId}/{index}` sequentially with live per-clip status (pending / ok / error / **skipped**). Supports `schedule_mode='auto'` (SmartScheduler picks a different slot per clip) and `'now'` (all immediate). Each successful publish marks the clip via `onUpdateClipState(index, { publishedAt: Date.now() })`.
-  - **Auto-slot start date**: when `schedule_mode='auto'` the modal shows a date picker defaulting to today (local timezone, YYYY-MM-DD). The value is forwarded to the backend as `start_date` on every `/api/publish/...` call. `social_publisher.publish_clip` parses it and hands it to `SmartScheduler.find_slot` as the `target_day` override (clamped to `max(requested, now.date())` so past dates never slip through).
-  - **One-clip-per-day spacing** (default ON): replicates the original `tmp/programma_shorts.py` behavior. When enabled, the frontend increments `start_date` by `+batchIndex` days inside the loop (`clip #0 → startDate`, `clip #1 → startDate + 1 day`, …) so each clip lands on its **own day**, bypassing Zernio's per-platform 5/day posting limit. The UI shows a live date-range preview (`2026-04-08 → 2026-04-16` for a 9-clip batch). Can be toggled off to compress all clips into a single day — only useful for very small batches (≤5) that fit under the daily limit.
-  - **Per-platform daily-limit handling**: when Zernio returns HTTP 429 with a "Daily limit reached" error (e.g. YouTube's 5/5 daily posts cap), the modal parses the offending platform from the error body (regex on `"platform":"..."` — the backend passes the Zernio body verbatim through `ZernioError`), disables that platform in the local `activePlatforms` map for the rest of the batch, and continues publishing the remaining clips to the other platforms. If all selected platforms get exhausted, the remaining clips are marked `skipped` (not `error`) and left untouched so the user can republish them tomorrow. A toast explains exactly which platform was disabled and the final summary reports `ok / failed / skipped` counts plus the exhausted platform list.
-- **`PublishModal.jsx`** (single-clip path) now accepts an `onPublished` callback so the parent `ResultCard` can flip the clip's `publishedAt` flag without duplicating state.
+- **`ClipCard`** (`redesign/results.jsx`) action toolbar: disable (Eye/Eye-off → dimmed, excluded from batch publish), remove (hides from grid, file stays on disk), reframe-mode badge, **Edit & reprocess**, compose-download, **Publish**. A green **"Published"** pill shows once `publishedAt` is set (via `onUpdateClipState(idx, { publishedAt: Date.now() })`).
+- **`PublishModal`** (`redesign/publish.jsx`) — the **unified single + batch publisher** (the old separate `BatchPublishModal.jsx`/`PublishModal.jsx` component pair was folded into this one file). Launched from a clip's **Publish** button or the grid's batch action; it publishes the selected clips **concurrently** via `Promise.allSettled` (`publish.jsx:run`), each row showing live queued→uploading→live/error status. On failure it surfaces the **real Zernio error message** per clip (so a daily-limit 429 reads as `failed: <reason>`, not a bare "failed"). `compose_first` + the clip's toggles/hook/subtitle/logo/`drop_ranges` ride along via `buildBody` so the uploaded clip matches the preview.
+  - **One-clip-per-day spacing** (when scheduling): `buildBody` sets `start_date = localDatePlus(batchPos)` so clip *n* is scheduled on today + *n* days — each clip gets its own day to stay under Zernio's per-platform daily cap (e.g. YouTube 5/day). `social_publisher.publish_clip` parses `start_date` and passes it to `SmartScheduler.find_slot` as the `target_day` override (clamped to `max(requested, now.date())` so past dates never slip through).
+  - **Daily-limit strategy = proactive per-day spacing + server-side enforcement.** The redesign avoids the cap up front with the spacing above and surfaces any residual Zernio 429 verbatim per clip; it does **not** do client-side per-platform disabling / `skipped`-state bookkeeping. `ZernioError` still carries the Zernio response body verbatim, so a richer client-side per-platform fallback can be layered on later if needed.
 
 ## Reframing Modes
 
@@ -331,10 +324,10 @@ Clips can be published/scheduled directly to TikTok, Instagram and YouTube from 
   - `GET /api/zernio/accounts` — discovery via Zernio's `/v1/accounts`
   - `POST /api/publish/{job_id}/{clip_index}` — upload + schedule. Accepts `PublishRequest` with title, caption, platforms (list of `{platform, accountId, platformSpecificData?}`), `schedule_mode`, `scheduled_for?`, `timezone?`, `tiktok_settings?`. Optionally runs a fresh compose pass first (`compose_first=true` + toggles/hook_params/subtitle_params) so the uploaded clip reflects the user's Smart Cut / Hook / Subtitles toggles.
 
-- **Frontend** (`dashboard/src/components/`):
-  - `ZernioSettings.jsx` — API key input (masked), per-platform account ID fields for TikTok/Instagram/YouTube, "Discover from Zernio" button that hits `/api/zernio/accounts` and lets the user click-pick from discovered accounts, timezone field. Rendered inside SettingsTab.
-  - `PublishModal.jsx` — modal launched from the ResultCard's **Publish** button. Title + caption editor (prefilled from clip's `video_title_for_youtube_short` and `tiktok_caption`), platform toggles (disabled if no account ID saved), schedule mode picker (`Now` / `Auto slot` / `Pick time`), datetime-local input for manual mode. Automatically forwards the current ResultCard toggles (Smart Cut / Hook / Subtitles) via `compose_first` so published clips match what the user sees in the preview.
-  - `ResultCard.jsx` — has a new **Publish** button next to **Download**. Preserves the existing toggle/compose flow: if any toggle is active, the publish request asks the backend to re-compose before upload.
+- **Frontend** (`dashboard/src/redesign/`):
+  - Zernio settings live in `views.jsx` (Settings tab) — API key input (masked), per-platform account ID fields for TikTok/Instagram/YouTube, "Discover from Zernio" button that hits `/api/zernio/accounts` and lets the user click-pick from discovered accounts, timezone field.
+  - `PublishModal` (`publish.jsx`) — launched from a clip's **Publish** button (single) or the grid batch action (multi). Caption editor (prefilled from the clip's `tiktok_caption` / `video_title_for_youtube_short`), platform toggles (disabled when no account ID saved), schedule toggle (prime-time auto slot vs publish now). Forwards the clip's Smart Cut / Hook / Subtitles / Logo toggles via `compose_first` so published clips match the preview.
+  - `ClipCard` (`results.jsx`) — **Publish** button alongside compose-download; reuses the toggle/compose flow so an active toggle re-composes before upload.
 
 - **Env vars**: `ZERNIO_BASE_URL` (default `https://zernio.com/api/v1`), `ZERNIO_DEFAULT_TZ` (default `Europe/Rome`), `ZERNIO_HTTP_TIMEOUT` (60s), `ZERNIO_UPLOAD_TIMEOUT` (600s), `ZERNIO_MIN_GAP_SECONDS` (5400 = 90 min for SmartScheduler).
 
@@ -355,4 +348,4 @@ Beyond the API keys / model / cookie settings (managed via the dashboard) and th
 ## Code organization rules
 
 - **Backend:** endpoint handlers stay thin (validate → call helper → return JSON). If a handler grows past ~25 lines, extract into a `clippyme.domain.*` module. Don't re-merge `app.py`.
-- **Frontend:** `App.jsx` only owns top-level state wiring + JSX composition. Side effects → custom hooks (`hooks/`), visual chunks → components (`components/`).
+- **Frontend:** `redesign/RedesignApp.jsx` only owns top-level state wiring + tab/JSX composition. Side effects → custom hooks (`hooks/`), visual chunks → `redesign/` components. (The legacy `App.jsx` + `components/` tree is gone — edit `redesign/` only.)
