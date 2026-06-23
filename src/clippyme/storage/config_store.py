@@ -13,7 +13,8 @@ VALID_CONFIG_KEYS = (
     "YOUTUBE_COOKIES",
     "HF_TOKEN",
     "DEEPGRAM_API_KEY",
-    "TRANSCRIPTION_PROVIDER",  # "whisper" (default) or "deepgram"
+    "ELEVENLABS_API_KEY",
+    "TRANSCRIPTION_PROVIDER",  # "deepgram" (default), "elevenlabs", or "whisper"
 )
 
 # Zernio config lives in a separate namespace under the same config.json file
@@ -137,6 +138,7 @@ def load_persistent_config() -> dict:
             or ""
         ),
         "DEEPGRAM_API_KEY": os.environ.get("DEEPGRAM_API_KEY", ""),
+        "ELEVENLABS_API_KEY": os.environ.get("ELEVENLABS_API_KEY", ""),
         "TRANSCRIPTION_PROVIDER": os.environ.get("TRANSCRIPTION_PROVIDER", "deepgram"),
     }
     raw = _read_raw_config()

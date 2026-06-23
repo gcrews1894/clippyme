@@ -116,6 +116,7 @@ function KeyRow({ icon, name, desc, value, onChange, onSave, placeholder, presen
 export function SettingsView({ apiKey, onApiKey, cookiesConfigured, onCookiesChange, pushToast }) {
   const [gemini, setGemini] = useState(apiKey || '');
   const [deepgram, setDeepgram] = useState('');
+  const [elevenlabs, setElevenlabs] = useState('');
   const [hf, setHf] = useState('');
   const [present, setPresent] = useState({});
   const [zernio, setZernioState] = useState(null);
@@ -149,7 +150,7 @@ export function SettingsView({ apiKey, onApiKey, cookiesConfigured, onCookiesCha
 
   useEffect(() => {
     getConfig().then((c) => {
-      setPresent({ gemini: !!c.GEMINI_API_KEY, hf: !!c.HF_TOKEN, deepgram: !!c.DEEPGRAM_API_KEY });
+      setPresent({ gemini: !!c.GEMINI_API_KEY, hf: !!c.HF_TOKEN, deepgram: !!c.DEEPGRAM_API_KEY, elevenlabs: !!c.ELEVENLABS_API_KEY });
       if (c.TRANSCRIPTION_PROVIDER) setProvider(c.TRANSCRIPTION_PROVIDER);
       if (c.GEMINI_MODEL) setModel(c.GEMINI_MODEL);
       loadModels();
@@ -239,15 +240,23 @@ export function SettingsView({ apiKey, onApiKey, cookiesConfigured, onCookiesCha
           onChange={(v) => { setGemini(v); onApiKey?.(v); }} onSave={() => gemini && saveKeys({ GEMINI_API_KEY: gemini })} placeholder="AIza…" />
         <KeyRow icon="audio-lines" name="Deepgram" desc="Nova-3 transcription" value={deepgram} present={present.deepgram}
           onChange={setDeepgram} onSave={() => deepgram && saveKeys({ DEEPGRAM_API_KEY: deepgram })} placeholder="dg_…" />
+        <KeyRow icon="audio-lines" name="ElevenLabs" desc="Scribe transcription · audio-event tags" value={elevenlabs} present={present.elevenlabs}
+          onChange={setElevenlabs} onSave={() => elevenlabs && saveKeys({ ELEVENLABS_API_KEY: elevenlabs })} placeholder="sk_…" />
         <KeyRow icon="scan-face" name="Hugging Face token" desc="Speaker diarization models" value={hf} present={present.hf}
           onChange={setHf} onSave={() => hf && saveKeys({ HF_TOKEN: hf })} placeholder="hf_…" />
         <div className="opt" style={{ borderBottom: 0 }}>
           <div className="oico"><Icon n="audio-lines" /></div>
-          <div className="otxt"><div className="ot">Transcription engine</div><div className="od">Deepgram Nova-3 (cloud) · falls back to local Whisper if no key</div></div>
+          <div className="otxt"><div className="ot">Transcription engine</div><div className="od">Cloud STT falls back to local Whisper if its key is missing</div></div>
           <div className="r"><Segmented value={provider}
             onChange={(id) => { setProvider(id); saveKeys({ TRANSCRIPTION_PROVIDER: id }); }}
-            options={[{ id: 'deepgram', label: 'Deepgram' }, { id: 'whisper', label: 'Whisper' }]} /></div>
+            options={[{ id: 'deepgram', label: 'Deepgram' }, { id: 'elevenlabs', label: 'ElevenLabs' }, { id: 'whisper', label: 'Whisper' }]} /></div>
         </div>
+        {provider === 'deepgram' && !present.deepgram && (
+          <div className="od" style={{ color: 'var(--warn, #f5a623)', padding: '0 0 8px 44px' }}>⚠ No Deepgram key saved — pipeline will use local Whisper.</div>
+        )}
+        {provider === 'elevenlabs' && !present.elevenlabs && (
+          <div className="od" style={{ color: 'var(--warn, #f5a623)', padding: '0 0 8px 44px' }}>⚠ No ElevenLabs key saved — pipeline will use local Whisper.</div>
+        )}
         <div className="opt" style={{ borderBottom: 0 }}>
           <div className="oico"><Icon n="sparkles" /></div>
           <div className="otxt"><div className="ot">Gemini model</div><div className="od">Viral-moment detection model · applied to new jobs</div></div>

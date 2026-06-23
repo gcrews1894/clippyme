@@ -99,6 +99,17 @@ diarization. When present, use it as a boundary hint:
 Diarization is optional — absence of ``speaker`` fields means single
 speaker or Whisper fallback path, score normally.
 
+## AUDIO CUES (when available)
+The transcript may contain bracketed non-speech markers such as ``(laughter)``,
+``(applause)``, ``(cheering)`` or ``(music)``. These are real audience/emotion
+signals — treat them as STRONG evidence of EMOTIONAL_PAYOFF and virality:
+- A moment that lands ``(laughter)`` or ``(applause)`` is a proven payoff beat —
+  prefer clips that END just after such a marker so the reaction is included.
+- Do NOT copy the bracketed markers into viral_reason / hook_text / titles —
+  they are signal only, never overlay text.
+Absence of these markers means the provider didn't tag audio events; score
+normally on the words alone.
+
 ## HARD CONSTRAINTS (violating = clip REJECTED)
 - 15s ≤ duration ≤ 60s
 - start on a complete sentence boundary; end on a natural beat
@@ -341,11 +352,12 @@ def transcribe_video(video_path):
     """Dispatch to the configured transcription provider.
 
     Provider is selected via the ``TRANSCRIPTION_PROVIDER`` env var:
-      - "deepgram" → call Deepgram REST API (requires DEEPGRAM_API_KEY)
-      - anything else (default) → local Faster-Whisper
+      - "deepgram" (default) → Deepgram Nova-3 REST API (requires DEEPGRAM_API_KEY)
+      - "elevenlabs" → ElevenLabs Scribe REST API (requires ELEVENLABS_API_KEY)
+      - anything else / "whisper" → local Faster-Whisper
 
-    On Deepgram failure we automatically fall back to Faster-Whisper so a
-    misconfigured key never breaks the pipeline.
+    On any cloud-provider failure we automatically fall back to Faster-Whisper
+    so a misconfigured key never breaks the pipeline.
 
     Whisper path: after transcription, optionally runs pyannote speaker
     diarization (if ``pyannote.audio`` is installed and a HF token is
@@ -362,10 +374,25 @@ def transcribe_video(video_path):
     # we transparently fall back to the source file.
     asr_input = video_path
     _audio_tmp: str | None = None
+    _iso_tmp: str | None = None
     if (os.getenv("CLIPPYME_TRANSCRIBE_AUDIO_ONLY") or "true").strip().lower() != "false":
         _audio_tmp = _extract_audio_for_asr(video_path)
         if _audio_tmp:
             asr_input = _audio_tmp
+
+    # Optional ElevenLabs Voice Isolator pre-pass — strips background noise/music
+    # before ASR for cleaner transcripts on noisy sources. Provider-agnostic
+    # (helps Whisper/Deepgram too) but needs an ElevenLabs key. Opt-in via
+    # ELEVENLABS_AUDIO_ISOLATION; non-fatal — falls back to the raw audio.
+    if (os.getenv("ELEVENLABS_AUDIO_ISOLATION") or "false").strip().lower() in ("1", "true", "yes"):
+        try:
+            from clippyme.pipeline.elevenlabs_transcribe import isolate_audio
+            _iso = isolate_audio(asr_input)
+            if _iso:
+                _iso_tmp = _iso
+                asr_input = _iso
+        except Exception as exc:  # noqa: BLE001 — isolation is best-effort
+            logging.getLogger("clippyme").warning("Voice isolation errored (%s) — skipping", exc)
 
     try:
         if provider == "deepgram":
@@ -377,6 +404,15 @@ def transcribe_video(video_path):
                     "Deepgram transcription failed (%s) — falling back to Faster-Whisper", exc
                 )
                 print(f"⚠️  Deepgram transcription failed ({exc}); falling back to Faster-Whisper.")
+        elif provider == "elevenlabs":
+            try:
+                from clippyme.pipeline.elevenlabs_transcribe import transcribe_with_elevenlabs
+                return transcribe_with_elevenlabs(asr_input)
+            except Exception as exc:  # noqa: BLE001 — broad catch for safe fallback
+                logging.getLogger("clippyme").warning(
+                    "ElevenLabs transcription failed (%s) — falling back to Faster-Whisper", exc
+                )
+                print(f"⚠️  ElevenLabs transcription failed ({exc}); falling back to Faster-Whisper.")
 
         device = "cuda" if CUDA_AVAILABLE else "cpu"
         compute_type = "float16" if device == "cuda" else "int8"
@@ -469,11 +505,12 @@ def transcribe_video(video_path):
             'language': info.language
         }
     finally:
-        if _audio_tmp and os.path.exists(_audio_tmp):
-            try:
-                os.remove(_audio_tmp)
-            except OSError:
-                pass
+        for _tmp in (_audio_tmp, _iso_tmp):
+            if _tmp and os.path.exists(_tmp):
+                try:
+                    os.remove(_tmp)
+                except OSError:
+                    pass
 
 def get_viral_clips(transcript_result, video_duration, instructions=None):
     print("🤖  Analyzing with Gemini...")
@@ -792,6 +829,7 @@ if __name__ == '__main__':
     # Whisper fallback path via faster-whisper's auto-detect being bypassed.
     if args.language:
         os.environ["DEEPGRAM_LANGUAGE"] = args.language
+        os.environ["ELEVENLABS_LANGUAGE"] = args.language
         os.environ["CLIPPYME_LANGUAGE"] = args.language
         print(f"🌐  Language override: {args.language} (overrides default 'multi')")
 
