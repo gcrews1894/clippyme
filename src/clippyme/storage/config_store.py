@@ -167,15 +167,25 @@ def save_persistent_config(new_config: dict) -> bool:
     raw = _read_raw_config()
     new_config = _normalize_incoming_keys(new_config)
     sanitized = {k: new_config.get(k) for k in VALID_CONFIG_KEYS if k in new_config}
+    # Stage the change on the disk image FIRST; defer os.environ until the write
+    # actually succeeds. Otherwise a failed write (e.g. data/ not writable) still
+    # mutates the live process env — the key "works" until the next restart and
+    # then silently vanishes, masking the persistence failure from the user.
     for key, value in sanitized.items():
         if value in (None, ""):
             raw.pop(key, None)
+        else:
+            raw[key] = value
+    if not _write_raw_config(raw):
+        return False
+    # Disk write succeeded — now it's safe to mirror into os.environ.
+    for key, value in sanitized.items():
+        if value in (None, ""):
             os.environ.pop(key, None)
             if key == "HF_TOKEN":
                 os.environ.pop("HUGGINGFACE_TOKEN", None)
         else:
-            raw[key] = value
             os.environ[key] = str(value)
             if key == "HF_TOKEN":
                 os.environ["HUGGINGFACE_TOKEN"] = str(value)
-    return _write_raw_config(raw)
+    return True
