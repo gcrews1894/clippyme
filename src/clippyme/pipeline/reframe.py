@@ -849,8 +849,145 @@ def create_general_frame(frame, output_width, output_height, force_object_weight
     # Clone background to avoid modifying it
     final_frame = background.copy()
     final_frame[y_offset:y_offset+fg_h, :] = foreground
-    
+
     return final_frame
+
+
+# FrameShift face-first reframe weights. Mirror the FrameShift GUI defaults
+# (face 1.0, person 0.8, every other COCO class = default 0.5), see
+# https://github.com/fralapo/FrameShift. Used by the ``object`` reframe mode,
+# which now frames faces/people first instead of being objects-only.
+_FRAMESHIFT_FACE_WEIGHT = 1.0
+_FRAMESHIFT_PERSON_WEIGHT = 0.8
+_FRAMESHIFT_DEFAULT_WEIGHT = 0.5
+
+
+def _frameshift_weights():
+    """Resolve FrameShift class weights, honouring REFRAME_FRAMESHIFT_WEIGHTS.
+
+    Returns ``(face_w, person_w, default_w, extra)`` where ``extra`` maps named
+    COCO classes to a per-class override. The env var is a comma list of
+    ``name:weight`` pairs; the special names ``face`` / ``person`` / ``default``
+    override the three GUI sliders, anything else overrides a single COCO class.
+    Empty/unset → the GUI defaults (face 1.0, person 0.8, default 0.5).
+    """
+    face_w = _FRAMESHIFT_FACE_WEIGHT
+    person_w = _FRAMESHIFT_PERSON_WEIGHT
+    default_w = _FRAMESHIFT_DEFAULT_WEIGHT
+    extra = {}
+    raw = (os.getenv("REFRAME_FRAMESHIFT_WEIGHTS") or "").strip()
+    for pair in raw.split(","):
+        name, sep, wv = pair.partition(":")
+        if not sep:
+            continue
+        name = name.strip().lower()
+        try:
+            w = float(wv.strip())
+        except ValueError:
+            continue
+        if not name:
+            continue
+        if name == "face":
+            face_w = w
+        elif name == "person":
+            person_w = w
+        elif name == "default":
+            default_w = w
+        else:
+            extra[name] = w
+    return face_w, person_w, default_w, extra
+
+
+def _black_pad_to_output(frame, output_width, output_height):
+    """Fit the whole frame inside the output by width and add black bars.
+
+    FrameShift's "Enable Padding → black" mode: nothing is cropped, the source
+    is letterboxed into the vertical canvas. Used as the OBJECT-mode fallback so
+    a scene with no detectable subject is shown in full on black bars (matching
+    the GUI screenshot) rather than blurred/zoomed.
+    """
+    orig_h, orig_w = frame.shape[:2]
+    scale = output_width / float(orig_w)
+    fg_h = int(round(orig_h * scale))
+    if fg_h % 2 != 0:
+        fg_h += 1
+    foreground = cv2.resize(frame, (output_width, fg_h))
+    canvas = np.zeros((output_height, output_width, 3), dtype=np.uint8)
+    if fg_h >= output_height:
+        crop_y = (fg_h - output_height) // 2
+        canvas[:] = foreground[crop_y:crop_y + output_height, :]
+    else:
+        y_offset = (output_height - fg_h) // 2
+        canvas[y_offset:y_offset + fg_h, :] = foreground
+    return canvas
+
+
+def create_frameshift_frame(frame, output_width, output_height):
+    """FrameShift face-first 9:16 reframe — the ``object`` reframe mode.
+
+    Computes a weighted-interest centroid over every detection in the frame —
+    faces (weight 1.0), persons (0.8) and every other COCO object (default 0.5),
+    matching the FrameShift GUI defaults — each scaled by its pixel area and
+    confidence (``reframe_ops.weighted_interest_center``), then crops a
+    full-height window of the target aspect ratio centred on that point. A face
+    therefore pulls the camera hardest, so a talking head stays framed while
+    relevant on-screen objects still bias the crop. Faces use MediaPipe
+    FaceDetection; persons + objects reuse the single lazily-loaded YOLOv8 pass.
+
+    Falls back to black-padded letterbox (FrameShift "Enable Padding → black")
+    when nothing is detected or the source is already narrower than the target,
+    so a faceless/objectless shot is shown in full on black bars rather than
+    arbitrarily cropped. Never returns None — always yields a valid output frame.
+    """
+    try:
+        orig_h, orig_w = frame.shape[:2]
+        target_ar = output_width / float(output_height)
+        crop_w = int(round(orig_h * target_ar))
+        face_w, person_w, default_w, extra = _frameshift_weights()
+
+        boxes = []
+        if face_w > 0:
+            try:
+                for cand in detect_face_candidates(frame):
+                    x, y, w, h = cand['box']
+                    area = max(0, w) * max(0, h)
+                    if area > 0:
+                        boxes.append((x + w / 2.0, y + h / 2.0, face_w * area))
+            except Exception:
+                pass
+
+        model = _get_yolo_model()
+        names = getattr(model, "names", {}) or {}
+        for result in model(frame, verbose=False):
+            for box in result.boxes:
+                cls_name = str(names.get(int(box.cls[0]), "")).lower()
+                if cls_name == "person":
+                    w = person_w
+                else:
+                    w = extra.get(cls_name, default_w)
+                if w <= 0:
+                    continue
+                x1, y1, x2, y2 = (float(v) for v in box.xyxy[0])
+                area = max(0.0, x2 - x1) * max(0.0, y2 - y1)
+                if area <= 0:
+                    continue
+                conf = float(box.conf[0]) if box.conf is not None else 1.0
+                boxes.append(((x1 + x2) / 2.0, (y1 + y2) / 2.0, w * area * conf))
+
+        center = weighted_interest_center(boxes)
+        if center is None or crop_w < 1 or crop_w >= orig_w:
+            # No subject, or source already at/under target width → black-pad.
+            return _black_pad_to_output(frame, output_width, output_height)
+
+        x1 = int(round(center[0] - crop_w / 2.0))
+        x1 = max(0, min(orig_w - crop_w, x1))
+        cropped = frame[:, x1:x1 + crop_w]
+        if cropped.shape[0] < 1 or cropped.shape[1] < 1:
+            return _black_pad_to_output(frame, output_width, output_height)
+        return _resize_to_output(cropped, output_width, output_height)
+    except Exception:
+        return _black_pad_to_output(frame, output_width, output_height)
+
 
 def analyze_scenes_strategy(video_path, scenes):
     """
@@ -1281,8 +1418,8 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
         print("   🚫 Reframe mode: DISABLED — clip placed inside a 9:16 frame with letterbox (black bars top & bottom).")
         print("      (Scene detection still runs for consistency; face tracking is skipped.)")
     elif reframe_mode == 'object':
-        print("   🧩 Reframe mode: OBJECT — element-aware 9:16 crop (objects → saliency → blurred bands).")
-        print("      (Face tracking is skipped; the camera frames the most salient on-screen elements.)")
+        print("   🧩 Reframe mode: OBJECT — FrameShift face-first 9:16 crop (faces 1.0 → persons 0.8 → objects 0.5).")
+        print("      (Weighted-interest centroid per frame; black-padded letterbox when no subject is detected.)")
     else:
         print("   🎯 Reframe mode: AUTO — face tracking + dynamic 9:16 crop.")
     print("   Step 1: Detecting scenes...")
@@ -1327,7 +1464,7 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
         print("\n   🤖 Step 3: Skipping scene analysis (reframe disabled).")
         scene_strategies = ['DISABLED'] * len(scenes)
     elif reframe_mode == 'object':
-        print("\n   🤖 Step 3: Skipping scene analysis (object mode — every scene is element-cropped).")
+        print("\n   🤖 Step 3: Skipping scene analysis (object mode — every scene is FrameShift face-first cropped).")
         scene_strategies = ['OBJECT'] * len(scenes)
     else:
         print("\n   🤖 Step 3: Analyzing Scenes for Strategy (Single vs Group)...")
@@ -1420,11 +1557,11 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
                         output_frame = create_disabled_reframe(frame, OUTPUT_WIDTH, OUTPUT_HEIGHT)
 
                     elif current_strategy == 'OBJECT':
-                        # Element-aware crop everywhere: object centroid → Sobel
-                        # saliency → blurred letterbox bands (the create_general_frame
-                        # fallback chain) with the curated object weights forced on.
-                        output_frame = create_general_frame(
-                            frame, OUTPUT_WIDTH, OUTPUT_HEIGHT, force_object_weights=True
+                        # FrameShift face-first crop: weighted-interest centroid
+                        # over faces (1.0) → persons (0.8) → objects (0.5), with a
+                        # black-padded letterbox fallback when nothing is detected.
+                        output_frame = create_frameshift_frame(
+                            frame, OUTPUT_WIDTH, OUTPUT_HEIGHT
                         )
 
                     elif current_strategy == 'GENERAL':

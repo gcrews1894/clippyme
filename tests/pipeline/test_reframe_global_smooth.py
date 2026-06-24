@@ -150,9 +150,9 @@ def test_object_weights_general_path_produces_valid_vertical(tmp_path, monkeypat
 
 
 def test_object_reframe_mode_produces_valid_vertical(tmp_path, monkeypatch):
-    """reframe_mode='object' (element-aware crop everywhere) must emit a valid
-    9:16 output with the same frame count as the source — exercising the OBJECT
-    strategy + create_general_frame(force_object_weights=True) path."""
+    """reframe_mode='object' (FrameShift face-first crop everywhere) must emit a
+    valid 9:16 output with the same frame count as the source — exercising the
+    OBJECT strategy + create_frameshift_frame() path."""
     src = str(tmp_path / "src.mp4")
     out = str(tmp_path / "out.mp4")
     _make_synthetic_clip(src)
@@ -184,6 +184,36 @@ def test_object_mode_forces_weights_without_env(tmp_path):
     out = reframe.create_general_frame(frame, 1080, 1920, force_object_weights=True)
     # Always returns a valid 9:16-sized frame regardless of which sub-path wins.
     assert out.shape[0] == 1920 and out.shape[1] == 1080
+
+
+def test_frameshift_frame_always_returns_valid_vertical():
+    """create_frameshift_frame() (the `object` reframe mode) must always return a
+    valid 9:16-sized frame — both when a subject is detected (centroid crop) and
+    when none is (black-padded letterbox fallback)."""
+    # A frame with a bright off-centre blob (a YOLO/face detection may or may not
+    # fire on synthetic input; either branch must still yield a valid frame).
+    frame = np.zeros((360, 640, 3), dtype=np.uint8)
+    cv2.rectangle(frame, (500, 150), (560, 210), (255, 255, 255), -1)
+    out = reframe.create_frameshift_frame(frame, 1080, 1920)
+    assert out is not None
+    assert out.shape[0] == 1920 and out.shape[1] == 1080
+    # A featureless frame → no detections → black-pad fallback, still valid.
+    blank = np.zeros((360, 640, 3), dtype=np.uint8)
+    out2 = reframe.create_frameshift_frame(blank, 1080, 1920)
+    assert out2 is not None
+    assert out2.shape[0] == 1920 and out2.shape[1] == 1080
+
+
+def test_frameshift_weights_env_override(monkeypatch):
+    """REFRAME_FRAMESHIFT_WEIGHTS overrides the GUI-default sliders + adds
+    per-COCO-class weights; empty/unset yields the FrameShift defaults."""
+    monkeypatch.delenv("REFRAME_FRAMESHIFT_WEIGHTS", raising=False)
+    face, person, default, extra = reframe._frameshift_weights()
+    assert (face, person, default) == (1.0, 0.8, 0.5) and extra == {}
+    monkeypatch.setenv("REFRAME_FRAMESHIFT_WEIGHTS", "face:2,person:0.3,default:0.1,dog:3")
+    face, person, default, extra = reframe._frameshift_weights()
+    assert (face, person, default) == (2.0, 0.3, 0.1)
+    assert extra == {"dog": 3.0}
 
 
 def test_global_smooth_matches_singlepass_frame_count(tmp_path, monkeypatch):

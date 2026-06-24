@@ -103,6 +103,10 @@ services:
       # `1` = curated COCO defaults; `dog:3,car:2,bottle:1.5` = custom weights.
       # Takes precedence over SALIENT_GENERAL; default off = byte-identical.
       - REFRAME_OBJECT_WEIGHTS=${REFRAME_OBJECT_WEIGHTS:-}
+      # FrameShift face-first `object` reframe mode weights (defaults mirror the
+      # FrameShift GUI: face 1.0, person 0.8, default 0.5). Override per class,
+      # e.g. `face:1,person:0.8,default:0.5,dog:3`. Empty = GUI defaults.
+      - REFRAME_FRAMESHIFT_WEIGHTS=${REFRAME_FRAMESHIFT_WEIGHTS:-}
       # Transcription: strip to audio-only (FLAC) before sending to the provider.
       # DEFAULT ON; set to false to upload/decode the full video.
       - CLIPPYME_TRANSCRIBE_AUDIO_ONLY=${CLIPPYME_TRANSCRIBE_AUDIO_ONLY:-true}
