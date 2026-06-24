@@ -14,6 +14,7 @@ const WIN_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
 export function clipDownloadName(clip, index, ext = 'mp4') {
   const raw = (clip && clip.video_title_for_youtube_short) || '';
   let name = String(raw)
+    // eslint-disable-next-line no-control-regex -- deliberately strip control chars from filenames
     .replace(/[<>:"/\\|?*\x00-\x1f]/g, ' ') // forbidden + control chars → space
     .replace(/\s+/g, ' ')                    // collapse whitespace
     .trim()
