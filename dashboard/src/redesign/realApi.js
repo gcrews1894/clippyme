@@ -3,6 +3,9 @@
 // the same endpoints with the same contracts.
 import { getApiUrl } from '../config';
 import { seedToggles, seedHookParams, seedSubtitleParams, seedLogoParams } from '../lib/seedClipParams';
+import { clipDownloadName } from '../lib/clipFilename';
+
+export { clipDownloadName };
 
 // Only http/https absolute URLs are honoured as-is; anything else (javascript:,
 // data:, blob:, or a bare "httpfoo:" that slips past a startsWith check) is
@@ -42,7 +45,7 @@ export function clipPreviewSrc(clip, state) {
 export function downloadClip(clip, index) {
   const a = document.createElement('a');
   a.href = safeResolveUrl(clip.video_url || '');
-  a.download = `clip_${index + 1}.mp4`;
+  a.download = clipDownloadName(clip, index);
   a.style.display = 'none';
   document.body.appendChild(a);
   a.click();
@@ -132,7 +135,7 @@ export async function exportClip(jobId, index, clip, state, preselections) {
   });
   const href = safeResolveUrl(composed_url);
   const a = document.createElement('a');
-  a.href = href; a.download = `clip_${index + 1}.mp4`; a.style.display = 'none';
+  a.href = href; a.download = clipDownloadName(clip, index); a.style.display = 'none';
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   return 'composed';
 }
