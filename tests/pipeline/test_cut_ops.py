@@ -6,6 +6,9 @@ from clippyme.pipeline.cut_ops import (
     audio_fade_filter,
     flatten_words,
     snap_clip_to_words,
+    snap_clip_to_sentences,
+    sentence_boundaries,
+    _is_sentence_final,
 )
 
 
@@ -86,3 +89,103 @@ def test_fade_filter_too_short_is_empty():
     assert audio_fade_filter(0.05, fade=0.03) == ""   # < fade*2
     assert audio_fade_filter(0.0) == ""
     assert audio_fade_filter(-1.0) == ""
+
+
+# --- _is_sentence_final (false-friend guard) --------------------------------
+
+def test_sentence_final_true_cases():
+    for w in ("world.", "Davvero?!", "wow…", "Stop!", "really?"):
+        assert _is_sentence_final(w) is True, w
+
+
+def test_sentence_final_false_cases():
+    # abbreviations, initials, decimals, acronyms, audio events, bare words
+    for w in ("Dr.", "etc.", "U.", "U.S.", "p.m.", "3.", "3.5", "1,000.",
+              "(laughter)", "hello", "", "  "):
+        assert _is_sentence_final(w) is False, w
+
+
+# --- sentence_boundaries ----------------------------------------------------
+
+def _sw(word, s, e):
+    return {"word": word, "start": s, "end": e}
+
+
+def test_sentence_boundaries_splits_on_terminators():
+    words = [
+        _sw("Hi", 0.0, 0.3), _sw("there.", 0.3, 0.7),   # sentence 1 ends @0.7
+        _sw("Next", 1.0, 1.3), _sw("one.", 1.3, 1.7),   # sentence 2 onset @1.0
+    ]
+    onsets, ends = sentence_boundaries(words)
+    assert onsets == [0.0, 1.0]
+    assert ends == [0.7, 1.7]
+
+
+def test_sentence_boundaries_no_punctuation_is_empty_ends():
+    words = [_sw("no", 0.0, 0.3), _sw("punctuation", 0.3, 0.9)]
+    onsets, ends = sentence_boundaries(words)
+    assert onsets == [0.0]   # first word always an onset
+    assert ends == []        # nothing terminal → callers fall back to word-snap
+
+
+# --- snap_clip_to_sentences -------------------------------------------------
+
+def _para():
+    # Three sentences, contiguous words with punctuation.
+    return [
+        _sw("Today", 10.0, 10.4), _sw("I", 10.4, 10.5), _sw("learned.", 10.5, 11.0),
+        _sw("It", 12.0, 12.2), _sw("changed", 12.2, 12.7), _sw("everything.", 12.7, 13.4),
+        _sw("You", 20.0, 20.3), _sw("should", 20.3, 20.7), _sw("too.", 20.7, 21.0),
+    ]
+
+
+def test_sentence_snap_extends_start_back_and_end_forward():
+    words = _para()
+    # Raw clip opens mid-sentence-2 ("changed everything") and ends mid-word.
+    # word-snap edges would still sit mid-sentence; sentence snap pulls start
+    # back to "It" onset (12.0) and end forward to "everything." (13.4).
+    s, e, path = snap_clip_to_sentences(
+        12.3, 13.0, words, word_start=12.2, word_end=13.0,
+    )
+    assert path == "sentence"
+    assert abs(s - (12.0 - 0.05)) < 1e-6     # onset 12.0 - pre_pad
+    assert abs(e - (13.4 + 0.08)) < 1e-6     # final end 13.4 + post_pad
+
+
+def test_sentence_snap_falls_back_to_word_when_no_punctuation():
+    words = [_sw("no", 0.0, 0.3), _sw("stops", 0.3, 0.9), _sw("here", 0.9, 1.4)]
+    s, e, path = snap_clip_to_sentences(
+        0.1, 1.2, words, word_start=0.05, word_end=1.28,
+    )
+    assert path == "word"
+    assert (s, e) == (0.05, 1.28)
+
+
+def test_sentence_snap_end_clamped_by_neighbor_falls_back():
+    words = _para()
+    # Forward end extension to 13.4 would cross a neighbour starting at 13.1 →
+    # sentence_end clamped to 13.1; with the word_end fallback the function
+    # must not overlap the neighbour.
+    s, e, path = snap_clip_to_sentences(
+        12.3, 13.0, words, word_start=12.2, word_end=13.0, neighbor_start=13.1,
+    )
+    assert e <= 13.1
+    assert s < e
+
+
+def test_sentence_snap_respects_max_duration():
+    words = _para()
+    # A tiny max_duration forces giving up the forward extension (cheaper start
+    # move survives first); result must never exceed the cap.
+    s, e, path = snap_clip_to_sentences(
+        12.3, 13.0, words, word_start=12.2, word_end=13.0, max_duration=1.0,
+    )
+    assert (e - s) <= 1.0 + 1e-9
+
+
+def test_sentence_snap_never_worse_than_word_edges():
+    # No usable words at all → word edges returned verbatim.
+    s, e, path = snap_clip_to_sentences(
+        5.0, 9.0, [], word_start=4.95, word_end=9.08,
+    )
+    assert (s, e, path) == (4.95, 9.08, "word")

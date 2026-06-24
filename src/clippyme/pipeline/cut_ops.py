@@ -134,3 +134,219 @@ def snap_clip_to_words(
     if new_end <= new_start:
         return start, end
     return new_start, new_end
+
+
+# ---------------------------------------------------------------------------
+# Sentence-boundary snapping (the truncation fix).
+#
+# `snap_clip_to_words` only fixes a clip opening/closing mid-WORD. Users still
+# saw clips cut mid-SENTENCE because the LLM's [start,end] drifts and the 0.6s
+# word-snap budget can't reach the actual sentence edge. This layer snaps the
+# clip to SENTENCE boundaries using the punctuation already attached to word
+# tokens (Deepgram smart_format / Whisper). It is asymmetric and guarded, per
+# the design council:
+#   - START moves BACKWARD (generously) to the sentence onset → include the
+#     whole opening sentence. Backward moves are nearly free (don't fight the
+#     60s cap or the next clip).
+#   - END moves FORWARD (tightly) to the sentence-final word → finish the
+#     thought. Forward moves fight the duration cap + neighbour overlap, so the
+#     budget is smaller and the clamps below always win.
+#   - Hard invariants (max duration, no overlap with a neighbour clip, source
+#     bounds) WIN over the sentence preference. On any conflict the function
+#     degrades — start-only, then end-only, then all the way back to the
+#     word-snapped edges. It is NEVER worse than `snap_clip_to_words` alone.
+#   - Detection is guarded against false positives (abbreviations, decimals,
+#     single-letter initials, bracketed audio-event tokens) so unpunctuated /
+#     multilingual transcripts no-op gracefully instead of cutting on "Dr.".
+# ---------------------------------------------------------------------------
+
+# How far START may travel backward to reach a sentence onset.
+DEFAULT_SENTENCE_BACK = 2.5
+# How far END may travel forward to finish a sentence (tighter — fights the cap).
+DEFAULT_SENTENCE_FWD = 1.5
+# Platform target ceiling. A sentence snap never pushes a clip past this.
+DEFAULT_MAX_CLIP_DURATION = 60.0
+
+# Characters that terminate a sentence across EN/IT/ES/FR/DE/PT.
+_SENTENCE_FINAL_CHARS = ".!?…"  # . ! ? …
+
+# Tokens ending in '.' that are NOT sentence ends. Lower-cased, with the dot.
+_ABBREVIATIONS = frozenset({
+    "mr.", "mrs.", "ms.", "dr.", "prof.", "sr.", "jr.", "st.", "vs.", "etc.",
+    "no.", "vol.", "p.", "pp.", "fig.", "inc.", "ltd.", "co.",
+    "e.g.", "i.e.",
+    # Italian
+    "sig.", "sig.ra", "dott.", "dott.ssa", "avv.", "ing.", "geom.", "rag.",
+    "sec.", "art.", "n.",
+    # Spanish / Portuguese / French
+    "sra.", "srta.", "ud.", "uds.", "m.", "mme.", "mlle.",
+})
+
+
+def _is_sentence_final(word: str) -> bool:
+    """True if `word` ends a sentence — guarded against the usual false friends.
+
+    Rejects: empty, bracketed audio events ``(laughter)``, abbreviations
+    (``Dr.``), single-letter initials (``U.``), and pure-number/decimal tokens
+    (``3.`` / ``3.5``) which carry a trailing dot but aren't sentence ends.
+    """
+    w = (word or "").strip()
+    if len(w) < 2:
+        return False
+    # Bracketed audio-event token, e.g. "(laughter)" — never a sentence end.
+    if w[0] == "(" and w[-1] == ")":
+        return False
+    if w[-1] not in _SENTENCE_FINAL_CHARS:
+        return False
+    lower = w.lower()
+    if lower in _ABBREVIATIONS:
+        return False
+    core = lower.rstrip(_SENTENCE_FINAL_CHARS)
+    if len(core) <= 1:           # single letter + dot → initial ("U.")
+        return False
+    # Internal dot remaining after stripping the terminator → dotted acronym
+    # ("U.S.", "U.S.A.", "p.m.") rather than a real sentence end.
+    if "." in core:
+        return False
+    # Pure number / decimal / thousands ("3.", "3.5", "1,000.") → not a sentence.
+    if core.replace(",", "").isdigit():
+        return False
+    return True
+
+
+def sentence_boundaries(words: list[dict]) -> tuple[list[float], list[float]]:
+    """Derive sentence ONSET starts and sentence-final ENDs from a flat word list.
+
+    `words` is the output of :func:`flatten_words` (time-ordered dicts carrying
+    ``start``/``end``/``word``). A word is an onset when it follows a
+    sentence-final word (and the very first word is always an onset). Returns
+    ``(onset_starts, final_ends)`` — both ascending. Empty when there is no
+    usable punctuation, so callers degrade to the word-snap path.
+    """
+    onsets: list[float] = []
+    ends: list[float] = []
+    prev_final = True  # the first spoken word opens the first sentence
+    for w in words:
+        if prev_final:
+            onsets.append(w["start"])
+        if _is_sentence_final(w.get("word", "")):
+            ends.append(w["end"])
+            prev_final = True
+        else:
+            prev_final = False
+    return onsets, ends
+
+
+def _onset_at_or_before(target: float, onsets: Iterable[float], budget: float):
+    """Largest onset ``<= target`` within ``budget`` seconds, else ``None``."""
+    best = None
+    for o in onsets:
+        if o <= target and (target - o) <= budget and (best is None or o > best):
+            best = o
+    return best
+
+
+def _final_at_or_after(target: float, ends: Iterable[float], budget: float):
+    """Smallest sentence-end ``>= target`` within ``budget`` seconds, else ``None``."""
+    best = None
+    for x in ends:
+        if x >= target and (x - target) <= budget and (best is None or x < best):
+            best = x
+    return best
+
+
+def snap_clip_to_sentences(
+    start: float,
+    end: float,
+    words: list[dict],
+    *,
+    word_start: float,
+    word_end: float,
+    back_budget: float = DEFAULT_SENTENCE_BACK,
+    fwd_budget: float = DEFAULT_SENTENCE_FWD,
+    pre_pad: float = DEFAULT_PRE_PAD,
+    post_pad: float = DEFAULT_POST_PAD,
+    max_duration: float = DEFAULT_MAX_CLIP_DURATION,
+    source_duration: float | None = None,
+    neighbor_start: float | None = None,
+    neighbor_end: float | None = None,
+) -> tuple[float, float, str]:
+    """Snap a clip to sentence boundaries, falling back to the word-snapped edges.
+
+    Parameters
+    ----------
+    start, end:
+        The RAW LLM-picked clip edges (anchors for the snap budgets).
+    word_start, word_end:
+        The already word-snapped + padded edges (today's behaviour). These are
+        the fallback — the result is guaranteed no worse than these.
+    neighbor_start:
+        Start of the nearest TIME-following clip (output edge). The clip end is
+        clamped below this so a forward extension never overlaps the next clip.
+    neighbor_end:
+        End of the nearest TIME-preceding clip. The clip start is clamped above
+        this so a backward extension never overlaps the previous clip.
+
+    Returns
+    -------
+    ``(new_start, new_end, path)`` where ``path`` is one of ``"sentence"``
+    (both edges moved to sentence boundaries), ``"sentence_start"`` /
+    ``"sentence_end"`` (one edge), or ``"word"`` (no sentence snap applied —
+    identical to the word-snap input). The path is logged by the caller.
+    """
+    onsets, ends = sentence_boundaries(words) if words else ([], [])
+
+    # When the transcript has NO sentence terminators at all (unpunctuated
+    # Whisper, some multilingual paths), the lone "onset" is just word[0] —
+    # transcript-start, not a real sentence boundary. Snapping a clip's start
+    # back to it would be arbitrary, so suppress sentence snapping entirely and
+    # let the word-snap edges stand (graceful no-op on the noisy sources).
+    if not ends:
+        onsets = []
+
+    # Candidate sentence edges (None when nothing is in budget / no punctuation).
+    onset = _onset_at_or_before(start, onsets, back_budget)
+    final = _final_at_or_after(end, ends, fwd_budget)
+
+    sent_start = max(0.0, onset - pre_pad) if onset is not None else None
+    if sent_start is not None and neighbor_end is not None:
+        sent_start = max(sent_start, neighbor_end)
+
+    sent_end = (final + post_pad) if final is not None else None
+    if sent_end is not None:
+        if source_duration is not None:
+            sent_end = min(sent_end, float(source_duration))
+        if neighbor_start is not None:
+            sent_end = min(sent_end, neighbor_start)
+
+    def _valid(s: float, e: float) -> bool:
+        return e > s and (e - s) <= max_duration
+
+    # Graceful degradation: prefer both sentence edges, then the cheaper
+    # start-only move, then end-only, then the plain word-snapped edges. The
+    # backward start move is the safest, so it survives a duration conflict
+    # before the forward end move does.
+    s_candidates = [sent_start, word_start]
+    e_candidates = [sent_end, word_end]
+    for s in s_candidates:
+        if s is None:
+            continue
+        for e in e_candidates:
+            if e is None:
+                continue
+            if _valid(s, e):
+                if s == sent_start and e == sent_end:
+                    path = "sentence"
+                elif s == sent_start:
+                    path = "sentence_start"
+                elif e == sent_end:
+                    path = "sentence_end"
+                else:
+                    path = "word"
+                return s, e, path
+
+    # Last resort: the word-snapped edges (never worse than today). They are
+    # already validated by snap_clip_to_words, but re-assert ordering.
+    if word_end > word_start:
+        return word_start, word_end, "word"
+    return start, end, "word"

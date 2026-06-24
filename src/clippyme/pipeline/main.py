@@ -115,11 +115,16 @@ normally on the words alone.
 - start on a complete sentence boundary; end on a natural beat
 - no cold-open ambiguity ("...and then she said" with no setup)
 - 0 ≤ start < end ≤ VIDEO_DURATION_SECONDS
+- ANCHOR TO REAL TIMESTAMPS: `start` MUST equal the `s` (start) of the FIRST
+  word of the opening sentence in WORDS_JSON, and `end` MUST equal the `e`
+  (end) of the LAST word of the closing sentence. Do NOT invent times between
+  words and do NOT round to whole seconds — copy the exact `s`/`e` of those two
+  words. This is how you avoid cutting mid-sentence or mid-word.
 - start and end are FLOAT SECONDS with up to 3 decimals (e.g. 12.340, 1517.724).
   NEVER emit "MM.SS.mmm" (e.g. 25.17.724), "MM:SS", "HH:MM:SS", or any two-dot / colon
   time format. A value of 1517.724 is correct; "25.17.724" is a BUG.
-- Prefer starting 0.2–0.4s BEFORE the hook and ending 0.2–0.4s AFTER the payoff
-- Never cut in the middle of a word or phrase
+- Never cut in the middle of a word, phrase, or sentence — the clip must open on
+  the first word of a sentence and close on the last word of a sentence.
 - viral_reason MUST be at least 20 characters and cite the specific hook, payoff or quote
 - viral_hook_text is REQUIRED, NEVER empty: 3-8 words, written AS A SCROLL-STOPPING OVERLAY — NOT a transcript quote, NOT the first words the speaker says. It is standalone copywriting designed to make someone stop scrolling on TikTok/Reels. Use one of these proven patterns:
     * Curiosity gap: "Nessuno ti dice questo", "What they don't want you to know"
@@ -977,19 +982,53 @@ if __name__ == '__main__':
             # first/last word. Done BEFORE the metadata write so subtitles / Smart
             # Cut (which key off clip.start/end) stay aligned with the render.
             # No-op when the transcript carries no word-level timing.
-            from clippyme.pipeline.cut_ops import flatten_words, snap_clip_to_words
+            # Two-stage edge repair: word-snap (no mid-WORD cut) then
+            # sentence-snap (no mid-SENTENCE cut, the truncation fix). The
+            # sentence stage extends the start back to the sentence onset and
+            # the end forward to the sentence-final word, but its forward
+            # extension is clamped so it never exceeds 60s or overlaps a
+            # time-adjacent clip. Neighbour bounds come from the RAW clip
+            # intervals because shorts are score-sorted, not time-sorted, so
+            # "adjacent in the list" is not "adjacent in time".
+            from clippyme.pipeline.cut_ops import (
+                flatten_words, snap_clip_to_words, snap_clip_to_sentences,
+            )
             _words = flatten_words(transcript)
-            for _clip_entry in clips_data.get('shorts', []):
+            _shorts = clips_data.get('shorts', [])
+            _raw_iv = []
+            for _c in _shorts:
+                try:
+                    _raw_iv.append((float(_c['start']), float(_c['end'])))
+                except (KeyError, TypeError, ValueError):
+                    _raw_iv.append(None)
+            for _idx, _clip_entry in enumerate(_shorts):
                 _clip_entry.setdefault('reframe_mode', args.reframe_mode)
-                if _words and 'start' in _clip_entry and 'end' in _clip_entry:
-                    _rs, _re = _clip_entry['start'], _clip_entry['end']
-                    _ss, _se = snap_clip_to_words(
-                        _rs, _re, _words, source_duration=duration or None,
-                    )
-                    if (_ss, _se) != (_rs, _re):
-                        print(f"   🎯 word-snap: [{_rs:.2f},{_re:.2f}] → [{_ss:.2f},{_se:.2f}]")
-                        _clip_entry['start'] = _ss
-                        _clip_entry['end'] = _se
+                if not (_words and 'start' in _clip_entry and 'end' in _clip_entry):
+                    continue
+                _rs, _re = _clip_entry['start'], _clip_entry['end']
+                _ws, _we = snap_clip_to_words(
+                    _rs, _re, _words, source_duration=duration or None,
+                )
+                _self = _raw_iv[_idx]
+                _nbr_start = _nbr_end = None
+                if _self is not None:
+                    _rs0, _re0 = _self
+                    _follow = [iv[0] for k, iv in enumerate(_raw_iv)
+                               if k != _idx and iv is not None and iv[0] >= _re0]
+                    _precede = [iv[1] for k, iv in enumerate(_raw_iv)
+                                if k != _idx and iv is not None and iv[1] <= _rs0]
+                    _nbr_start = min(_follow) if _follow else None
+                    _nbr_end = max(_precede) if _precede else None
+                _ss, _se, _path = snap_clip_to_sentences(
+                    _rs, _re, _words,
+                    word_start=_ws, word_end=_we,
+                    source_duration=duration or None,
+                    neighbor_start=_nbr_start, neighbor_end=_nbr_end,
+                )
+                if (_ss, _se) != (_rs, _re):
+                    print(f"   🎯 snap[{_path}]: [{_rs:.2f},{_re:.2f}] → [{_ss:.2f},{_se:.2f}]")
+                    _clip_entry['start'] = _ss
+                    _clip_entry['end'] = _se
             # Persist the job's output aspect so the post-hoc /api/reframe
             # endpoint can re-render at the SAME ratio. Without this it defaults
             # to 9:16 and silently squashes a 1:1/16:9 job when the user flips
