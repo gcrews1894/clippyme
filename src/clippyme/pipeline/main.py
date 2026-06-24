@@ -992,9 +992,24 @@ if __name__ == '__main__':
             # "adjacent in the list" is not "adjacent in time".
             from clippyme.pipeline.cut_ops import (
                 flatten_words, snap_clip_to_words, snap_clip_to_sentences,
+                refine_edges_to_silence,
             )
             _words = flatten_words(transcript)
             _shorts = clips_data.get('shorts', [])
+            # Audio-aware final polish: detect the WAVEFORM silence troughs once
+            # for the whole source, then nudge each transcript-snapped edge into
+            # the nearest trough so a cut never clips a word's attack/release.
+            # Default-on, fully graceful: missing ffmpeg / no silences / env
+            # opt-out (CLIPPYME_SILENCE_SNAP=0) all leave the edges untouched.
+            _silences: list = []
+            if os.environ.get("CLIPPYME_SILENCE_SNAP", "1").lower() not in ("0", "false", "no"):
+                try:
+                    from clippyme.pipeline.media_probe import detect_silences
+                    _silences = detect_silences(input_video)
+                    if _silences:
+                        print(f"   🔊 waveform: {len(_silences)} silence troughs detected")
+                except Exception as _exc:  # never break the pipeline on audio probe
+                    print(f"   ⚠️  silence detection skipped: {_exc}")
             _raw_iv = []
             for _c in _shorts:
                 try:
@@ -1025,6 +1040,17 @@ if __name__ == '__main__':
                     source_duration=duration or None,
                     neighbor_start=_nbr_start, neighbor_end=_nbr_end,
                 )
+                # Stage 3 (audio-aware): nudge the transcript-snapped edges into
+                # the nearest waveform silence trough. No-op when no silence is
+                # near an edge or detection was skipped.
+                if _silences:
+                    _ss, _se, _spath = refine_edges_to_silence(
+                        _ss, _se, _silences,
+                        source_duration=duration or None,
+                        neighbor_start=_nbr_start, neighbor_end=_nbr_end,
+                    )
+                    if _spath != "none":
+                        _path = f"{_path}+{_spath}"
                 if (_ss, _se) != (_rs, _re):
                     print(f"   🎯 snap[{_path}]: [{_rs:.2f},{_re:.2f}] → [{_ss:.2f},{_se:.2f}]")
                     _clip_entry['start'] = _ss

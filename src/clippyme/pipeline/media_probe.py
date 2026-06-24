@@ -25,6 +25,7 @@ prior behaviour instead of breaking.
 """
 from __future__ import annotations
 
+import re
 import subprocess
 
 
@@ -155,3 +156,81 @@ def probe_is_variable_frame_rate(video_path: str, threshold: float = 0.5) -> boo
         return is_vfr(parts[0], parts[1], threshold=threshold)
     except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
         return False
+
+
+# --- Waveform silence detection --------------------------------------------
+# ffmpeg's `silencedetect` filter emits, to stderr, one line per silence edge:
+#   [silencedetect @ 0x..] silence_start: 12.345
+#   [silencedetect @ 0x..] silence_end: 13.012 | silence_duration: 0.667
+# Parsing that gives the actual low-energy troughs in the WAVEFORM — the
+# cleanest places to put a cut (a cut inside a silence never clips a word's
+# attack/release). Used to refine the transcript-derived clip edges (see
+# cut_ops.refine_edges_to_silence). Pure parser is host-unit-tested; the
+# ffmpeg wrapper degrades gracefully (missing ffmpeg / odd file → []).
+
+_SILENCE_START_RE = re.compile(r"silence_start:\s*(-?\d+(?:\.\d+)?)")
+_SILENCE_END_RE = re.compile(r"silence_end:\s*(-?\d+(?:\.\d+)?)")
+
+
+def parse_silencedetect(stderr_text: str) -> list[tuple[float, float]]:
+    """Parse ffmpeg ``silencedetect`` stderr into ``[(start, end), ...]`` seconds.
+
+    Only COMPLETE intervals are returned: a trailing ``silence_start`` with no
+    matching ``silence_end`` (silence running to EOF) is dropped, since clip
+    edges never need a trough that has no closing boundary. Output is ascending
+    and never contains an inverted/zero-length interval.
+    """
+    if not stderr_text:
+        return []
+    intervals: list[tuple[float, float]] = []
+    pending_start: float | None = None
+    for line in stderr_text.splitlines():
+        m_start = _SILENCE_START_RE.search(line)
+        if m_start:
+            try:
+                pending_start = float(m_start.group(1))
+            except ValueError:
+                pending_start = None
+            continue
+        m_end = _SILENCE_END_RE.search(line)
+        if m_end and pending_start is not None:
+            try:
+                end = float(m_end.group(1))
+            except ValueError:
+                pending_start = None
+                continue
+            if end > pending_start:
+                intervals.append((pending_start, end))
+            pending_start = None
+    intervals.sort(key=lambda iv: iv[0])
+    return intervals
+
+
+def detect_silences(
+    media_path: str,
+    noise_db: float = -30.0,
+    min_dur: float = 0.08,
+    timeout: int = 180,
+) -> list[tuple[float, float]]:
+    """Run ffmpeg ``silencedetect`` on a media file's audio → silence intervals.
+
+    ``noise_db`` is the level below which audio is treated as silent (speech
+    sits well above −30 dB); ``min_dur`` is the shortest silence reported.
+    Audio-only decode (``-vn``) so video size doesn't matter. Never raises —
+    a missing ffmpeg, no audio stream, or a non-zero exit returns ``[]`` so the
+    caller simply skips waveform refinement and keeps the transcript edges.
+    """
+    if not media_path:
+        return []
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-nostats", "-i", media_path, "-vn",
+             "-af", f"silencedetect=noise={noise_db}dB:d={min_dur}",
+             "-f", "null", "-"],
+            capture_output=True, text=True, timeout=timeout,
+        )
+        # silencedetect writes to stderr regardless of return code; parse what
+        # we got. (ffmpeg returns 0 on a successful null-mux.)
+        return parse_silencedetect(result.stderr or "")
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        return []

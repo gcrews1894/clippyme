@@ -350,3 +350,119 @@ def snap_clip_to_sentences(
     if word_end > word_start:
         return word_start, word_end, "word"
     return start, end, "word"
+
+
+# ---------------------------------------------------------------------------
+# Waveform silence-trough edge refinement (audio-aware final polish).
+#
+# The word/sentence snaps above are TRANSCRIPT-derived: they land the cut at
+# `word.end + fixed pad`, but ASR word timestamps drift 50-100ms and the pad is
+# a guess. The cleanest cut actually lands inside a real low-energy SILENCE
+# trough (video-use: "silence gaps are the cleanest cut targets") so a word's
+# attack/release is never clipped and no half-breath bleeds across the cut.
+# This gently nudges each already-snapped edge (within a small window) into the
+# nearest silence interval detected from the WAVEFORM
+# (media_probe.detect_silences). It only ever moves toward quiet, so it is a
+# strict improvement; no silence near an edge → that edge is left untouched.
+# ---------------------------------------------------------------------------
+
+# An edge may move at most this far to reach a silence trough — a gentle polish,
+# never a re-pick of the clip.
+DEFAULT_SILENCE_WINDOW = 0.35
+# Start sits this far before speech resumes (inside the trailing silence).
+DEFAULT_SILENCE_LEAD = 0.04
+# End sits this far after speech stops (inside the leading silence).
+DEFAULT_SILENCE_TAIL = 0.06
+
+
+def _clamp(value: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, value))
+
+
+def refine_edges_to_silence(
+    start: float,
+    end: float,
+    silences: list[tuple[float, float]],
+    *,
+    window: float = DEFAULT_SILENCE_WINDOW,
+    lead: float = DEFAULT_SILENCE_LEAD,
+    tail: float = DEFAULT_SILENCE_TAIL,
+    source_duration: float | None = None,
+    neighbor_start: float | None = None,
+    neighbor_end: float | None = None,
+) -> tuple[float, float, str]:
+    """Nudge a clip ``[start, end]`` into the nearest waveform silence trough.
+
+    ``silences`` is the ``[(s, e), ...]`` list from
+    :func:`media_probe.detect_silences`. For the START edge we snap to the END
+    of the silence that immediately precedes the first word (clip opens just as
+    sound begins); for the END edge we snap to the START of the silence that
+    follows the last word (clip closes just as sound stops). An edge only moves
+    when a silence boundary lies within ``window`` of it; otherwise it is kept.
+
+    Returns ``(new_start, new_end, path)`` with ``path`` in ``silence`` /
+    ``silence_start`` / ``silence_end`` / ``none``. Guarantees a valid,
+    non-inverted range that respects the source + neighbour clamps; on any
+    conflict the original edges are returned unchanged (never worse).
+    """
+    try:
+        start = float(start)
+        end = float(end)
+    except (TypeError, ValueError):
+        return start, end, "none"
+    if end <= start or not silences:
+        return start, end, "none"
+
+    new_start, new_end = start, end
+    moved_start = moved_end = False
+
+    # START → end of the nearest preceding silence trough.
+    best = None
+    best_dist = window
+    for s, e in silences:
+        d = abs(e - start)
+        if d <= best_dist:
+            best_dist = d
+            best = (s, e)
+    if best is not None:
+        s, e = best
+        cand = _clamp(e - lead, s, e)
+        if cand >= 0.0:
+            new_start = cand
+            moved_start = True
+
+    # END → start of the nearest following silence trough.
+    best = None
+    best_dist = window
+    for s, e in silences:
+        d = abs(s - end)
+        if d <= best_dist:
+            best_dist = d
+            best = (s, e)
+    if best is not None:
+        s, e = best
+        new_end = _clamp(s + tail, s, e)
+        moved_end = True
+
+    # Clamps: source bounds + neighbour clips win.
+    new_start = max(0.0, new_start)
+    if neighbor_end is not None:
+        new_start = max(new_start, neighbor_end)
+    if source_duration is not None:
+        new_end = min(new_end, float(source_duration))
+    if neighbor_start is not None:
+        new_end = min(new_end, neighbor_start)
+
+    # Never invert / collapse the clip — fall back to the input edges.
+    if new_end <= new_start:
+        return start, end, "none"
+
+    if moved_start and moved_end:
+        path = "silence"
+    elif moved_start:
+        path = "silence_start"
+    elif moved_end:
+        path = "silence_end"
+    else:
+        path = "none"
+    return new_start, new_end, path

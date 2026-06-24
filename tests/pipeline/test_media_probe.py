@@ -9,13 +9,58 @@ import pytest
 
 from clippyme.pipeline.media_probe import (
     audio_sync_seek_args,
+    detect_silences,
     is_vfr,
     parse_frame_rate,
+    parse_silencedetect,
     parse_start_time,
     probe_is_variable_frame_rate,
     probe_stream_start_time,
     reconcile_fps,
 )
+
+
+# --- parse_silencedetect ----------------------------------------------------
+
+def test_parse_silencedetect_pairs_start_and_end():
+    text = (
+        "[silencedetect @ 0x1] silence_start: 12.345\n"
+        "[silencedetect @ 0x1] silence_end: 13.012 | silence_duration: 0.667\n"
+        "[silencedetect @ 0x1] silence_start: 20.0\n"
+        "[silencedetect @ 0x1] silence_end: 20.5 | silence_duration: 0.5\n"
+    )
+    assert parse_silencedetect(text) == [(12.345, 13.012), (20.0, 20.5)]
+
+
+def test_parse_silencedetect_drops_trailing_unmatched_start():
+    text = (
+        "silence_start: 5.0\n"
+        "silence_end: 5.4 | silence_duration: 0.4\n"
+        "silence_start: 99.0\n"        # runs to EOF, no end → dropped
+    )
+    assert parse_silencedetect(text) == [(5.0, 5.4)]
+
+
+def test_parse_silencedetect_ignores_noise_and_inversions():
+    text = (
+        "random ffmpeg banner line\n"
+        "silence_start: 3.0\n"
+        "silence_end: 2.0\n"           # inverted → dropped
+        "silence_start: 7.0\n"
+        "silence_end: 7.25 | silence_duration: 0.25\n"
+    )
+    assert parse_silencedetect(text) == [(7.0, 7.25)]
+
+
+def test_parse_silencedetect_empty():
+    assert parse_silencedetect("") == []
+    assert parse_silencedetect("no markers here") == []
+
+
+def test_detect_silences_never_raises_on_bad_path():
+    # Missing ffmpeg or unreadable file → [] (graceful), never an exception.
+    assert detect_silences("") == []
+    assert isinstance(detect_silences("/no/such/file.flac"), list)
 
 
 # --- parse_frame_rate ---------------------------------------------------------

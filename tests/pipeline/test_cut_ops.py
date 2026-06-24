@@ -8,6 +8,7 @@ from clippyme.pipeline.cut_ops import (
     snap_clip_to_words,
     snap_clip_to_sentences,
     sentence_boundaries,
+    refine_edges_to_silence,
     _is_sentence_final,
 )
 
@@ -189,3 +190,49 @@ def test_sentence_snap_never_worse_than_word_edges():
         5.0, 9.0, [], word_start=4.95, word_end=9.08,
     )
     assert (s, e, path) == (4.95, 9.08, "word")
+
+
+# --- refine_edges_to_silence (waveform polish) ------------------------------
+
+def test_silence_refine_snaps_start_to_trough_end_and_end_to_trough_start():
+    # Silence troughs: one ending just before the clip start, one starting just
+    # after the clip end. Start snaps to first trough's END - lead; end snaps to
+    # second trough's START + tail.
+    silences = [(9.7, 10.0), (20.0, 20.6)]
+    s, e, path = refine_edges_to_silence(
+        10.05, 19.95, silences, lead=0.04, tail=0.06, window=0.35,
+    )
+    assert path == "silence"
+    assert abs(s - (10.0 - 0.04)) < 1e-6   # trough end - lead
+    assert abs(e - (20.0 + 0.06)) < 1e-6   # trough start + tail
+
+
+def test_silence_refine_no_trough_in_window_is_noop():
+    silences = [(0.0, 0.5), (100.0, 100.5)]
+    s, e, path = refine_edges_to_silence(10.0, 20.0, silences, window=0.35)
+    assert (s, e, path) == (10.0, 20.0, "none")
+
+
+def test_silence_refine_empty_list_is_noop():
+    assert refine_edges_to_silence(10.0, 20.0, []) == (10.0, 20.0, "none")
+
+
+def test_silence_refine_respects_neighbor_and_source_clamps():
+    silences = [(9.7, 10.0), (20.0, 20.6)]
+    # neighbour_start caps the end below the trough+tail; source caps too.
+    s, e, path = refine_edges_to_silence(
+        10.05, 19.95, silences, neighbor_start=20.02, source_duration=25.0,
+    )
+    assert e <= 20.02
+    assert s < e
+
+
+def test_silence_refine_never_inverts():
+    # neighbour_start clamps the end BELOW the refined start → would invert, so
+    # the original edges are returned unchanged (never a collapsed clip).
+    silences = [(9.7, 10.0)]   # start would snap to ~9.96
+    s, e, path = refine_edges_to_silence(
+        10.05, 19.95, silences, neighbor_start=9.5,
+    )
+    assert (s, e, path) == (10.05, 19.95, "none")
+    assert e > s
