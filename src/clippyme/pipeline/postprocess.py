@@ -37,9 +37,11 @@ def normalize_audio(video_path):
     """
     temp_out = video_path + ".norm.mp4"
     try:
-        # Pass 1: Analyze
+        # Pass 1: Analyze. -vn: loudnorm only reads audio — without it ffmpeg
+        # fully decodes every video frame into the null muxer, more than
+        # doubling this pass on a typical clip, for every clip of every job.
         analyze_cmd = [
-            'ffmpeg', '-y', '-i', video_path,
+            'ffmpeg', '-y', '-i', video_path, '-vn',
             '-af', 'loudnorm=I=-14:TP=-1.5:LRA=7:print_format=json',
             '-f', 'null', os.devnull
         ]

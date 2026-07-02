@@ -20,6 +20,7 @@ from google import genai
 from dotenv import load_dotenv
 import json
 
+from clippyme.domain.encode import x264_video_args
 from clippyme.pipeline.reframe_ops import OneEuroFilter, drift_to_center, salient_crop_center
 
 import warnings
@@ -1113,8 +1114,10 @@ if __name__ == '__main__':
                     # downstream reframe render (which writes raw frames at a fixed
                     # -r) can't drift against audio even if the original download was
                     # VFR (ported from kamilstanuch/Autocrop-vertical).
-                    '-c:v', 'libx264', '-crf', '18', '-preset', 'fast',
-                    '-pix_fmt', 'yuv420p', '-vsync', 'cfr',
+                    # Shared encode settings (CRF 18 / medium) — this slice feeds
+                    # every later generation, so it must not be the weak link.
+                    *x264_video_args(faststart=False),
+                    '-vsync', 'cfr',
                     '-c:a', 'aac',
                     clip_source_path,
                 ]
@@ -1151,6 +1154,11 @@ if __name__ == '__main__':
                     select_cover_frame(clip_final_path)
                     print(f"   ✅ Clip {i+1} ready: {clip_final_path}")
                     print(f"      📼 Source slice preserved at: {clip_source_path}")
+                else:
+                    # Without this line the clip is simply ABSENT from the
+                    # results grid with zero breadcrumb in the job log.
+                    print(f"   ❌ Clip {i+1} reframe failed — skipping "
+                          f"(source slice kept at {clip_source_path})", flush=True)
 
                 # NOTE: we intentionally do NOT delete clip_source_path.
                 # It's needed by POST /api/reframe/{job_id}/{clip_index} to

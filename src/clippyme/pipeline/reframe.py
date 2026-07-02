@@ -1270,9 +1270,11 @@ def _render_global_smooth(input_video, ffmpeg_process, cameraman, speaker_tracke
     try:
         with tqdm(total=total_frames, desc="   Pass 1", file=sys.stdout) as pbar:
             while cap.isOpened():
-                ret, frame = cap.read()
-                if not ret:
-                    break
+                # Scene bookkeeping first (needs only frame_number) so we know
+                # whether this frame's PIXELS are ever looked at: detection runs
+                # on even frames of TRACK/WIDE scenes only. Everything else can
+                # cap.grab() — decode without the retrieve+BGR-convert memcpy —
+                # which trims a solid chunk of pass-1 cost for free.
                 if current_scene_index < len(scene_boundaries):
                     _, end_f = scene_boundaries[current_scene_index]
                     if frame_number >= end_f and current_scene_index < len(scene_boundaries) - 1:
@@ -1286,12 +1288,19 @@ def _render_global_smooth(input_video, ffmpeg_process, cameraman, speaker_tracke
                         speaker_tracker.reset(frame_number)
                         detection_smoother.reset()
                 strat = scene_strategies[current_scene_index] if current_scene_index < len(scene_strategies) else 'TRACK'
+                needs_pixels = strat not in ('DISABLED', 'GENERAL') and frame_number % 2 == 0
+                if needs_pixels:
+                    ret, frame = cap.read()
+                else:
+                    ret = cap.grab()
+                if not ret:
+                    break
                 strategies.append(strat)
                 scene_ids.append(current_scene_index)
                 if strat in ('DISABLED', 'GENERAL'):
                     targets.append(None)
                 else:
-                    if frame_number % 2 == 0:
+                    if needs_pixels:
                         candidates = detect_face_candidates(frame)
                         candidates = detection_smoother.smooth(candidates, frame_number)
                         for cand in candidates:

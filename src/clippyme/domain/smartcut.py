@@ -594,17 +594,19 @@ def _probe_video(clip_path: str) -> Optional[dict]:
     if cached is not None:
         return cached
 
+    # One ffprobe for BOTH streams (was two subprocess spawns per probe):
+    # codec_type distinguishes the video and audio entries in the output.
     rc, out, _ = _run([
         "ffprobe", "-v", "error",
-        "-select_streams", "v:0",
-        "-show_entries", "stream=width,height,r_frame_rate",
+        "-show_entries", "stream=codec_type,width,height,r_frame_rate,sample_rate",
         "-of", "json",
         clip_path,
     ], timeout=15)
     if rc != 0:
         return None
     try:
-        v = json.loads(out)["streams"][0]
+        streams = json.loads(out).get("streams", [])
+        v = next(s for s in streams if s.get("codec_type") == "video")
         fps_str = v["r_frame_rate"]
         if "/" in fps_str:
             num, den = fps_str.split("/")
@@ -612,24 +614,15 @@ def _probe_video(clip_path: str) -> Optional[dict]:
         else:
             fps_num, fps_den = int(float(fps_str) * 1000), 1000
         width, height = int(v["width"]), int(v["height"])
-    except (KeyError, ValueError, json.JSONDecodeError):
+    except (KeyError, ValueError, StopIteration, json.JSONDecodeError):
         return None
 
-    rc, out, _ = _run([
-        "ffprobe", "-v", "error",
-        "-select_streams", "a:0",
-        "-show_entries", "stream=sample_rate",
-        "-of", "json",
-        clip_path,
-    ], timeout=15)
     samplerate = 48000
-    if rc == 0:
-        try:
-            a_streams = json.loads(out).get("streams", [])
-            if a_streams:
-                samplerate = int(a_streams[0]["sample_rate"])
-        except (json.JSONDecodeError, KeyError, ValueError):
-            pass
+    try:
+        a = next(s for s in streams if s.get("codec_type") == "audio")
+        samplerate = int(a["sample_rate"])
+    except (KeyError, ValueError, StopIteration):
+        pass
 
     result = {
         "fps_num": fps_num,

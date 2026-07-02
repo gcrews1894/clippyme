@@ -143,3 +143,36 @@ extensions (strict Node ESM resolution; Vite accepts them unchanged).
 
 **Verification (Wave 6):** `npm test` → 54 passed (was 26); `npm run lint` →
 0 warnings; `npm run build` → clean; host pytest → 593 passed.
+Commit `92bcad4`.
+
+## Wave 4 — pipeline perf quick wins (2026-07-02)
+
+**11. Loudnorm analysis decoded the whole video stream for an audio-only
+measurement.** `postprocess.normalize_audio` pass 1 now passes `-vn`: without
+it ffmpeg decoded every 1080×1920 frame into the null muxer while loudnorm
+only reads audio — typically >50% of normalize wall-time, on every clip of
+every job (and again on every `--reframe-only`). Measured values identical.
+
+**12. Global-smooth pass 1 fully decoded+converted frames it never looks at.**
+Detection runs on even frames of TRACK/WIDE scenes only; odd frames and
+DISABLED/GENERAL scenes now use `cap.grab()` (decode without the
+retrieve+BGR-convert memcpy) instead of `cap.read()`. Comfort mode is default
+on, so this trims every AUTO clip's dominant tracking pass.
+
+**13. Source-slice cut used raw `-crf 18 -preset fast` literals.** The one
+remaining scattered encode literal (`main.py`) — the exact drift
+`encode.x264_video_args()` exists to prevent, and `fast` contradicted the
+centralized `medium`. Now routed through the shared helper
+(`faststart=False`: internal intermediate).
+
+**14. `smartcut._probe_video` spawned two ffprobe processes per probe.**
+Video + audio stream entries now come from ONE `-show_entries
+stream=codec_type,…` call, halving probe subprocess spawns on the smart-cut
+path (the result was already LRU-cached per path+mtime).
+
+**15. Silent per-clip reframe failure got a log line.** The render loop had
+no `else` branch when `process_video_to_vertical` returned False — the clip
+was simply absent from the results grid with zero breadcrumb in the job log.
+
+**Verification (Wave 4):** host `pytest -m "not integration"` → 593 passed;
+Docker `pytest -m integration` → 30 passed, 37.0s; CI ruff rule set → clean.
