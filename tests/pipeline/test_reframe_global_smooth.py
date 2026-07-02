@@ -241,3 +241,30 @@ def test_global_smooth_matches_singlepass_frame_count(tmp_path, monkeypatch):
     single = _count(str(tmp_path / "single.mp4"), global_smooth=False)
     two = _count(str(tmp_path / "two.mp4"), global_smooth=True)
     assert single == two
+
+
+def test_zoom_fold_renders_valid_vertical(tmp_path, monkeypatch):
+    """Wave-9 fold: the Ken Burns zoompan rides INSIDE the master encode
+    (zoom_end) instead of a separate apply_subtle_zoom pass. Assert the fused
+    encode still produces a valid 9:16 output with ~the same frame count."""
+    src = str(tmp_path / "src.mp4")
+    out = str(tmp_path / "out_zoom.mp4")
+    _make_synthetic_clip(src)
+
+    monkeypatch.setattr(reframe, "ASPECT_RATIO", 9 / 16)
+
+    ok = reframe.process_video_to_vertical(src, out, reframe_mode="auto",
+                                           zoom_end=1.05)
+    assert ok is True
+    assert os.path.exists(out) and os.path.getsize(out) > 0
+
+    cap = cv2.VideoCapture(out)
+    try:
+        w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    finally:
+        cap.release()
+    assert h > w, f"expected vertical output, got {w}x{h}"
+    # zoompan d=1 must not change the frame count materially.
+    assert abs(n - 45) <= 2, f"frame count drifted: {n} vs 45"

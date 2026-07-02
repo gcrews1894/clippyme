@@ -240,4 +240,20 @@ Advisory: any pre-screen failure falls through to the real pass. Kill-switch
 `predict_polish_saving`) host-tested in `tests/pipeline/test_cut_ops.py`.
 
 **Verification (Wave 8):** host pytest → 607 passed; Docker integration →
-33 passed, 47.4s.
+33 passed, 47.4s. Commit `2a51f6d`.
+
+## Wave 9 — Ken Burns zoom folded into the master encode (2026-07-02)
+
+**20. `apply_subtle_zoom` no longer costs its own generation.**
+`process_video_to_vertical(zoom_end=…)` appends the 1.0→1.05 `zoompan` to the
+master rawvideo encode's `-vf` (frame count from the existing probe cap), so
+every clip pays one decode+encode less — in the main clip loop AND on every
+`--reframe-only` request. `--no-zoom` passes `zoom_end=None`; an unreadable
+container frame count falls back to the legacy `apply_subtle_zoom` post-pass
+inside the function, so the caller contract is unchanged (zoom requested →
+zoom delivered). The whole-video fallback paths never zoomed and still don't.
+Integration test `test_zoom_fold_renders_valid_vertical` asserts a valid 9:16
+output with an unchanged frame count.
+
+**Verification (Wave 9):** host pytest → 607 passed; Docker integration →
+34 passed, 50.8s; CI ruff rule set → clean.

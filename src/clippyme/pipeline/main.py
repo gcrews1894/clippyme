@@ -869,7 +869,13 @@ if __name__ == '__main__':
         final_output = args.output
         tmp_output = final_output + ".reframe.tmp.mp4"
         try:
-            success = process_video_to_vertical(args.input, tmp_output, reframe_mode=args.reframe_mode)
+            # Ken Burns zoom is folded into the master encode (zoom_end) —
+            # one decode+encode generation cheaper than the old separate
+            # apply_subtle_zoom pass; reframe.py falls back to the post-pass
+            # itself if the fold is impossible.
+            success = process_video_to_vertical(
+                args.input, tmp_output, reframe_mode=args.reframe_mode,
+                zoom_end=None if args.no_zoom else 1.05)
             if not success:
                 print("❌ Reframe failed.")
                 if os.path.exists(tmp_output):
@@ -878,8 +884,6 @@ if __name__ == '__main__':
                     except OSError:
                         pass
                 sys.exit(1)
-            if not args.no_zoom:
-                apply_subtle_zoom(tmp_output)
             normalize_audio(tmp_output)
             select_cover_frame(tmp_output)
             os.replace(tmp_output, final_output)
@@ -1144,12 +1148,16 @@ if __name__ == '__main__':
                     print(f"   ❌ ffmpeg cut TIMED OUT after 10 min — skipping this clip. Input may be corrupt or seek is stuck.", flush=True)
                     continue
 
-                # Process vertical from the preserved source slice
-                success = process_video_to_vertical(clip_source_path, clip_final_path, reframe_mode=args.reframe_mode)
+                # Process vertical from the preserved source slice. Ken Burns
+                # zoom rides inside the master encode (zoom_end) — see
+                # process_video_to_vertical; the old apply_subtle_zoom pass
+                # only runs as its internal fallback.
+                success = process_video_to_vertical(
+                    clip_source_path, clip_final_path,
+                    reframe_mode=args.reframe_mode,
+                    zoom_end=None if args.no_zoom else 1.05)
 
                 if success:
-                    if not args.no_zoom:
-                        apply_subtle_zoom(clip_final_path)
                     normalize_audio(clip_final_path)
                     select_cover_frame(clip_final_path)
                     print(f"   ✅ Clip {i+1} ready: {clip_final_path}")

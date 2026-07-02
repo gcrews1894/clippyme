@@ -1426,9 +1426,16 @@ def _render_global_smooth(input_video, ffmpeg_process, cameraman, speaker_tracke
             print(f"   ❗ High drop rate ({pct:.1f}%) — likely a systemic bug, not isolated corrupt frames. Re-run with REFRAME_DEBUG_EXC=1 for full tracebacks.", file=sys.stderr)
 
 
-def process_video_to_vertical(input_video, final_output_video, reframe_mode='auto'):
+def process_video_to_vertical(input_video, final_output_video, reframe_mode='auto',
+                              zoom_end=None):
     """
     Core logic to convert horizontal video to vertical using scene detection and Active Speaker Tracking (MediaPipe).
+
+    zoom_end: when set (e.g. 1.05), the Ken Burns 1.0→zoom_end zoompan is
+    folded INTO the master encode instead of running as a separate
+    apply_subtle_zoom decode+encode afterwards — one generation cheaper per
+    clip. Falls back to the legacy post-pass when the container's frame count
+    is unreadable (zoompan needs it for the per-frame increment).
     """
     # 'object' is the legacy name for the FrameShift face-first 'subject' mode —
     # normalize once here so the rest of this function only ever sees 'subject'.
@@ -1493,6 +1500,7 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
     # the cv2 reader. Within tolerance the detector value is kept → byte-identical.
     _probe_cap = cv2.VideoCapture(input_video)
     _cv2_fps = _probe_cap.get(cv2.CAP_PROP_FPS)
+    _probe_total_frames = int(_probe_cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
     _probe_cap.release()
     _reconciled_fps = reconcile_fps(_cv2_fps, fps)
     if _reconciled_fps != fps:
@@ -1533,11 +1541,28 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
         scene_strategies = analyze_scenes_strategy(input_video, scenes)
 
     print("\n   ✂️ Step 4: Processing video frames...")
-    
+
+    # Ken Burns fold: applying the 1.0→zoom_end zoompan inside THIS encode
+    # saves the whole apply_subtle_zoom decode+encode generation per clip.
+    # zoompan needs the total frame count for its per-frame increment; when
+    # the container lies (count<=0) the legacy post-pass runs instead (below).
+    zoom_folded = False
+    zoom_vf_args = []
+    if zoom_end and float(zoom_end) > 1.0 and _probe_total_frames > 0:
+        zpf = (float(zoom_end) - 1.0) / _probe_total_frames
+        zoom_vf_args = ['-vf', (
+            f"zoompan=z='1+{zpf:.8f}*on'"
+            f":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
+            f":d=1:s={OUTPUT_WIDTH}x{OUTPUT_HEIGHT}:fps={fps}"
+        )]
+        zoom_folded = True
+        print(f"   🔍 Ken Burns zoom (1.0→{zoom_end}x) folded into the master encode.")
+
     command = [
         'ffmpeg', '-y', '-f', 'rawvideo', '-vcodec', 'rawvideo',
         '-s', f'{OUTPUT_WIDTH}x{OUTPUT_HEIGHT}', '-pix_fmt', 'bgr24',
         '-r', str(fps), '-i', '-',
+        *zoom_vf_args,
         # Master generation: this is the first (and most important) encode of the
         # reframed frames — everything downstream re-encodes from it, so it runs
         # at the shared near-visually-lossless CRF (18 / medium) instead of the
@@ -1781,6 +1806,12 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
     if os.path.exists(temp_video_output): os.remove(temp_video_output)
     if os.path.exists(temp_audio_output): os.remove(temp_audio_output)
     if os.path.exists(temp_cfr_input): os.remove(temp_cfr_input)
+
+    # Zoom requested but the fold was impossible (unreadable frame count) →
+    # legacy post-pass so the caller still gets the motion it asked for.
+    if zoom_end and float(zoom_end) > 1.0 and not zoom_folded:
+        from clippyme.pipeline.postprocess import apply_subtle_zoom
+        apply_subtle_zoom(final_output_video, float(zoom_end))
 
     return True
 
