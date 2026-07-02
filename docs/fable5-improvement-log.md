@@ -278,4 +278,21 @@ an explicit owner decision (it is a strengthening change, not a weakening
 one).
 
 **Verification (Wave 10):** `npm run lint` → 0 warnings; `npm test` →
-54 passed; `npm run build` → clean.
+54 passed; `npm run build` → clean. Commit `e16af76`.
+
+## Wave 11 — reframe handler extracted to the domain layer (2026-07-02)
+
+**22. `reframe_clip` was ~165 lines inside app.py** (the largest violation of
+the thin-handler rule). Everything from metadata resolution through the
+`--reframe-only` subprocess and metadata persistence moved verbatim to
+`domain/reframe_service.run_reframe`; the endpoint keeps only trust/rate-limit
+checks + mode validation and delegates. Domain code raises `ClippyMeError`
+subclasses (incl. the 409 source-slice case) instead of `HTTPException`,
+mapped by the existing app-level exception handler. app.py: 1428 → 1315
+lines; behaviour pinned by the untouched `tests/api/test_reframe_aspect_api.py`
+(aspect round-trip, legacy-alias normalization, tampered-aspect guard — all
+still green). Unused `time` import and `save_job_metadata` re-export dropped
+from app.py.
+
+**Verification (Wave 11):** host pytest → 607 passed; CI ruff rule set →
+clean. (No pipeline/render change — Docker suite unaffected by this wave.)

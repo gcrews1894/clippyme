@@ -6,7 +6,6 @@ import threading
 import json
 import shutil
 import glob
-import time
 import asyncio
 import logging
 from dotenv import load_dotenv
@@ -36,8 +35,8 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field, ValidationError
 
 from clippyme.domain.job_results import load_partial_result, load_final_result, build_main_cmd, _pick_latest_metadata, canonical_reframe_mode
-from clippyme.domain.clip_locks import clip_lock
 from clippyme.domain.compose import compose_layers
+from clippyme.domain.reframe_service import run_reframe
 from clippyme.domain.errors import ClippyMeError
 from clippyme.domain.uploads import stream_upload_within_limit, FileTooLarge
 from clippyme.domain.clip_endpoints import run_smart_cut, restore_job_from_disk
@@ -74,7 +73,6 @@ from clippyme.storage.config_store import (
 from clippyme.domain.job_artifacts import (
     relocate_root_job_artifacts,
     load_job_metadata,
-    save_job_metadata,
 )
 from clippyme.domain.job_worker import make_workers, enqueue_output
 from clippyme.pipeline.gemini_service import list_available_models
@@ -1057,156 +1055,13 @@ async def reframe_clip(job_id: str, clip_index: int, req: ReframeRequest, reques
     # argv + metadata are written with the canonical value.
     mode = canonical_reframe_mode(mode)
 
-    output_dir = os.path.join(OUTPUT_DIR, job_id)
-    if not os.path.isdir(output_dir):
-        raise HTTPException(status_code=404, detail="Job output dir not found")
-
-    try:
-        metadata_path, data = load_job_metadata(job_id, OUTPUT_DIR)
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Metadata not found")
-
-    clips = data.get("shorts", [])
-    if clip_index < 0 or clip_index >= len(clips):
-        raise HTTPException(status_code=404, detail="Clip not found")
-
-    clip_data = clips[clip_index]
-
-    # Resolve the current clip filename (same logic as smartcut / subtitle)
-    filename = filename_from_video_url(clip_data.get("video_url"))
-    if not filename:
-        base_name = os.path.basename(metadata_path).replace("_metadata.json", "")
-        filename = f"{base_name}_clip_{clip_index + 1}.mp4"
-
-    # Target path = the ORIGINAL reframed clip path (we overwrite it in place
-    # so all downstream references — subtitle/hook/compose — keep working).
-    base_name = os.path.basename(metadata_path).replace("_metadata.json", "")
-    original_clip_filename = f"{base_name}_clip_{clip_index + 1}.mp4"
-    target_path = os.path.join(output_dir, original_clip_filename)
-    source_path = os.path.join(output_dir, f"source_{original_clip_filename}")
-
-    if not os.path.exists(source_path):
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "Source slice not available for this clip — this job was "
-                "generated before the post-hoc reframe feature landed. "
-                "Re-process the source to enable mode switching."
-            ),
-        )
-
-    cmd = [
-        sys.executable,
-        "-m",
-        "clippyme.pipeline.main",
-        "--reframe-only",
-        "-i", source_path,
-        "-o", target_path,
-        "--reframe-mode", mode,
-    ]
-
-    # Re-render at the job's ORIGINAL aspect (persisted in metadata at process
-    # time). Omitting this defaults main.py to 9:16 and squashes a 1:1/16:9 clip
-    # when the user flips reframe mode post-run. Validate against the same
-    # allow-list main.py's argparse accepts so a tampered metadata value can't
-    # inject an arbitrary argv token.
-    job_aspect = data.get("aspect")
-    if job_aspect in ("9:16", "1:1", "16:9"):
-        cmd += ["--aspect", job_aspect]
-
-    logger.info("Reframe subprocess: %s", " ".join(cmd))
-
-    # Propagate persisted config (Deepgram / HF / Gemini keys, transcription
-    # provider, etc.) into the subprocess env. Without this, the reframe-only
-    # path could silently fall back to Whisper when the user expects Deepgram,
-    # or fail transcription entirely if the keys live only in data/config.json.
-    reframe_env = os.environ.copy()
-    try:
-        for k, v in (load_persistent_config() or {}).items():
-            if v is not None and k not in reframe_env:
-                reframe_env[str(k)] = str(v)
-    except Exception as exc:
-        logger.warning("Could not merge persistent config into reframe env: %s", exc)
-
-    # Serialise per clip: main.py --reframe-only writes a DETERMINISTIC tmp
-    # path (<target>.reframe.tmp.mp4), so two concurrent requests for the same
-    # clip (double-clicked "Apply & reprocess", two tabs) would race the
-    # os.replace and both report success over a nondeterministic result. The
-    # same lock also serialises against compose_layers, which reads the clip
-    # file this subprocess overwrites.
-    async with clip_lock(output_dir, clip_index):
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-                env=reframe_env,
-            )
-            stdout_data, _ = await proc.communicate()
-        except Exception as e:
-            logger.error("Reframe subprocess launch failed: %s", e)
-            raise HTTPException(status_code=500, detail=f"Failed to launch reframe: {e}")
-
-        output_text = (stdout_data or b"").decode(errors="replace")
-        if proc.returncode != 0:
-            # Full subprocess output is logged server-side only — never returned to
-            # the client, which would leak filesystem paths / tracebacks / env.
-            logger.error("Reframe failed (code %s):\n%s", proc.returncode, output_text[-2000:])
-            raise HTTPException(
-                status_code=500,
-                detail="Reframe failed. Check server logs for details.",
-            )
-
-        # Cache-busting suffix so the <video> element reloads.
-        # CRITICAL: the query string MUST NOT end up in the stored video_url —
-        # the publish endpoint (and any future consumer) resolves the clip
-        # file on disk via `video_url.split("/")[-1]`, so a trailing `?v=...`
-        # would produce `clip_1.mp4?v=1234` and a "clip file not found" error
-        # on upload. Keep the clean path in metadata and append cache-bust
-        # only in the HTTP response, which is what the <video> element sees.
-        cache_bust = int(time.time())
-        clean_video_url = f"/videos/{job_id}/{original_clip_filename}"
-        new_video_url = f"{clean_video_url}?v={cache_bust}"
-
-        # Update in-memory metadata structures with the CLEAN url, then persist.
-        clips[clip_index]["video_url"] = clean_video_url
-        clips[clip_index]["reframe_mode"] = mode
-        data["shorts"] = clips
-
-        # A persistence failure must NOT silently succeed: the clip on disk has
-        # already been re-rendered with the new mode, so if metadata.json still
-        # carries the OLD reframe_mode/video_url the divergence is invisible until
-        # a restart reloads stale state. Update in-memory job state regardless
-        # (so the live session is correct), but surface the save failure as a 500.
-        save_failed = None
-        try:
-            save_job_metadata(metadata_path, data)
-        except Exception as e:
-            logger.error("Failed to persist metadata.json after reframe: %s", e)
-            save_failed = e
-
-        if (
-            job_id in jobs
-            and "result" in jobs[job_id]
-            and "clips" in jobs[job_id]["result"]
-            and clip_index < len(jobs[job_id]["result"]["clips"])
-        ):
-            # In-memory state also gets the clean URL — the frontend applies
-            # its own cache-bust via `new_video_url` below on the <video> tag.
-            jobs[job_id]["result"]["clips"][clip_index]["video_url"] = clean_video_url
-            jobs[job_id]["result"]["clips"][clip_index]["reframe_mode"] = mode
-
-        if save_failed is not None:
-            raise HTTPException(
-                status_code=500,
-                detail="Reframe succeeded but metadata persistence failed; reload may show stale state",
-            )
-
-    return {
-        "success": True,
-        "new_video_url": new_video_url,
-        "reframe_mode": mode,
-    }
+    # Everything from metadata resolution through the subprocess run lives in
+    # the domain helper (thin-handler rule); ClippyMeError subclasses raised
+    # there are mapped to HTTP responses by the app-level exception handler.
+    return await run_reframe(
+        job_id=job_id, clip_index=clip_index, mode=mode,
+        output_root=OUTPUT_DIR, jobs=jobs,
+    )
 
 
 @app.get("/api/history")
