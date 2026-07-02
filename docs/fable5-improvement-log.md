@@ -209,3 +209,18 @@ subtitle burn).
 
 **Verification (Wave 5):** host `pytest -m "not integration"` → 604 passed;
 Docker `pytest -m integration` → 33 passed, 44.3s; CI ruff rule set → clean.
+Commit `1d56e87`.
+
+## Wave 7 — network exposure default (2026-07-02)
+
+**18. Published ports bound to loopback by default.** `security.py` treats
+every RFC1918 peer as a trusted client for config/state endpoints (API-key
+overwrite, cookies download/delete, job deletion); docker-compose published
+8000 and 5175 on all interfaces, extending that trust to the whole LAN. Both
+ports now bind `127.0.0.1` via `${CLIPPYME_BIND:-127.0.0.1}` — LAN exposure
+becomes an explicit opt-in (`CLIPPYME_BIND=0.0.0.0`). The dashboard port is
+bound too because the Vite proxy reaches the backend from inside the docker
+network as a trusted private peer, so a LAN-exposed dashboard would reopen
+the hole. Verified with `docker compose config` (host_ip: 127.0.0.1 on both).
+(The full API-token alternative for deliberate LAN deployments remains open —
+descoped: needs token distribution to the frontend.)
