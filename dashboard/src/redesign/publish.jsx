@@ -139,8 +139,11 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
     : all ? `Publish ${clips.length} clips` : `Publish · ${clips[0]?.video_title_for_youtube_short || ''}`;
 
   return (
-    <div className="overlay" onClick={onClose}>
-      <div className={'modal' + (all ? ' wide' : '')} ref={panelRef} onClick={(e) => e.stopPropagation()}
+    // Backdrop click is a mouse-only convenience; keyboard users close via
+    // Esc (useModalA11y). currentTarget guard replaces stopPropagation.
+    // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions
+    <div className="overlay" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className={'modal' + (all ? ' wide' : '')} ref={panelRef}
         role="dialog" aria-modal="true" aria-labelledby="publish-modal-title">
         <div className="modal-head">
           <div>

@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "test": "node --test \"src/**/*.test.js\"",
-    "lint": "eslint . --report-unused-disable-directives --max-warnings 0",
+    "lint": "eslint . --config eslint.a11y.config.js --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -29,6 +29,7 @@
     "@vitejs/plugin-react": "^4.7.0",
     "autoprefixer": "^10.4.23",
     "eslint": "^8.57.0",
+    "eslint-plugin-jsx-a11y": "^6.10.2",
     "eslint-plugin-react": "^7.34.0",
     "eslint-plugin-react-hooks": "^4.6.0",
     "eslint-plugin-react-refresh": "^0.4.5",

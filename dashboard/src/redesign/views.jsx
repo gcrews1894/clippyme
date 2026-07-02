@@ -63,7 +63,11 @@ export function HistoryView({ history, availableIds, onOpen, onDelete, onClear }
           const removed = !!availableIds && !availableIds.has(h.jobId);
           return (
             <div className="hrow" key={h.jobId}
-              onClick={() => ok && onOpen(h)} style={{ cursor: ok ? 'pointer' : 'default', opacity: removed ? 0.55 : 1 }}>
+              role={ok ? 'button' : undefined} tabIndex={ok ? 0 : undefined}
+              aria-label={ok ? `Open job ${h.source || h.jobId}` : undefined}
+              onClick={() => ok && onOpen(h)}
+              onKeyDown={(e) => { if (ok && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onOpen(h); } }}
+              style={{ cursor: ok ? 'pointer' : 'default', opacity: removed ? 0.55 : 1 }}>
               <div className="hthumb" style={{ background: removed ? 'var(--bg-4)' : 'var(--grad-viral)' }}>{h.clipCount ?? 0}</div>
               <div style={{ minWidth: 0 }}>
                 <div className="ht" title={h.source || h.jobId}
@@ -364,8 +368,11 @@ export function SettingsView({ apiKey, onApiKey, cookiesConfigured, onCookiesCha
 export function ApiKeyModal({ onClose, onGoToSettings }) {
   const panelRef = useModalA11y(onClose);
   return (
-    <div className="overlay" onClick={onClose}>
-      <div className="modal" ref={panelRef} onClick={(e) => e.stopPropagation()}
+    // Backdrop click is a mouse-only convenience; keyboard users close via
+    // Esc (useModalA11y). currentTarget guard replaces stopPropagation.
+    // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions
+    <div className="overlay" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="modal" ref={panelRef}
         role="dialog" aria-modal="true" aria-labelledby="apikey-modal-title">
         <div className="modal-head"><h3 id="apikey-modal-title">Add your Gemini key</h3><button className="x" onClick={onClose} aria-label="Close"><Icon n="x" /></button></div>
         <div className="modal-body">

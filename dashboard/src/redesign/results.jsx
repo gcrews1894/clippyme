@@ -36,8 +36,13 @@ function ClipCard({ clip, index, jobId, state, preselections, onUpdate, onEdit, 
 
   return (
     <div className={'clip' + (score >= 90 ? ' top' : '') + (selectMode && selected ? ' sel' : '')}
-      onClick={() => selectMode && onUpdate(index, { selected: !selected })}>
+      role={selectMode ? 'button' : undefined} tabIndex={selectMode ? 0 : undefined}
+      aria-pressed={selectMode ? selected : undefined}
+      onClick={() => selectMode && onUpdate(index, { selected: !selected })}
+      onKeyDown={(e) => { if (selectMode && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onUpdate(index, { selected: !selected }); } }}>
       <div className="clip-media" style={{ padding: 0, background: '#000' }}>
+        {/* Captions are burned into the pixels by the subtitle layer — no separate text track exists. */}
+        {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
         <video src={clipPreviewSrc(clip, state)} controls={!selectMode} playsInline preload="metadata"
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', zIndex: 0 }} />
         <div className="clip-top" style={{ padding: 10 }}>
