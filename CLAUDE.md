@@ -180,6 +180,8 @@ cd dashboard && npm install && npm run dev
 cd dashboard && npm run build
 ```
 
+> **Lint entrypoint**: `npm run lint` uses `dashboard/eslint.a11y.config.js` — a composed flat config that imports the frozen `eslint.config.js` base and layers `jsx-a11y/recommended` on top. Add/change base rules in `eslint.config.js` as usual (they flow through); the a11y layer lives in the composed file.
+
 ### UI primitives
 The redesign uses hand-rolled primitives in `dashboard/src/redesign/primitives.jsx` (Btn/Badge/Panel/etc.) + the lucide icon map in `icon.jsx` — **not** the shadcn CLI. Add new primitives there, matching the existing Tailwind v4 token classes.
 
