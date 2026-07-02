@@ -61,4 +61,22 @@ patterns (all matched).
 
 **Verification (Wave 1):** `pytest -m "not integration"` → 583 passed,
 3 skipped. `ruff check src/clippyme tests --select E9,F63,F7,F82` (CI rule
-set) → clean.
+set) → clean. Commit `6749f0e`.
+
+## Wave 2 — per-clip serialisation locks (2026-07-02)
+
+**7. Concurrent reframe/compose on the same clip raced deterministic files
+(Med-High).** New `domain/clip_locks.py`: a refcounted `asyncio.Lock` registry
+keyed `(job_dir, clip_index)` (async analogue of `smartcut._CLIP_LOCKS`).
+`compose_layers` acquires it around the whole layer pipeline (covers both
+`/api/compose` and publish's `compose_first`); `/api/reframe` acquires the
+same lock around the `--reframe-only` subprocess + metadata write. Before: a
+double-clicked "Apply & reprocess" spawned two subprocesses racing
+`os.replace` on the same `<clip>.reframe.tmp.mp4`, both returning success over
+a nondeterministic result; an overlapping Download + Publish could delete the
+other's in-flight `composed_*_{i}.mp4`. Different clips remain fully parallel.
+Tests: `tests/domain/test_clip_locks.py` (mutual exclusion, cross-clip
+parallelism via event-handshake, registry cleanup, path normalisation).
+
+**Verification (Wave 2):** `pytest -m "not integration"` → 587 passed,
+3 skipped. CI ruff rule set → clean.

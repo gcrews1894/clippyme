@@ -11,6 +11,7 @@ import os
 import shutil
 import subprocess
 
+from clippyme.domain.clip_locks import clip_lock
 from clippyme.domain.errors import ValidationError
 
 logger = logging.getLogger(__name__)
@@ -326,7 +327,36 @@ async def compose_layers(
     Cleans up intermediate files on BOTH success and failure. If any layer
     raises (ffmpeg crash, bad params, HTTPException) we still remove every
     partial file we created before re-raising the original error.
+
+    Serialised per (job_dir, clip_index): every intermediate filename is
+    deterministic by clip index, so two overlapping composes for the same clip
+    (Download racing Publish's compose_first) would delete/overwrite each
+    other's in-flight files. Different clips compose in parallel as before.
     """
+    async with clip_lock(job_dir, clip_index):
+        return await _compose_layers_impl(
+            base_clip=base_clip, job_dir=job_dir, clip_index=clip_index,
+            metadata=metadata, clip_info=clip_info, toggles=toggles,
+            hook_params=hook_params, subtitle_params=subtitle_params,
+            logo_params=logo_params, grade_params=grade_params,
+            drop_ranges=drop_ranges,
+        )
+
+
+async def _compose_layers_impl(
+    *,
+    base_clip: str,
+    job_dir: str,
+    clip_index: int,
+    metadata: dict,
+    clip_info: dict,
+    toggles: dict,
+    hook_params: dict,
+    subtitle_params: dict,
+    logo_params: dict = None,
+    grade_params: dict = None,
+    drop_ranges=None,
+) -> str:
     active = {k: v for k, v in toggles.items() if v}
     logger.info(
         "compose_layers: clip_index=%d active=%s hook_text_len=%d subtitle_mode=%s",

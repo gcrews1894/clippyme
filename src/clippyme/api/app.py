@@ -36,6 +36,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field, ValidationError
 
 from clippyme.domain.job_results import load_partial_result, load_final_result, build_main_cmd, _pick_latest_metadata, canonical_reframe_mode
+from clippyme.domain.clip_locks import clip_lock
 from clippyme.domain.compose import compose_layers
 from clippyme.domain.errors import ClippyMeError
 from clippyme.domain.uploads import stream_upload_within_limit, FileTooLarge
@@ -1127,72 +1128,79 @@ async def reframe_clip(job_id: str, clip_index: int, req: ReframeRequest, reques
     except Exception as exc:
         logger.warning("Could not merge persistent config into reframe env: %s", exc)
 
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            env=reframe_env,
-        )
-        stdout_data, _ = await proc.communicate()
-    except Exception as e:
-        logger.error("Reframe subprocess launch failed: %s", e)
-        raise HTTPException(status_code=500, detail=f"Failed to launch reframe: {e}")
+    # Serialise per clip: main.py --reframe-only writes a DETERMINISTIC tmp
+    # path (<target>.reframe.tmp.mp4), so two concurrent requests for the same
+    # clip (double-clicked "Apply & reprocess", two tabs) would race the
+    # os.replace and both report success over a nondeterministic result. The
+    # same lock also serialises against compose_layers, which reads the clip
+    # file this subprocess overwrites.
+    async with clip_lock(output_dir, clip_index):
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                env=reframe_env,
+            )
+            stdout_data, _ = await proc.communicate()
+        except Exception as e:
+            logger.error("Reframe subprocess launch failed: %s", e)
+            raise HTTPException(status_code=500, detail=f"Failed to launch reframe: {e}")
 
-    output_text = (stdout_data or b"").decode(errors="replace")
-    if proc.returncode != 0:
-        # Full subprocess output is logged server-side only — never returned to
-        # the client, which would leak filesystem paths / tracebacks / env.
-        logger.error("Reframe failed (code %s):\n%s", proc.returncode, output_text[-2000:])
-        raise HTTPException(
-            status_code=500,
-            detail="Reframe failed. Check server logs for details.",
-        )
+        output_text = (stdout_data or b"").decode(errors="replace")
+        if proc.returncode != 0:
+            # Full subprocess output is logged server-side only — never returned to
+            # the client, which would leak filesystem paths / tracebacks / env.
+            logger.error("Reframe failed (code %s):\n%s", proc.returncode, output_text[-2000:])
+            raise HTTPException(
+                status_code=500,
+                detail="Reframe failed. Check server logs for details.",
+            )
 
-    # Cache-busting suffix so the <video> element reloads.
-    # CRITICAL: the query string MUST NOT end up in the stored video_url —
-    # the publish endpoint (and any future consumer) resolves the clip
-    # file on disk via `video_url.split("/")[-1]`, so a trailing `?v=...`
-    # would produce `clip_1.mp4?v=1234` and a "clip file not found" error
-    # on upload. Keep the clean path in metadata and append cache-bust
-    # only in the HTTP response, which is what the <video> element sees.
-    cache_bust = int(time.time())
-    clean_video_url = f"/videos/{job_id}/{original_clip_filename}"
-    new_video_url = f"{clean_video_url}?v={cache_bust}"
+        # Cache-busting suffix so the <video> element reloads.
+        # CRITICAL: the query string MUST NOT end up in the stored video_url —
+        # the publish endpoint (and any future consumer) resolves the clip
+        # file on disk via `video_url.split("/")[-1]`, so a trailing `?v=...`
+        # would produce `clip_1.mp4?v=1234` and a "clip file not found" error
+        # on upload. Keep the clean path in metadata and append cache-bust
+        # only in the HTTP response, which is what the <video> element sees.
+        cache_bust = int(time.time())
+        clean_video_url = f"/videos/{job_id}/{original_clip_filename}"
+        new_video_url = f"{clean_video_url}?v={cache_bust}"
 
-    # Update in-memory metadata structures with the CLEAN url, then persist.
-    clips[clip_index]["video_url"] = clean_video_url
-    clips[clip_index]["reframe_mode"] = mode
-    data["shorts"] = clips
+        # Update in-memory metadata structures with the CLEAN url, then persist.
+        clips[clip_index]["video_url"] = clean_video_url
+        clips[clip_index]["reframe_mode"] = mode
+        data["shorts"] = clips
 
-    # A persistence failure must NOT silently succeed: the clip on disk has
-    # already been re-rendered with the new mode, so if metadata.json still
-    # carries the OLD reframe_mode/video_url the divergence is invisible until
-    # a restart reloads stale state. Update in-memory job state regardless
-    # (so the live session is correct), but surface the save failure as a 500.
-    save_failed = None
-    try:
-        save_job_metadata(metadata_path, data)
-    except Exception as e:
-        logger.error("Failed to persist metadata.json after reframe: %s", e)
-        save_failed = e
+        # A persistence failure must NOT silently succeed: the clip on disk has
+        # already been re-rendered with the new mode, so if metadata.json still
+        # carries the OLD reframe_mode/video_url the divergence is invisible until
+        # a restart reloads stale state. Update in-memory job state regardless
+        # (so the live session is correct), but surface the save failure as a 500.
+        save_failed = None
+        try:
+            save_job_metadata(metadata_path, data)
+        except Exception as e:
+            logger.error("Failed to persist metadata.json after reframe: %s", e)
+            save_failed = e
 
-    if (
-        job_id in jobs
-        and "result" in jobs[job_id]
-        and "clips" in jobs[job_id]["result"]
-        and clip_index < len(jobs[job_id]["result"]["clips"])
-    ):
-        # In-memory state also gets the clean URL — the frontend applies
-        # its own cache-bust via `new_video_url` below on the <video> tag.
-        jobs[job_id]["result"]["clips"][clip_index]["video_url"] = clean_video_url
-        jobs[job_id]["result"]["clips"][clip_index]["reframe_mode"] = mode
+        if (
+            job_id in jobs
+            and "result" in jobs[job_id]
+            and "clips" in jobs[job_id]["result"]
+            and clip_index < len(jobs[job_id]["result"]["clips"])
+        ):
+            # In-memory state also gets the clean URL — the frontend applies
+            # its own cache-bust via `new_video_url` below on the <video> tag.
+            jobs[job_id]["result"]["clips"][clip_index]["video_url"] = clean_video_url
+            jobs[job_id]["result"]["clips"][clip_index]["reframe_mode"] = mode
 
-    if save_failed is not None:
-        raise HTTPException(
-            status_code=500,
-            detail="Reframe succeeded but metadata persistence failed; reload may show stale state",
-        )
+        if save_failed is not None:
+            raise HTTPException(
+                status_code=500,
+                detail="Reframe succeeded but metadata persistence failed; reload may show stale state",
+            )
 
     return {
         "success": True,
