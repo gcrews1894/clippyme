@@ -1,11 +1,9 @@
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 
-// safeResolveUrl reads window.location.origin at call time; stub it before the
-// dynamic import so the module loads under plain Node (no jsdom needed).
-globalThis.window = { location: { origin: 'http://localhost:5175' } };
-const { optsToPreselections, clipVideoSrc, clipPreviewSrc, fmtDuration } =
-  await import('./realApi.js');
+// Vitest runs with a jsdom environment, so window.location.origin is real —
+// the old plain-Node `globalThis.window` stub is gone.
+import { optsToPreselections, clipVideoSrc, clipPreviewSrc, fmtDuration } from './realApi.js';
 
 // --- optsToPreselections: the Create-tab → backend translation layer --------
 

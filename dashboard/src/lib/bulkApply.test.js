@@ -1,6 +1,6 @@
 // Pure-logic tests for the bulk "apply to many clips" helpers. Run with the
 // built-in Node test runner — `npm test`.
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { clipStateToParams, buildClipParams, buildBulkPlan } from './bulkApply.js';
 

@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 
 // In-memory localStorage shim so the I/O exports are testable without jsdom.

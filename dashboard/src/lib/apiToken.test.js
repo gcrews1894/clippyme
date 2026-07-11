@@ -1,5 +1,5 @@
 // Node unit tests for the optional API token helper (LAN deploys).
-import test from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 
 // localStorage shim BEFORE importing the module under test (it feature-detects

@@ -2,7 +2,7 @@
 // test runner — `npm test` (no new dependency; the repo is otherwise pytest).
 // These functions parse the backend's streamed log lines, so they rot silently
 // when that wording drifts; this guards the parse contract.
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { detectPipelineStep, pipelineStepMeta } from './pipelineStep.js';
 

@@ -61,7 +61,7 @@ jobs:
           --ignore-vuln CVE-2026-24049
 
   frontend:
-    name: Frontend (build + lint)
+    name: Frontend (test + build + lint)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -80,6 +80,11 @@ jobs:
 
       - name: Lint
         run: npm run lint
+
+      # Vitest (jsdom): the pure-function suites + the component tests for the
+      # edit/compose flows. These were previously never executed in CI.
+      - name: Test
+        run: npm test
 
       - name: Build
         run: npm run build
