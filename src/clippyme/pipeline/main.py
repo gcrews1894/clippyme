@@ -30,9 +30,8 @@ warnings.filterwarnings("ignore", category=UserWarning, module='google.protobuf'
 load_dotenv()
 
 # --- Constants ---
-# Reframe core (cv2/YOLO/MediaPipe) lives in clippyme.pipeline.reframe; import
-# the module too so main can set reframe.ASPECT_RATIO per-job.
-from clippyme.pipeline import reframe  # noqa: E402
+# Reframe core (cv2/YOLO/MediaPipe) lives in clippyme.pipeline.reframe.
+from clippyme.pipeline import reframe  # noqa: E402,F401
 from clippyme.pipeline.reframe import (  # noqa: E402,F401
     process_video_to_vertical,
     select_cover_frame,
@@ -812,15 +811,11 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     # Output aspect ratio drives the crop dimensions + SmoothedCameraman crop
-    # box. ASPECT_RATIO is a module global read by process_video_to_vertical and
-    # SmoothedCameraman; this runs at module scope once per job (subprocess), so
-    # rebinding it here from the arg applies to every clip in this run.
-    # Set the reframe module global so process_video_to_vertical + SmoothedCameraman
-    # (now in clippyme.pipeline.reframe) read the per-job aspect. Module-attribute
-    # assignment, not a local rebind, so the value crosses the module boundary.
-    reframe.ASPECT_RATIO = {'9:16': 9 / 16, '1:1': 1.0, '16:9': 16 / 9}.get(args.aspect, 9 / 16)
+    # box. Passed explicitly to every process_video_to_vertical call below
+    # (the old reframe.ASPECT_RATIO cross-module global is gone).
+    aspect_ratio = {'9:16': 9 / 16, '1:1': 1.0, '16:9': 16 / 9}.get(args.aspect, 9 / 16)
     if args.aspect != '9:16':
-        print(f"📐 Aspect ratio: {args.aspect} ({reframe.ASPECT_RATIO:.3f})")
+        print(f"📐 Aspect ratio: {args.aspect} ({aspect_ratio:.3f})")
 
     # Per-job Gemini model override — set the env BEFORE get_viral_clips, which
     # reads GEMINI_MODEL at call time (main.py get_viral_clips). Lets the user
@@ -875,7 +870,8 @@ if __name__ == '__main__':
             # itself if the fold is impossible.
             success = process_video_to_vertical(
                 args.input, tmp_output, reframe_mode=args.reframe_mode,
-                zoom_end=None if args.no_zoom else 1.05)
+                zoom_end=None if args.no_zoom else 1.05,
+                aspect_ratio=aspect_ratio)
             if not success:
                 print("❌ Reframe failed.")
                 if os.path.exists(tmp_output):
@@ -938,7 +934,8 @@ if __name__ == '__main__':
     if args.skip_analysis:
         print("⏩ Skipping analysis, processing entire video...")
         output_file = args.output if args.output else os.path.join(output_dir, f"{video_title}_vertical.mp4")
-        process_video_to_vertical(input_video, output_file, reframe_mode=args.reframe_mode)
+        process_video_to_vertical(input_video, output_file, reframe_mode=args.reframe_mode,
+                                  aspect_ratio=aspect_ratio)
     else:
         # 3. Transcribe (with cache for URL-based jobs)
         cached = _load_cached_transcript(args.url) if args.url else None
@@ -982,7 +979,8 @@ if __name__ == '__main__':
         if not clips_data or not clips_data.get('shorts'):
             print("❌ Failed to identify clips. Converting whole video as fallback.")
             output_file = os.path.join(output_dir, f"{video_title}_vertical.mp4")
-            process_video_to_vertical(input_video, output_file, reframe_mode=args.reframe_mode)
+            process_video_to_vertical(input_video, output_file, reframe_mode=args.reframe_mode,
+                                      aspect_ratio=aspect_ratio)
         else:
             print(f"🔥 Found {len(clips_data['shorts'])} viral clips!")
             
@@ -1155,7 +1153,8 @@ if __name__ == '__main__':
                 success = process_video_to_vertical(
                     clip_source_path, clip_final_path,
                     reframe_mode=args.reframe_mode,
-                    zoom_end=None if args.no_zoom else 1.05)
+                    zoom_end=None if args.no_zoom else 1.05,
+                    aspect_ratio=aspect_ratio)
 
                 if success:
                     normalize_audio(clip_final_path)

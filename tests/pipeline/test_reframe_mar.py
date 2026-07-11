@@ -1,12 +1,14 @@
-"""Regression guard for the active-speaker MAR path in reframe.py.
+"""Regression guard for the active-speaker MAR path (now in reframe_detect.py).
 
 A refactor extracted ``compute_mouth_aspect_ratio`` out of main.py but left its
 ``_MOUTH_*`` landmark constants behind, so the function raised ``NameError`` on
 every frame. The corrupt-frame guard swallowed it, silently disabling
 active-speaker selection and duplicating ~37% of output frames. These tests
 catch that class of bug — a module-level name referenced but never defined.
+The MAR function + constants live in ``reframe_detect`` since the 2026-07
+track/detect/orchestrator split.
 
-Marked integration because importing reframe pulls in cv2/mediapipe/torch/YOLO,
+Marked integration because importing reframe_detect pulls in cv2/mediapipe/YOLO,
 which the host (non-integration) tier doesn't have.
 """
 import dis
@@ -23,7 +25,7 @@ def _loaded_globals(func):
 
 
 def test_mouth_landmark_constants_defined():
-    import clippyme.pipeline.reframe as r
+    import clippyme.pipeline.reframe_detect as r
     for name in ("_MOUTH_TOP", "_MOUTH_BOTTOM", "_MOUTH_LEFT", "_MOUTH_RIGHT"):
         assert isinstance(getattr(r, name), int), f"{name} missing/not int"
 

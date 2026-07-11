@@ -47,7 +47,6 @@ def test_global_smooth_path_produces_valid_vertical(tmp_path, monkeypatch):
     _make_synthetic_clip(src)
 
     monkeypatch.setenv("REFRAME_GLOBAL_SMOOTH", "1")
-    monkeypatch.setattr(reframe, "ASPECT_RATIO", 9 / 16)
 
     ok = reframe.process_video_to_vertical(src, out, reframe_mode="auto")
     assert ok is True
@@ -75,7 +74,6 @@ def test_salient_general_crop_opt_in_produces_valid_vertical(tmp_path, monkeypat
     _make_synthetic_clip(src)  # faceless moving rectangle → GENERAL strategy
 
     monkeypatch.setenv("REFRAME_SALIENT_GENERAL", "1")
-    monkeypatch.setattr(reframe, "ASPECT_RATIO", 9 / 16)
 
     assert reframe.process_video_to_vertical(src, out, reframe_mode="auto") is True
     assert os.path.exists(out)
@@ -137,7 +135,6 @@ def test_object_weights_general_path_produces_valid_vertical(tmp_path, monkeypat
     out = str(tmp_path / "out.mp4")
     _make_synthetic_clip(src)  # faceless → GENERAL strategy
     monkeypatch.setenv("REFRAME_OBJECT_WEIGHTS", "1")
-    monkeypatch.setattr(reframe, "ASPECT_RATIO", 9 / 16)
     assert reframe.process_video_to_vertical(src, out, reframe_mode="auto") is True
     cap = cv2.VideoCapture(out)
     try:
@@ -156,7 +153,6 @@ def test_object_reframe_mode_produces_valid_vertical(tmp_path, monkeypatch):
     src = str(tmp_path / "src.mp4")
     out = str(tmp_path / "out.mp4")
     _make_synthetic_clip(src)
-    monkeypatch.setattr(reframe, "ASPECT_RATIO", 9 / 16)
     # Object mode forces object weights on regardless of the env flag.
     monkeypatch.delenv("REFRAME_OBJECT_WEIGHTS", raising=False)
 
@@ -221,7 +217,6 @@ def test_global_smooth_matches_singlepass_frame_count(tmp_path, monkeypatch):
     single-pass path — i.e. it drops/duplicates nothing."""
     src = str(tmp_path / "src.mp4")
     _make_synthetic_clip(src)
-    monkeypatch.setattr(reframe, "ASPECT_RATIO", 9 / 16)
 
     def _count(out_path, global_smooth):
         if global_smooth:
@@ -251,7 +246,6 @@ def test_zoom_fold_renders_valid_vertical(tmp_path, monkeypatch):
     out = str(tmp_path / "out_zoom.mp4")
     _make_synthetic_clip(src)
 
-    monkeypatch.setattr(reframe, "ASPECT_RATIO", 9 / 16)
 
     ok = reframe.process_video_to_vertical(src, out, reframe_mode="auto",
                                            zoom_end=1.05)

@@ -7,13 +7,15 @@ switch cooldown and gets box-averaged with stale frames from an unrelated
 shot — and under comfort mode (default) the polluted early targets skew the
 whole scene's collapsed median crop.
 
-``reframe.py`` imports cv2/mediapipe/YOLO, which the host tier doesn't have,
-so this guard PARSES the source instead of importing it (the import-based
-variant lives in the Docker-only integration suite via test_reframe_mar's
-pattern). Behavioural coverage runs in Docker; this pins the wiring.
+The tracker classes now live in the host-importable ``reframe_track`` module,
+so the class check imports them directly. The render loops (the reset call
+sites) still live in ``reframe.py``, which imports cv2/mediapipe/YOLO — the
+host tier doesn't have those, so the wiring checks PARSE that source instead
+of importing it. Behavioural coverage runs in Docker; this pins the wiring.
 """
-import ast
 from pathlib import Path
+
+from clippyme.pipeline.reframe_track import DetectionSmoother, SpeakerTracker
 
 REFRAME_PATH = (
     Path(__file__).resolve().parents[2] / "src" / "clippyme" / "pipeline" / "reframe.py"
@@ -25,13 +27,8 @@ def _source():
 
 
 def test_both_trackers_define_reset():
-    tree = ast.parse(_source())
-    classes = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)}
-    for cls_name in ("SpeakerTracker", "DetectionSmoother"):
-        assert cls_name in classes, f"{cls_name} class missing"
-        methods = {m.name for m in classes[cls_name].body
-                   if isinstance(m, ast.FunctionDef)}
-        assert "reset" in methods, f"{cls_name}.reset() missing"
+    for cls in (SpeakerTracker, DetectionSmoother):
+        assert callable(getattr(cls, "reset", None)), f"{cls.__name__}.reset() missing"
 
 
 def test_every_scene_advance_resets_both_trackers():
