@@ -1,5 +1,7 @@
 # Comparative analysis: `ClipsAI/clipsai` → ClippyMe
 
+> **Update 2026-07:** `associate_subject`/`iou` (referenced below as ClippyMe's IoU identity) were removed from `reframe_ops.py` as never-wired; `SpeakerTracker`'s center-distance hysteresis remains the live identity mechanism.
+
 Date: 2026-06-18
 External repo: <https://github.com/ClipsAI/clipsai> @ `main`
 Scope studied: `clipsai/clip/` (texttiler.py, clipfinder.py), `clipsai/resize/`

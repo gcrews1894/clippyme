@@ -1,5 +1,7 @@
 # Comparative analysis: `obi19999/smart-video-reframe` → ClippyMe reframe
 
+> **Update 2026-07:** `split_screen_slots` (the tested-but-unwired port below) was removed from `reframe_ops.py` — no multi-face render mode ever materialised. Git history has it.
+
 Date: 2026-06-17
 External repo: <https://github.com/obi19999/smart-video-reframe> @ `main`
 Layout: `src/{cli,config}.py` + `detectors/{face_detector,scene_detector}.py` +

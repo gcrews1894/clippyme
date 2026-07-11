@@ -1,5 +1,7 @@
 # Comparative analysis: `KazKozDev/auto-vertical-reframe` → ClippyMe reframe
 
+> **Update 2026-07:** the unwired building blocks ported from this analysis (`rank_subject`, `associate_subject`/`iou`) were removed from `reframe_ops.py` — they never gained a production caller. Git history has them if the gating infrastructure (masks/pose/ByteTrack) ever lands.
+
 Date: 2026-06-17
 External repo: <https://github.com/KazKozDev/auto-vertical-reframe> @ `33ac38d`
 (MIT). Single module `src/verthor/auto_reframe.py` (2253 LOC). Scope: ClippyMe's

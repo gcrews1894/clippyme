@@ -5,7 +5,6 @@ be unit-tested on any host. main.py owns the cv2 glue (frame capture, FaceMesh,
 saliency-map generation) and calls into these functions. Do NOT import cv2 here.
 
 Provides:
-- iou / associate_subject     — stable subject identity across detection frames
 - OneEuroFilter               — adaptive jitter-vs-lag camera smoothing
 - drift_to_center             — graceful lost-subject recovery
 - salient_crop_center         — content-aware crop window for faceless scenes
@@ -16,44 +15,9 @@ Provides:
 from __future__ import annotations
 
 import math
-from typing import Optional, Sequence
+from typing import Optional
 
 import numpy as np
-
-
-# --- identity ---------------------------------------------------------------
-
-def iou(box_a, box_b) -> float:
-    """Intersection-over-union of two (x1, y1, x2, y2) boxes."""
-    ax1, ay1, ax2, ay2 = box_a
-    bx1, by1, bx2, by2 = box_b
-    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
-    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
-    iw, ih = max(0.0, ix2 - ix1), max(0.0, iy2 - iy1)
-    inter = iw * ih
-    area_a = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
-    area_b = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
-    union = area_a + area_b - inter
-    return inter / union if union > 0 else 0.0
-
-
-def associate_subject(prev_box, candidates: Sequence, min_iou: float = 0.3) -> Optional[int]:
-    """Index of the candidate box that best overlaps the previously-tracked
-    subject, or None when there's no prior box or nothing overlaps enough.
-
-    Used in WIDE/multi-speaker scenes to bias toward identity continuity before
-    falling back to mouth-aspect-ratio scoring.
-    """
-    if prev_box is None or not candidates:
-        return None
-    best_i: Optional[int] = None
-    best = min_iou
-    for i, cand in enumerate(candidates):
-        v = iou(prev_box, cand)
-        if v >= best:
-            best = v
-            best_i = i
-    return best_i
 
 
 # --- smoothing --------------------------------------------------------------
@@ -167,62 +131,6 @@ def limit_step(current: float, target: float, max_step: float) -> float:
     return target
 
 
-# --- subject ranking (ported from auto-vertical-reframe SubjectRankingModel) -
-
-# Hand-tuned linear fusion weights. A larger lock/tracking bonus than the
-# per-frame signals deliberately favours identity continuity over chasing
-# whoever momentarily scores highest — this is the anti-ping-pong recipe.
-_RANK_CLASS_BIAS = {
-    "person": 0.22, "dog": 0.12, "cat": 0.10, "car": 0.06,
-    "bicycle": 0.02, "motorcycle": 0.02, "bus": 0.01, "truck": 0.01,
-}
-_RANK_FEATURE_WEIGHTS = {
-    "det_conf": 1.35, "mask_presence": 0.95, "center_affinity": 0.55,
-    "face_presence": 0.48, "pose_presence": 0.34, "saliency_presence": 0.72,
-    "saliency_conf": 0.78, "tracking_match": 1.05, "lock_match": 1.30,
-    "speaker_active": 0.22, "size_logit": 0.26,
-}
-
-
-def _clamp(v: float, lo: float, hi: float) -> float:
-    return lo if v < lo else hi if v > hi else v
-
-
-def rank_subject(*, cls_name: str, conf: float, mask_area: float, frame_area: float,
-                 dist_center: float, frame_diag: float, has_face: bool,
-                 has_pose: bool = False, saliency_confidence: float = 0.0,
-                 tracking_match: bool = False, lock_match: bool = False,
-                 speaker_active: bool = False) -> float:
-    """Linear subject-importance score fusing detection/size/center/face/
-    continuity/speaker signals. Higher = more likely the intended subject.
-
-    Direct port of KazKozDev/auto-vertical-reframe ``SubjectRankingModel``.
-    Callers pass whatever signals they have; absent ones default to off, so the
-    function degrades gracefully (ClippyMe has no masks/pose/saliency yet, so
-    those features simply contribute 0). The strong ``lock_match`` / ``tracking_match``
-    weights bias toward keeping the current subject, killing camera ping-pong.
-    """
-    norm_area = _clamp(mask_area / max(frame_area, 1.0), 0.0, 1.0)
-    center_affinity = 1.0 - _clamp(dist_center / max(frame_diag, 1.0), 0.0, 1.0)
-    features = {
-        "det_conf": _clamp(conf, 0.0, 1.0),
-        "mask_presence": math.sqrt(norm_area),
-        "center_affinity": center_affinity,
-        "face_presence": 1.0 if has_face else 0.0,
-        "pose_presence": 1.0 if has_pose else 0.0,
-        "saliency_presence": 1.0 if saliency_confidence > 0.0 else 0.0,
-        "saliency_conf": _clamp(saliency_confidence, 0.0, 1.0),
-        "tracking_match": 1.0 if tracking_match else 0.0,
-        "lock_match": 1.0 if lock_match else 0.0,
-        "speaker_active": 1.0 if speaker_active else 0.0,
-        "size_logit": math.log1p(norm_area * 250.0),
-    }
-    score = _RANK_CLASS_BIAS.get(cls_name, 0.0)
-    for name, value in features.items():
-        score += _RANK_FEATURE_WEIGHTS[name] * value
-    return score
-
-
 def asymmetric_zoom_step(current: float, target: float,
                          rate_in: float, rate_out: float) -> float:
     """Ease ``current`` toward ``target`` with direction-dependent speed.
@@ -237,75 +145,6 @@ def asymmetric_zoom_step(current: float, target: float,
     diff = target - current
     rate = rate_in if diff > 0 else rate_out
     return current + diff * rate
-
-
-# --- multi-face split-screen layout (ported from obi19999/smart-video-reframe) ---
-
-def split_screen_slots(n_faces: int, width: int, height: int,
-                       portrait: Optional[bool] = None):
-    """Tile a ``width``×``height`` output frame into ``n_faces`` slot rectangles
-    for a multi-face split-screen montage (podcast / interview 2-up, 3-up, 4-up).
-
-    Returns a list of integer ``(x, y, w, h)`` slots that tile the frame with no
-    gaps or overlaps; a caller crops each tracked face into its slot. Direct port
-    of the layout arithmetic in obi19999/smart-video-reframe
-    ``FaceDetector.combine_faces`` — that repo's one net-new idea relative to
-    ClippyMe's single-camera reframer. Kept here as a tested-but-unwired building
-    block (the same convention as ``rank_subject`` / ``associate_subject`` /
-    ``salient_crop_center``) until a multi-face render mode is wired in; today
-    ClippyMe reframes to one cinematic camera, so nothing calls this yet.
-
-    Layout (portrait, the 9:16 default):
-      1 → whole frame   2 → stacked rows   3 → top banner + bottom pair
-      4 → 2×2 grid      n → n equal rows
-    Landscape mirrors into equal columns. The last slot in each run absorbs the
-    integer-rounding remainder so the slots always cover the frame exactly.
-    """
-    if n_faces <= 0:
-        return []
-    if portrait is None:
-        portrait = height >= width
-    n = n_faces
-    if n == 1:
-        return [(0, 0, width, height)]
-
-    if portrait:
-        if n == 2:
-            h0 = height // 2
-            return [(0, 0, width, h0), (0, h0, width, height - h0)]
-        if n == 3:
-            top_h = int(height * 0.35)
-            bot_h = height - top_h
-            half_w = width // 2
-            return [
-                (0, 0, width, top_h),
-                (0, top_h, half_w, bot_h),
-                (half_w, top_h, width - half_w, bot_h),
-            ]
-        if n == 4:
-            half_w = width // 2
-            half_h = height // 2
-            return [
-                (0, 0, half_w, half_h),
-                (half_w, 0, width - half_w, half_h),
-                (0, half_h, half_w, height - half_h),
-                (half_w, half_h, width - half_w, height - half_h),
-            ]
-        row_h = height // n
-        slots, y = [], 0
-        for i in range(n):
-            h = height - y if i == n - 1 else row_h
-            slots.append((0, y, width, h))
-            y += h
-        return slots
-
-    col_w = width // n
-    slots, x = [], 0
-    for i in range(n):
-        w = width - x if i == n - 1 else col_w
-        slots.append((x, 0, w, height))
-        x += w
-    return slots
 
 
 # --- saliency-based crop selection (faceless scenes) ------------------------
