@@ -39,6 +39,7 @@ from clippyme.domain.clip_endpoints import run_smart_cut, restore_job_from_disk
 from clippyme.domain.clip_resolve import resolve_clip
 from clippyme.domain import job_control
 from clippyme.domain.job_actions import cancel_job_action, stop_job_action
+from clippyme.domain.job_journal import JOURNAL_FILENAME, make_journal_writer, recover_jobs
 from clippyme.domain.job_runner import make_run_job
 from clippyme.domain.job_submission import QueueFullError, submit_job
 from clippyme.domain.publish_service import publish_clip_flow
@@ -101,13 +102,30 @@ jobs: Dict[str, Dict] = {}
 # Semaphore to limit concurrency to MAX_CONCURRENT_JOBS
 concurrency_semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
 
+# Job journal: persists the ACTIVE jobs to data/jobs_journal.json on every
+# status transition so a restart can re-enqueue queued jobs and fail (or
+# restore) interrupted ones instead of silently forgetting them.
+JOURNAL_PATH = os.path.join(DATA_DIR, JOURNAL_FILENAME)
+persist_jobs = make_journal_writer(jobs=jobs, path=JOURNAL_PATH)
+
 # The per-job subprocess runner, bound to the shared jobs dict (thin-handler
 # rule: the body lives in clippyme.domain.job_runner).
-run_job = make_run_job(jobs=jobs, output_root=OUTPUT_DIR)
+run_job = make_run_job(jobs=jobs, output_root=OUTPUT_DIR, on_change=persist_jobs)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Recover journalled jobs from the previous server life BEFORE the
+    # dispatcher starts: queued jobs are re-enqueued, interrupted ones are
+    # marked failed (or restored as completed when their result is on disk).
+    # Runs on the event loop (not to_thread): asyncio.Queue.put_nowait is not
+    # thread-safe, and the journal is small so the startup pause is negligible.
+    try:
+        recover_jobs(journal_path=JOURNAL_PATH, jobs=jobs,
+                     job_queue=job_queue, output_root=OUTPUT_DIR)
+    except Exception:
+        logger.exception("Job journal recovery failed — starting with an empty queue")
+
     cleanup_jobs, process_queue, _run_job_wrapper = make_workers(
         jobs=jobs,
         job_queue=job_queue,
@@ -379,6 +397,7 @@ async def process_endpoint(
     await submit_job(
         jobs=jobs, job_queue=job_queue, job_id=job_id,
         cmd=cmd, env=env, job_output_dir=job_output_dir,
+        on_change=persist_jobs,
     )
 
     return {"job_id": job_id, "status": "queued"}
@@ -431,6 +450,7 @@ async def batch_process(req: BatchRequest, request: Request):
             await submit_job(
                 jobs=jobs, job_queue=job_queue, job_id=job_id,
                 cmd=cmd, env=env, job_output_dir=job_output_dir, batch=True,
+                on_change=persist_jobs,
             )
             batch_jobs.append({"url": url, "job_id": job_id})
         except QueueFullError:
@@ -468,7 +488,9 @@ async def cancel_job(job_id: str, request: Request):
     if job_id not in jobs:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    return await cancel_job_action(job_id, jobs[job_id])
+    result = await cancel_job_action(job_id, jobs[job_id])
+    persist_jobs()
+    return result
 
 
 @app.post("/api/pause/{job_id}")
@@ -492,6 +514,7 @@ async def pause_job(job_id: str, request: Request):
     job['status'] = 'paused'
     job['logs'].append(f"Job paused by user ({n} process(es) suspended).")
     logger.info("Job %s paused (%d procs)", job_id, n)
+    persist_jobs()
     return {"success": True, "status": "paused"}
 
 
@@ -516,6 +539,7 @@ async def resume_job(job_id: str, request: Request):
     job['status'] = 'processing'
     job['logs'].append(f"Job resumed by user ({n} process(es) resumed).")
     logger.info("Job %s resumed (%d procs)", job_id, n)
+    persist_jobs()
     return {"success": True, "status": "processing"}
 
 
@@ -532,7 +556,9 @@ async def stop_job(job_id: str, request: Request):
     if job_id not in jobs:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    return await stop_job_action(job_id, jobs[job_id])
+    result = await stop_job_action(job_id, jobs[job_id])
+    persist_jobs()
+    return result
 
 @app.get("/api/config")
 async def get_config(request: Request):
@@ -871,6 +897,7 @@ async def delete_history(job_id: str, request: Request):
     await asyncio.to_thread(shutil.rmtree, job_dir, True)
     if job_id in jobs:
         del jobs[job_id]
+        persist_jobs()
     logger.info("Deleted job %s and all files", job_id)
     return {"success": True}
 

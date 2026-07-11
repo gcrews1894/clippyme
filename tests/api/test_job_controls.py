@@ -162,6 +162,15 @@ def test_run_job_kills_orphan_on_unexpected_error(monkeypatch):
         app_module.jobs.pop(JOB_ID, None)
 
 
+def test_cancel_persists_journal(client, monkeypatch):
+    """The control endpoints must flush the job journal after a transition."""
+    calls = []
+    monkeypatch.setattr(app_module, "persist_jobs", lambda: calls.append(1))
+    _seed("processing", FakeProc())
+    assert client.post(f"/api/cancel/{JOB_ID}").status_code == 200
+    assert calls == [1]
+
+
 def test_controls_404_for_unknown_job(client):
     for ep in ("pause", "resume", "stop"):
         assert client.post(f"/api/{ep}/{JOB_ID}").status_code == 404
