@@ -14,9 +14,11 @@ Tailwind v4.
 
 Python backend is src-layout under `src/clippyme/` (`pip install -e .`):
 
-- `api/` — `app.py` (thin FastAPI layer: routes, middleware, static mounts),
-  `schemas.py` (Pydantic request models), `security.py` (trusted-origin/rate
-  limit/API-token gates).
+- `api/` — `app.py` (thin FastAPI layer: job-lifecycle routes, middleware,
+  static mounts, lifespan), `config_routes.py` (the config-family `APIRouter`:
+  keys/cookies/fonts/logo/zernio/models — routes that touch no job runtime
+  state, `include_router`ed by app.py), `schemas.py` (Pydantic request models),
+  `security.py` (trusted-origin/rate limit/API-token gates).
 - `domain/` — endpoint logic. `clip_resolve.py` (shared `resolve_clip()`: job
   dir → latest metadata → clip entry → path, used by every per-clip endpoint),
   `job_submission.py` (`submit_job()` + queue-full rollback),

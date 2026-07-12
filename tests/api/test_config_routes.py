@@ -22,6 +22,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import clippyme.api.app as app_module
+import clippyme.api.config_routes as config_module
 
 # A trusted browser origin (in the default allow-list) — the gate accepts it
 # via its Origin branch without needing a private client IP.
@@ -79,7 +80,7 @@ def test_config_short_secret_fully_masked(client):
 # --- /api/config/models (network call stubbed) ------------------------------
 
 def test_models_lists_via_provided_key(client, monkeypatch):
-    monkeypatch.setattr(app_module, "list_available_models", lambda key: ["gemini-a", "gemini-b"])
+    monkeypatch.setattr(config_module, "list_available_models", lambda key: ["gemini-a", "gemini-b"])
     r = client.get("/api/config/models", headers={"X-Gemini-Key": "dummy"})
     assert r.status_code == 200
     assert r.json() == ["gemini-a", "gemini-b"]
@@ -185,6 +186,6 @@ def test_zernio_config_roundtrip(client):
 
 def test_zernio_accounts_requires_key(client, monkeypatch):
     # No key configured (fresh tmp cwd) → 400 before any network call.
-    monkeypatch.setattr(app_module, "load_zernio_config", lambda: {})
+    monkeypatch.setattr(config_module, "load_zernio_config", lambda: {})
     r = client.get("/api/zernio/accounts")
     assert r.status_code == 400
