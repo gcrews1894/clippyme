@@ -131,5 +131,8 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # No --no-build (the runner's compose predates the flag): compose only
+      # builds when the service image is missing, and the step above just
+      # loaded clippyme-backend:latest, so this reuses it as-is.
       - name: Run integration suite in the backend image
-        run: docker compose run --rm --no-build -u root backend sh -lc "pip install -q pytest && pytest -m integration -q"
+        run: docker compose run --rm -u root backend sh -lc "pip install -q pytest && pytest -m integration -q"

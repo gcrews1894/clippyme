@@ -12,6 +12,10 @@ import jsxA11y from 'eslint-plugin-jsx-a11y'
 
 export default [
   ...base,
+  // Vitest's --coverage HTML report (coverage/, gitignored) ships its own JS
+  // with stale eslint-disable pragmas; never lint generated output. Added
+  // here because the base config's ignores are frozen with it.
+  { ignores: ['coverage'] },
   {
     files: ['**/*.{js,jsx}'],
     plugins: { 'jsx-a11y': jsxA11y },
