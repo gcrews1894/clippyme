@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 import subprocess
@@ -5,6 +6,8 @@ import urllib.request
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 from clippyme.domain.encode import ffmpeg_timeout, x264_video_args
+
+logger = logging.getLogger(__name__)
 
 FONT_URL = "https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSerif/NotoSerif-Bold.ttf"
 
@@ -46,13 +49,13 @@ def download_font_if_needed():
     """Downloads a serif font for the hook text if not present."""
     os.makedirs(FONT_DIR, exist_ok=True)
     if not os.path.exists(FONT_PATH):
-        print(f"⬇️ Downloading font from {FONT_URL}...")
+        logger.info("⬇️ Downloading font from %s...", FONT_URL)
         try:
             req = urllib.request.Request(FONT_URL, headers={"User-Agent": "Mozilla/5.0"})
             _download_capped(req, FONT_PATH)
-            print("✅ Font downloaded.")
+            logger.info("✅ Font downloaded.")
         except Exception as e:
-            print(f"❌ Failed to download font: {e}")
+            logger.error("❌ Failed to download font: %s", e)
 
 
 EMOJI_FONT_URL = "https://github.com/googlefonts/noto-emoji/raw/main/fonts/NotoColorEmoji.ttf"
@@ -63,13 +66,13 @@ def download_emoji_font_if_needed():
     """Downloads the Noto Color Emoji font if not present."""
     os.makedirs(FONT_DIR, exist_ok=True)
     if not os.path.exists(EMOJI_FONT_PATH):
-        print(f"Downloading emoji font...")
+        logger.info("Downloading emoji font...")
         try:
             req = urllib.request.Request(EMOJI_FONT_URL, headers={"User-Agent": "Mozilla/5.0"})
             _download_capped(req, EMOJI_FONT_PATH)
-            print("Emoji font downloaded.")
+            logger.info("Emoji font downloaded.")
         except Exception as e:
-            print(f"Failed to download emoji font: {e}")
+            logger.error("Failed to download emoji font: %s", e)
 
 
 def has_emoji(text):
@@ -405,14 +408,14 @@ def add_hook_to_video(video_path, text, output_path, position="top", font_scale=
         ]
         subprocess.run(ffmpeg_cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                        timeout=ffmpeg_timeout())
-        print(f"✅ Hook added to {output_path}")
+        logger.info("✅ Hook added to %s", output_path)
         return True
 
     except subprocess.TimeoutExpired:
-        print(f"❌ FFmpeg hook overlay timed out after {ffmpeg_timeout()}s")
+        logger.error("❌ FFmpeg hook overlay timed out after %ss", ffmpeg_timeout())
         raise
     except subprocess.CalledProcessError as e:
-        print(f"❌ FFmpeg Error: {e.stderr.decode() if e.stderr else 'Unknown'}")
+        logger.error("❌ FFmpeg Error: %s", e.stderr.decode() if e.stderr else 'Unknown')
         raise
     finally:
         if os.path.exists(hook_filename):

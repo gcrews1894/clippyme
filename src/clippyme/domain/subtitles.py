@@ -1,9 +1,12 @@
+import logging
 import os
 import re
 import subprocess
 
 from clippyme.domain.encode import ffmpeg_timeout, x264_video_args
 from clippyme.domain.errors import ComposeError
+
+logger = logging.getLogger(__name__)
 
 
 def _strip_ass_braces(text: str) -> str:
@@ -80,7 +83,7 @@ def transcribe_audio(video_path):
     device = "cuda" if _check_cuda() else "cpu"
     compute_type = "float16" if device == "cuda" else "int8"
     whisper_model = _select_whisper_model()
-    print(f"🎙️  Transcribing audio [{whisper_model}] from: {video_path} ({device.upper()} mode)")
+    logger.info("🎙️  Transcribing audio [%s] from: %s (%s mode)", whisper_model, video_path, device.upper())
     model = _get_cached_whisper_model(whisper_model, device, compute_type)
     segments, info = model.transcribe(video_path, word_timestamps=True)
     segments = list(segments)
@@ -106,7 +109,7 @@ def transcribe_audio(video_path):
                 })
         transcript["segments"].append(seg_data)
 
-    print(f"✅ Transcription complete. Language: {info.language}")
+    logger.info("✅ Transcription complete. Language: %s", info.language)
     return transcript
 
 
@@ -842,12 +845,12 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
 
     # Don't print the full command: it embeds absolute filesystem paths that
     # would surface in the job log served by /api/status. Terse line only.
-    print("🎬 Burning subtitles…")
+    logger.info("🎬 Burning subtitles…")
     result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
                             timeout=ffmpeg_timeout())
 
     if result.returncode != 0:
-        print(f"❌ FFmpeg Subtitle Error: {result.stderr.decode()}")
+        logger.error("❌ FFmpeg Subtitle Error: %s", result.stderr.decode())
         # Domain error, not bare Exception: the app-level ClippyMeError
         # handler maps this to a clean HTTP response when the burn is
         # triggered from a compose/publish request. Tail only — full ffmpeg

@@ -29,7 +29,7 @@ def enqueue_output(out, job_id: str, jobs: Dict[str, Dict]) -> None:
             # subprocess keeps working, with no user-facing explanation.
             decoded_line = line.decode("utf-8", errors="replace").strip()
             if decoded_line:
-                print(f"📝 [Job Output] {decoded_line}")
+                logger.info("📝 [Job Output] %s", decoded_line)
                 if job_id in jobs:
                     logs = jobs[job_id]["logs"]
                     logs.append(decoded_line)
