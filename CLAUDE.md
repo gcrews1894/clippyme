@@ -27,7 +27,11 @@ Python backend is src-layout under `src/clippyme/` (`pip install -e .`):
   `job_artifacts.py` (atomic metadata IO), `job_control.py` (status machine +
   psutil process-tree suspend/resume), `publish_service.py` (Zernio publish
   flow), `compose.py` (layer pipeline), `clip_endpoints.py` (smart-cut runner,
-  history restore), `smartcut.py`, `subtitles.py`, `hooks.py`, `logo.py`,
+  history restore), `smartcut.py` (impure orchestrator: ffmpeg/auto-editor
+  render, ffprobe, per-clip locks, `smart_cut`) + `smartcut_ops.py` (pure,
+  host-tested: filler index, drop-range math, `analyze_silences`, v3 timeline
+  builder — re-exported by smartcut.py for back-compat), `subtitles.py`,
+  `hooks.py`, `logo.py`,
   `grade.py`, `clip_qa.py`, `clip_edit_ai.py`, `history_service.py`,
   `encode.py` (single source of x264 settings for every render pass),
   `errors.py` (domain exceptions mapped to HTTP by one app-level handler).

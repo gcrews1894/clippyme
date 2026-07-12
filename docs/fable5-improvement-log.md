@@ -365,3 +365,47 @@ the env through.
 integration 34 passed; frontend 58/58 + lint + build green; zero
 TODO/FIXME markers in `src/clippyme` + `dashboard/src`. No open items: #23 shipped via flat-config composition (4e6a4cf) —
 zero owner decisions outstanding.
+
+## Iteration 3 — residual quality pass (2026-07-12)
+
+A fresh full-project review found no bugs or security holes; these are
+maintainability/hygiene items.
+
+**1. `domain/smartcut.py` monolith (1068 lines).**
+Split along the pure/impure seam like `reframe_ops` / `cut_ops`: new
+`domain/smartcut_ops.py` holds the host-safe logic (filler index, drop-range
+arithmetic, `analyze_silences`, the auto-editor v3 timeline builder, LRU cache
+primitives); `smartcut.py` stays the ffmpeg/auto-editor orchestrator and
+re-exports every moved name so callers/tests importing from
+`clippyme.domain.smartcut` are unchanged. `_build_v3_timeline` — previously
+zero coverage — gains `test_smartcut_ops.py` (frame conversion, cumulative
+output offsets, sub-frame drop, empty tracks, fractional fps). A dead
+`last_kept_end` store carried over verbatim was removed (pure no-op).
+Commit 79be1ba.
+
+**2. `print()` in `domain/` → logging.**
+14 stray `print()` in `subtitles.py` / `hooks.py` / `job_worker.py` (the API
+process) now go through `logging`, matching `api/` and `integrations/` (already
+0 prints). The 138 in `pipeline/` are the subprocess IPC channel and stay. The
+user-facing `jobs[...]["logs"]` buffer is untouched. Commit 5000fb4.
+
+**3. Non-breaking npm audit fixes.**
+`npm audit fix` (compatible-only) clears 6 dev/build-toolchain advisories
+(@babel/core sourceMappingURL read; ajv/brace-expansion/flatted/js-yaml/
+minimatch ReDoS/DoS) — lockfile-only, all-platform optional binaries preserved.
+Full audit 7 → 2. Deferred: the esbuild + vite *dev-server* advisories never
+touch the production Rollup bundle; the only clean fix is a vite v5→v8 major
+bump (forcing esbuild ≥0.25 under vite@5 was tried and reverted — a coexisting
+vite@8 from vitest hoists esbuild 0.28, which vite@5 can't compile against).
+Commit bc38dd2.
+
+**4. `lucide-react` 0.344 → 1.24.**
+The only dated runtime dep, pinned old because it predated three icon renames.
+1.24 exports the canonical names; `icon.jsx` (the sole lucide consumer) drops
+the back-compat aliases. All ~55 icon names resolve (a missing export fails
+`vite build`). Commit 4b5b518.
+
+**Verification (Iteration 3):** ruff bug-class clean; host pytest 702 passed /
+1 skipped (+6 v3-timeline tests); frontend 99/99 + lint + build green; frontend
+audit 7 → 2 (residual are dev-server-only, deferred with rationale above).
+Docker integration re-run via CI `workflow_dispatch`.
