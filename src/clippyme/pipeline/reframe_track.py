@@ -16,7 +16,9 @@ from clippyme.pipeline.reframe_ops import (
     OneEuroFilter,
     advance_value_with_velocity,
     asymmetric_zoom_step,
+    box_iou,
     drift_to_center,
+    headroom_center_y,
     limit_step,
     zoom_for_face_height,
 )
@@ -40,16 +42,32 @@ class DetectionSmoother:
         for cand in candidates:
             x, y, w, h = cand['box']
             cx = x + w / 2
-            # Simple spatial matching to existing tracks
+            # Identity association: spatial overlap (IoU) first — far stronger
+            # than the old center-x proximity rule, which merged faces stacked
+            # at the same x (grid calls) and blended crossing subjects' box
+            # histories. The fallback for fast movers whose boxes no longer
+            # overlap between (even-frame) detections uses the full 2-D center
+            # distance — x-only distance would re-merge the stacked faces the
+            # IoU match just kept apart.
+            cy = y + h / 2
             best_id = None
-            min_dist = float('inf')
+            best_iou = 0.3  # minimum overlap to claim an existing track
             for fid, hist in self.histories.items():
                 if hist:
-                    last = hist[-1]
-                    dist = abs(cx - (last[0] + last[2] / 2))
-                    if dist < min_dist and dist < w * 2:
-                        min_dist = dist
+                    iou = box_iou((x, y, w, h), hist[-1])
+                    if iou > best_iou:
+                        best_iou = iou
                         best_id = fid
+            if best_id is None:
+                min_dist = float('inf')
+                for fid, hist in self.histories.items():
+                    if hist:
+                        last = hist[-1]
+                        dist = ((cx - (last[0] + last[2] / 2)) ** 2
+                                + (cy - (last[1] + last[3] / 2)) ** 2) ** 0.5
+                        if dist < min_dist and dist < w * 2:
+                            min_dist = dist
+                            best_id = fid
             if best_id is None:
                 best_id = frame_number * 1000 + len(smoothed)
             # Update history
@@ -180,6 +198,17 @@ class SmoothedCameraman:
             self._vx = 0.0
             self._vy = 0.0
 
+        # Rule-of-thirds headroom: place the subject's eye line at this
+        # fraction of the crop height instead of dead-center (pro framing puts
+        # eyes ~1/3 from the top; the reframe research doc calls this the #1
+        # low-cost win). 0.42 matches the eval scorer's TARGET_Y; 0.5 restores
+        # the legacy centered framing exactly. Empty-safe like the other knobs.
+        _hy = (os.getenv("REFRAME_HEADROOM_Y") or "").strip()
+        try:
+            self.headroom_y = float(_hy) if _hy else 0.42
+        except ValueError:
+            self.headroom_y = 0.42
+
         # Hard per-frame pan-rate cap in px (applies to every smoother mode).
         # 0 disables it (default). Also caps the spring's max velocity.
         self._max_step_px = float(os.getenv("REFRAME_MAX_STEP_PX", "0"))
@@ -208,7 +237,6 @@ class SmoothedCameraman:
             # Person fallback = no clean face → don't zoom in (could be wide group)
             self.target_zoom = 1.0
         else:
-            self.target_center_y = y + h / 2
             # Zoom in proportionally to face size — small faces (talking head in
             # wide shot) trigger more zoom; large faces stay at 1.0. Continuous
             # face-occupancy target (ported from smart-reframe) replaces the old
@@ -218,6 +246,19 @@ class SmoothedCameraman:
                 h, self.max_crop_height, target_occupancy=0.4,
                 min_zoom=1.0, max_zoom=1.6,
             )
+            # Vertical target uses rule-of-thirds headroom at the crop height
+            # this zoom implies. REFRAME_HEADROOM_Y=0.5 is the exact legacy
+            # centering (not routed through the eye-line estimate, so the
+            # escape hatch is byte-identical). NB: collapse_scene_targets caps
+            # zoom at 1.35 AFTER taking the median cy, so on capped scenes the
+            # eyes sit slightly below the target fraction — accepted inaccuracy.
+            if self.headroom_y == 0.5:
+                self.target_center_y = y + h / 2
+            else:
+                crop_h = self.max_crop_height / self.target_zoom
+                self.target_center_y = headroom_center_y(
+                    y, h, crop_h, self.video_height, target_frac=self.headroom_y,
+                )
 
     def _ease_axis(self, current: float, target: float, safe_radius: float, fast_ref: float) -> float:
         """Adaptive easing for a single axis. Returns the new current value."""
@@ -368,7 +409,7 @@ class SpeakerTracker:
 
         # ID tracking
         self.next_id = 0
-        self.known_faces = []  # [{'id': 0, 'center': x, 'last_frame': 123}]
+        self.known_faces = []  # [{'id': 0, 'center': x, 'box': [x,y,w,h], 'last_frame': 123}]
 
     def reset(self, frame_number=None):
         """Forget speaker identities and scores — call at a hard scene cut.
@@ -395,33 +436,57 @@ class SpeakerTracker:
         Decides which face to focus on.
 
         face_candidates: list of {'box': [x,y,w,h], 'score': float, 'mar': float|None}
-          - 'score' is face area (legacy, used for size weighting)
+          - 'score' is face area x detection confidence (used for size weighting)
           - 'mar' is mouth aspect ratio at this frame (None if not extractable)
         """
         current_candidates = []
 
-        # 1. Match faces to known IDs (simple distance tracking)
+        # 1. Match faces to known IDs — IoU (spatial overlap) first, center
+        # proximity as the fallback for fast movers whose boxes no longer
+        # overlap between detection frames. The old center-x-only rule merged
+        # faces stacked at the same x (grid calls) and let crossing subjects
+        # swap IDs — stealing the 3x sticky bonus and the MAR history. The
+        # fallback uses the full 2-D center distance for the same reason.
         for face in face_candidates:
             x, y, w, h = face['box']
             center_x = x + w / 2
+            center_y = y + h / 2
 
             best_match_id = -1
-            min_dist = width * 0.15
-
+            best_iou = 0.1  # minimum overlap to claim an existing identity
             for kf in self.known_faces:
                 if frame_number - kf['last_frame'] > 30:
                     continue
-                dist = abs(center_x - kf['center'])
-                if dist < min_dist:
-                    min_dist = dist
+                last_box = kf.get('box')
+                if not last_box:
+                    continue
+                iou = box_iou(face['box'], last_box)
+                if iou > best_iou:
+                    best_iou = iou
                     best_match_id = kf['id']
+
+            if best_match_id == -1:
+                min_dist = width * 0.15
+                for kf in self.known_faces:
+                    if frame_number - kf['last_frame'] > 30:
+                        continue
+                    last_box = kf.get('box')
+                    if last_box:
+                        dist = ((center_x - (last_box[0] + last_box[2] / 2)) ** 2
+                                + (center_y - (last_box[1] + last_box[3] / 2)) ** 2) ** 0.5
+                    else:
+                        dist = abs(center_x - kf['center'])
+                    if dist < min_dist:
+                        min_dist = dist
+                        best_match_id = kf['id']
 
             if best_match_id == -1:
                 best_match_id = self.next_id
                 self.next_id += 1
 
             self.known_faces = [kf for kf in self.known_faces if kf['id'] != best_match_id]
-            self.known_faces.append({'id': best_match_id, 'center': center_x, 'last_frame': frame_number})
+            self.known_faces.append({'id': best_match_id, 'center': center_x,
+                                     'box': list(face['box']), 'last_frame': frame_number})
 
             current_candidates.append({
                 'id': best_match_id,

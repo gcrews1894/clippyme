@@ -577,3 +577,119 @@ def test_collapse_passes_through_none_targets():
     strats = ['TRACK', 'GENERAL', 'TRACK']
     out = ro.collapse_scene_targets(targets, sids, strats, x_max=1000, y_max=1000)
     assert out[1] is None                       # GENERAL/None frame untouched
+
+
+# --- box_iou ------------------------------------------------------------------
+
+def test_box_iou_identical_boxes_is_one():
+    assert ro.box_iou([10, 10, 100, 100], [10, 10, 100, 100]) == pytest.approx(1.0)
+
+
+def test_box_iou_disjoint_boxes_is_zero():
+    assert ro.box_iou([0, 0, 50, 50], [100, 100, 50, 50]) == 0.0
+
+
+def test_box_iou_contained_box():
+    # A 50x50 box inside a 100x100 box → IoU = 2500 / 10000.
+    assert ro.box_iou([0, 0, 100, 100], [25, 25, 50, 50]) == pytest.approx(0.25)
+
+
+def test_box_iou_partial_overlap():
+    # Two 100x100 boxes offset by 50px in x: inter 50*100, union 15000.
+    assert ro.box_iou([0, 0, 100, 100], [50, 0, 100, 100]) == pytest.approx(5000 / 15000)
+
+
+def test_box_iou_degenerate_boxes_are_zero():
+    assert ro.box_iou([0, 0, 0, 100], [0, 0, 100, 100]) == 0.0
+    assert ro.box_iou([0, 0, 100, 100], [0, 0, 100, -5]) == 0.0
+
+
+# --- headroom_center_y --------------------------------------------------------
+
+def test_headroom_places_eye_line_at_target_fraction():
+    # Face y=400 h=200 → eyes at 480. crop_h=1000, frame_h=2000 (no clamping).
+    cy = ro.headroom_center_y(400, 200, 1000, 2000, target_frac=0.42, eyes_frac=0.40)
+    # Crop top = cy - 500; eyes must sit at 42% of the crop height.
+    assert (480 - (cy - 500)) / 1000 == pytest.approx(0.42)
+
+
+def test_headroom_legacy_equivalence_at_half():
+    # target_frac=0.5 + eyes_frac=0.5 reproduces the legacy y + h/2 centering.
+    cy = ro.headroom_center_y(400, 200, 800, 2000, target_frac=0.5, eyes_frac=0.5)
+    assert cy == pytest.approx(400 + 200 / 2)
+
+
+def test_headroom_clamps_to_frame_bounds():
+    # Face near the top: the ideal center would push the crop above the frame.
+    cy = ro.headroom_center_y(0, 100, 900, 1080, target_frac=0.42)
+    assert cy == pytest.approx(450.0)  # crop_h/2 — crop pinned to the top edge
+    # Face near the bottom: clamps to frame_h - crop_h/2.
+    cy2 = ro.headroom_center_y(1030, 50, 900, 1080, target_frac=0.42)
+    assert cy2 <= 1080 - 450 + 1e-9
+
+
+def test_headroom_crop_taller_than_frame_centers():
+    assert ro.headroom_center_y(100, 50, 2000, 1080) == pytest.approx(540.0)
+
+
+# --- hold_gaps ----------------------------------------------------------------
+
+def test_hold_gaps_bridges_short_dropout():
+    t = (500.0, 200.0, 1.0)
+    targets = [t, None, None, t]
+    out = ro.hold_gaps(targets, [0, 0, 0, 0], hold_frames=3)
+    assert out == [t, t, t, t]
+
+
+def test_hold_gaps_leaves_long_dropout_alone():
+    t = (500.0, 200.0, 1.0)
+    targets = [t] + [None] * 5 + [t]
+    out = ro.hold_gaps(targets, [0] * 7, hold_frames=3)
+    assert out == targets  # gap of 5 > hold of 3 → untouched (letterbox fallback)
+
+
+def test_hold_gaps_exact_hold_length_is_bridged():
+    t = (500.0, 200.0, 1.0)
+    targets = [t, None, None, None]
+    out = ro.hold_gaps(targets, [0] * 4, hold_frames=3)
+    assert out == [t, t, t, t]
+
+
+def test_hold_gaps_never_bridges_across_scene_cut():
+    t = (500.0, 200.0, 1.0)
+    targets = [t, None, None, (900.0, 200.0, 1.0)]
+    # The gap spans scenes 0→1: must NOT be filled with scene 0's target.
+    out = ro.hold_gaps(targets, [0, 0, 1, 1], hold_frames=10)
+    assert out == targets
+
+
+def test_hold_gaps_preserves_leading_nones_and_length():
+    t = (500.0, 200.0, 1.0)
+    targets = [None, None, t, None]
+    out = ro.hold_gaps(targets, [0] * 4, hold_frames=5)
+    assert len(out) == 4
+    assert out[0] is None and out[1] is None  # nothing to hold from yet
+    assert out[3] == t
+
+
+def test_hold_gaps_zero_hold_is_noop():
+    t = (500.0, 200.0, 1.0)
+    targets = [t, None, t]
+    assert ro.hold_gaps(targets, [0] * 3, hold_frames=0) == targets
+
+
+def test_subject_smoothing_config_kills_alternating_jitter():
+    """The exact hold_gaps + build_smoothed_trajectory configuration the
+    subject render uses must turn a strobing (alternating-centroid) input into
+    a near-still trajectory — the regression pin for FrameShift crop jitter."""
+    targets = [(550.0 if i % 2 else 450.0, 500.0, 1.0) for i in range(60)]
+    held = ro.hold_gaps(targets, [0] * 60, hold_frames=45)
+    out = ro.build_smoothed_trajectory(
+        held, [0] * 60, window=21, polyorder=2,
+        x_max=1000.0, y_max=1000.0, min_zoom=1.0, max_zoom=1.0,
+        method="savgol", stationary_threshold=0.20, snap_center_dist=0.10,
+    )
+    xs = [t[0] for t in out]
+    max_step = max(abs(xs[i + 1] - xs[i]) for i in range(len(xs) - 1))
+    # Raw input strobes 100px per frame; the smoothed path must not.
+    assert max_step <= 2.0

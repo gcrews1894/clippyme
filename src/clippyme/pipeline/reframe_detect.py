@@ -5,6 +5,9 @@ the per-frame detectors. Split out of ``reframe.py`` so the pure tracking
 classes (``reframe_track``) stay host-importable; ``reframe.py`` re-exports
 these names for back-compat.
 """
+import os
+import re
+
 import cv2
 import mediapipe as mp
 from ultralytics import YOLO
@@ -13,11 +16,27 @@ from clippyme.pipeline.hardware import DEVICE
 
 _yolo_model = None
 
+# REFRAME_YOLO_MODEL allowlist: known ultralytics weight names only, so the env
+# var can trade accuracy for latency (yolov8n → s/m, or yolo11n/s) but can
+# never point YOLO at an arbitrary filesystem path or URL. yolov8n.pt is the
+# Dockerfile-pre-downloaded default; anything else is a lazy ~20-50MB download
+# on first use and 2-3x slower per frame on CPU.
+_YOLO_MODEL_RE = re.compile(r"^yolo(v8[nsm]|11[ns])\.pt$")
+
+
 def _get_yolo_model():
-    """Lazy-load YOLOv8n on first body-detection call."""
+    """Lazy-load the YOLO body/object model on first detection call.
+
+    The variant is selectable via REFRAME_YOLO_MODEL (allowlisted, default
+    yolov8n.pt); an unrecognised value falls back to the default rather than
+    erroring mid-render.
+    """
     global _yolo_model
     if _yolo_model is None:
-        _yolo_model = YOLO('yolov8n.pt')
+        name = (os.getenv("REFRAME_YOLO_MODEL") or "").strip().lower()
+        if not _YOLO_MODEL_RE.match(name):
+            name = 'yolov8n.pt'
+        _yolo_model = YOLO(name)
         _yolo_model.to(DEVICE)
     return _yolo_model
 
@@ -99,31 +118,56 @@ def compute_mouth_aspect_ratio(frame_bgr, face_box) -> float | None:
         return None
     return mouth_h / mouth_w
 
+def _face_conf_floor() -> float:
+    """REFRAME_FACE_CONF — minimum detection confidence for a face candidate.
+
+    Default 0.5 matches the FaceDetection model's own min_detection_confidence,
+    so no candidate is filtered unless the knob is raised. Empty-safe."""
+    raw = (os.getenv("REFRAME_FACE_CONF") or "").strip()
+    try:
+        return float(raw) if raw else 0.5
+    except ValueError:
+        return 0.5
+
+
 def detect_face_candidates(frame):
     """
     Returns list of all detected faces using lightweight FaceDetection.
+
+    Each candidate carries its detection ``confidence`` and a ``score`` of
+    area x confidence — so a large low-confidence false positive no longer
+    outranks a small real face in scene classification and speaker
+    size-weighting. Candidates below REFRAME_FACE_CONF are dropped.
     """
     height, width, _ = frame.shape
     rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     results = _get_face_detection().process(rgb_frame)
-    
+
     candidates = []
-    
+
     if not results.detections:
         return []
-        
+
+    conf_floor = _face_conf_floor()
     for detection in results.detections:
+        try:
+            confidence = float(detection.score[0])
+        except (IndexError, TypeError, ValueError):
+            confidence = 1.0
+        if confidence < conf_floor:
+            continue
         bboxC = detection.location_data.relative_bounding_box
         x = int(bboxC.xmin * width)
         y = int(bboxC.ymin * height)
         w = int(bboxC.width * width)
         h = int(bboxC.height * height)
-        
+
         candidates.append({
             'box': [x, y, w, h],
-            'score': w * h # Area as score
+            'score': w * h * confidence,  # area weighted by detection confidence
+            'confidence': confidence,
         })
-            
+
     return candidates
 
 def detect_person_yolo(frame):

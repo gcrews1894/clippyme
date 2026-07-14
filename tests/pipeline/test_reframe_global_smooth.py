@@ -262,3 +262,80 @@ def test_zoom_fold_renders_valid_vertical(tmp_path, monkeypatch):
     assert h > w, f"expected vertical output, got {w}x{h}"
     # zoompan d=1 must not change the frame count materially.
     assert abs(n - 45) <= 2, f"frame count drifted: {n} vs 45"
+
+
+def test_subject_mode_smoothed_matches_legacy_frame_count(tmp_path, monkeypatch):
+    """The default smoothed subject path must emit exactly as many frames as
+    the legacy per-frame path (REFRAME_SUBJECT_SMOOTH=0), and both must be
+    valid vertical outputs."""
+    src = str(tmp_path / "src.mp4")
+    _make_synthetic_clip(src)
+
+    def _render(out_path, smooth):
+        monkeypatch.setenv("REFRAME_SUBJECT_SMOOTH", "1" if smooth else "0")
+        assert reframe.process_video_to_vertical(src, out_path, reframe_mode="subject") is True
+        cap = cv2.VideoCapture(out_path)
+        try:
+            w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        finally:
+            cap.release()
+        assert h > w and n > 0
+        return n
+
+    legacy = _render(str(tmp_path / "legacy.mp4"), smooth=False)
+    smoothed = _render(str(tmp_path / "smoothed.mp4"), smooth=True)
+    assert legacy == smoothed
+
+
+def test_frameshift_split_halves_compose_like_the_original():
+    """_frameshift_interest_center + _render_frameshift_at must reproduce
+    create_frameshift_frame for both branches (subject found / letterbox)."""
+    frame = np.zeros((360, 640, 3), dtype=np.uint8)
+    cv2.rectangle(frame, (500, 150), (560, 210), (255, 255, 255), -1)
+    composed = reframe.create_frameshift_frame(frame, 1080, 1920)
+    center = reframe._frameshift_interest_center(frame)
+    if center is None:
+        manual = reframe._black_pad_to_output(frame, 1080, 1920)
+    else:
+        manual = reframe._render_frameshift_at(frame, center[0], 1080, 1920)
+    assert np.array_equal(composed, manual)
+
+
+def test_face_candidates_include_confidence():
+    """Every face candidate must carry a confidence in (0, 1] and a score no
+    larger than its raw area (score = area x confidence)."""
+    frame = np.zeros((360, 640, 3), dtype=np.uint8)
+    for cand in reframe.detect_face_candidates(frame):
+        x, y, w, h = cand["box"]
+        assert 0.0 < cand["confidence"] <= 1.0
+        assert cand["score"] <= w * h + 1e-6
+
+
+def test_yolo_model_knob_allowlist(monkeypatch):
+    """REFRAME_YOLO_MODEL swaps the weights when allowlisted and falls back to
+    yolov8n.pt on anything suspicious (paths, URLs, unknown names)."""
+    from clippyme.pipeline import reframe_detect as rd
+
+    loaded = []
+
+    class _FakeYOLO:
+        def __init__(self, name):
+            loaded.append(name)
+
+        def to(self, device):
+            pass
+
+    monkeypatch.setattr(rd, "YOLO", _FakeYOLO)
+
+    monkeypatch.setattr(rd, "_yolo_model", None)
+    monkeypatch.setenv("REFRAME_YOLO_MODEL", "yolov8s.pt")
+    rd._get_yolo_model()
+    assert loaded[-1] == "yolov8s.pt"
+
+    for bad in ("../evil.pt", "http://x/y.pt", "yolov9c.pt", ""):
+        monkeypatch.setattr(rd, "_yolo_model", None)
+        monkeypatch.setenv("REFRAME_YOLO_MODEL", bad)
+        rd._get_yolo_model()
+        assert loaded[-1] == "yolov8n.pt", f"{bad!r} must fall back to the default"

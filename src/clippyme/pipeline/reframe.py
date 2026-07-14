@@ -35,6 +35,7 @@ from clippyme.pipeline.reframe_ops import (
     build_smoothed_trajectory,
     centroid_span,
     collapse_scene_targets,
+    hold_gaps,
     salient_crop_center,
     weighted_interest_center,
 )
@@ -329,27 +330,19 @@ def _black_pad_to_output(frame, output_width, output_height):
     return canvas
 
 
-def create_frameshift_frame(frame, output_width, output_height):
-    """FrameShift face-first 9:16 reframe — the ``object`` reframe mode.
+def _frameshift_interest_center(frame):
+    """Weighted-interest centroid of every detection in the frame, or ``None``.
 
-    Computes a weighted-interest centroid over every detection in the frame —
-    faces (weight 1.0), persons (0.8) and every other COCO object (default 0.5),
-    matching the FrameShift GUI defaults — each scaled by its pixel area and
-    confidence (``reframe_ops.weighted_interest_center``), then crops a
-    full-height window of the target aspect ratio centred on that point. A face
-    therefore pulls the camera hardest, so a talking head stays framed while
-    relevant on-screen objects still bias the crop. Faces use MediaPipe
-    FaceDetection; persons + objects reuse the single lazily-loaded YOLOv8 pass.
-
-    Falls back to black-padded letterbox (FrameShift "Enable Padding → black")
-    when nothing is detected or the source is already narrower than the target,
-    so a faceless/objectless shot is shown in full on black bars rather than
-    arbitrarily cropped. Never returns None — always yields a valid output frame.
+    The detection half of the FrameShift reframe: faces (weight 1.0), persons
+    (0.8) and every other COCO object (default 0.5), matching the FrameShift
+    GUI defaults — each scaled by its pixel area and detection confidence
+    (``reframe_ops.weighted_interest_center``). A face therefore pulls the
+    camera hardest, so a talking head stays framed while relevant on-screen
+    objects still bias the crop. Faces use MediaPipe FaceDetection; persons +
+    objects reuse the single lazily-loaded YOLOv8 pass. Returns ``(cx, cy)``
+    or ``None`` when nothing is detected (or detection raised).
     """
     try:
-        orig_h, orig_w = frame.shape[:2]
-        target_ar = output_width / float(output_height)
-        crop_w = int(round(orig_h * target_ar))
         face_w, person_w, default_w, extra = _frameshift_weights()
 
         boxes = []
@@ -359,7 +352,8 @@ def create_frameshift_frame(frame, output_width, output_height):
                     x, y, w, h = cand['box']
                     area = max(0, w) * max(0, h)
                     if area > 0:
-                        boxes.append((x + w / 2.0, y + h / 2.0, face_w * area))
+                        boxes.append((x + w / 2.0, y + h / 2.0,
+                                      face_w * area * cand.get('confidence', 1.0)))
             except Exception:
                 pass
 
@@ -381,12 +375,26 @@ def create_frameshift_frame(frame, output_width, output_height):
                 conf = float(box.conf[0]) if box.conf is not None else 1.0
                 boxes.append(((x1 + x2) / 2.0, (y1 + y2) / 2.0, w * area * conf))
 
-        center = weighted_interest_center(boxes)
-        if center is None or crop_w < 1 or crop_w >= orig_w:
-            # No subject, or source already at/under target width → black-pad.
-            return _black_pad_to_output(frame, output_width, output_height)
+        return weighted_interest_center(boxes)
+    except Exception:
+        return None
 
-        x1 = int(round(center[0] - crop_w / 2.0))
+
+def _render_frameshift_at(frame, cx, output_width, output_height):
+    """Render the FrameShift crop: a full-height window of the target aspect
+    ratio centred (and bounds-clamped) at ``cx``.
+
+    Falls back to black-padded letterbox (FrameShift "Enable Padding → black")
+    when the source is already at/under the target width, so it is never
+    arbitrarily cropped. Never returns None — always yields a valid frame.
+    """
+    try:
+        orig_h, orig_w = frame.shape[:2]
+        target_ar = output_width / float(output_height)
+        crop_w = int(round(orig_h * target_ar))
+        if crop_w < 1 or crop_w >= orig_w:
+            return _black_pad_to_output(frame, output_width, output_height)
+        x1 = int(round(cx - crop_w / 2.0))
         x1 = max(0, min(orig_w - crop_w, x1))
         cropped = frame[:, x1:x1 + crop_w]
         if cropped.shape[0] < 1 or cropped.shape[1] < 1:
@@ -394,6 +402,24 @@ def create_frameshift_frame(frame, output_width, output_height):
         return _resize_to_output(cropped, output_width, output_height)
     except Exception:
         return _black_pad_to_output(frame, output_width, output_height)
+
+
+def create_frameshift_frame(frame, output_width, output_height):
+    """FrameShift face-first 9:16 reframe — one self-contained frame.
+
+    Composition of ``_frameshift_interest_center`` + ``_render_frameshift_at``:
+    detect the weighted-interest centroid and crop a full-height window centred
+    on it, black-padding when nothing is detected. This per-frame form is the
+    legacy subject-mode path (``REFRAME_SUBJECT_SMOOTH=0``); the default
+    subject render records centers in ``_render_global_smooth`` pass 1 and
+    smooths the trajectory before cropping, so the two halves are also called
+    separately there. Never returns None — always yields a valid output frame.
+    """
+    center = _frameshift_interest_center(frame)
+    if center is None:
+        # No subject → show the whole frame on black bars.
+        return _black_pad_to_output(frame, output_width, output_height)
+    return _render_frameshift_at(frame, center[0], output_width, output_height)
 
 
 def analyze_scenes_strategy(video_path, scenes):
@@ -614,6 +640,33 @@ def _reframe_comfort_enabled() -> bool:
     return val in ("1", "true", "yes", "on")
 
 
+def _subject_smooth_enabled() -> bool:
+    """Subject (FrameShift) two-pass smoothed rendering — default ON.
+
+    When on, subject mode records the weighted-interest centers in a tracking
+    pass and renders from a per-scene smoothed trajectory, instead of the
+    legacy per-frame independent crop that jittered with every detection
+    flicker and snapped to letterbox on single-frame dropouts. Set
+    ``REFRAME_SUBJECT_SMOOTH=0`` to fall back to the legacy per-frame path.
+    """
+    # Empty-safe, same convention as _reframe_comfort_enabled.
+    val = (os.getenv("REFRAME_SUBJECT_SMOOTH") or "").strip().lower()
+    if not val:
+        return True
+    return val in ("1", "true", "yes", "on")
+
+
+def _subject_hold_frames() -> int:
+    """REFRAME_SUBJECT_HOLD — how many frames a detection dropout is bridged
+    with the last subject position before falling back to letterbox
+    (default 45 ≈ 1.5 s @ 30 fps)."""
+    raw = (os.getenv("REFRAME_SUBJECT_HOLD") or "").strip()
+    try:
+        return max(0, int(raw)) if raw else 45
+    except ValueError:
+        return 45
+
+
 def _render_global_smooth(input_video, ffmpeg_process, cameraman, speaker_tracker,
                           detection_smoother, scene_boundaries, scene_strategies,
                           output_width, output_height, original_width, original_height,
@@ -641,15 +694,18 @@ def _render_global_smooth(input_video, ffmpeg_process, cameraman, speaker_tracke
     cap = cv2.VideoCapture(input_video)
     frame_number = 0
     current_scene_index = 0
+    # Subject (OBJECT) scenes: the last recorded weighted-interest target, so
+    # odd (grab-only) frames repeat the previous even frame's measurement.
+    last_object_target = None
     print("   🔁 Global-smooth pass 1/2: tracking trajectory...")
     try:
         with tqdm(total=total_frames, desc="   Pass 1", file=sys.stdout) as pbar:
             while cap.isOpened():
                 # Scene bookkeeping first (needs only frame_number) so we know
                 # whether this frame's PIXELS are ever looked at: detection runs
-                # on even frames of TRACK/WIDE scenes only. Everything else can
-                # cap.grab() — decode without the retrieve+BGR-convert memcpy —
-                # which trims a solid chunk of pass-1 cost for free.
+                # on even frames of TRACK/WIDE/OBJECT scenes only. Everything
+                # else can cap.grab() — decode without the retrieve+BGR-convert
+                # memcpy — which trims a solid chunk of pass-1 cost for free.
                 if current_scene_index < len(scene_boundaries):
                     _, end_f = scene_boundaries[current_scene_index]
                     if frame_number >= end_f and current_scene_index < len(scene_boundaries) - 1:
@@ -662,6 +718,7 @@ def _render_global_smooth(input_video, ffmpeg_process, cameraman, speaker_tracke
                         # skew the whole scene's collapsed median crop.
                         speaker_tracker.reset(frame_number)
                         detection_smoother.reset()
+                        last_object_target = None
                 strat = scene_strategies[current_scene_index] if current_scene_index < len(scene_strategies) else 'TRACK'
                 needs_pixels = strat not in ('DISABLED', 'GENERAL') and frame_number % 2 == 0
                 if needs_pixels:
@@ -674,6 +731,17 @@ def _render_global_smooth(input_video, ffmpeg_process, cameraman, speaker_tracke
                 scene_ids.append(current_scene_index)
                 if strat in ('DISABLED', 'GENERAL'):
                     targets.append(None)
+                elif strat == 'OBJECT':
+                    # Subject (FrameShift) scene: record the raw weighted-interest
+                    # center; a None (nothing detected) is bridged later by
+                    # hold_gaps or rendered as letterbox in pass 2. cy is fixed
+                    # (full-height crop) and zoom is unused (constant 1.0).
+                    if needs_pixels:
+                        center = _frameshift_interest_center(frame)
+                        last_object_target = (
+                            (float(center[0]), original_height / 2.0, 1.0)
+                            if center is not None else None)
+                    targets.append(last_object_target)
                 else:
                     if needs_pixels:
                         candidates = detect_face_candidates(frame)
@@ -727,6 +795,28 @@ def _render_global_smooth(input_video, ffmpeg_process, cameraman, speaker_tracke
     # camera), still A/B-able.
     _static = (os.getenv("REFRAME_STATIC_AUTO") or "").strip().lower()
     static_auto = (_static in ("1", "true", "yes", "on")) if _static else True
+
+    # Subject (OBJECT) scenes are smoothed separately: bridge short detection
+    # dropouts (hold_gaps) so a single flickered frame doesn't snap the crop to
+    # letterbox, then per-scene Savitzky-Golay + a stationary lock — a static
+    # subject gets a tripod shot, a moving one is followed smoothly. They are
+    # deliberately NOT routed through collapse_scene_targets: pinning the whole
+    # scene to one viewpoint would neuter FrameShift's follow behaviour —
+    # static-auto stays an AUTO-mode policy.
+    has_object = 'OBJECT' in strategies
+    if has_object:
+        object_targets = [t if s == 'OBJECT' else None
+                          for t, s in zip(targets, strategies)]
+        object_targets = hold_gaps(object_targets, scene_ids, _subject_hold_frames())
+        object_smoothed = build_smoothed_trajectory(
+            object_targets, scene_ids, window=win, polyorder=2,
+            x_max=original_width, y_max=original_height,
+            min_zoom=1.0, max_zoom=1.0, method='savgol',
+            stationary_threshold=0.20, snap_center_dist=snap_center_dist,
+        )
+        targets = [t if s != 'OBJECT' else None
+                   for t, s in zip(targets, strategies)]
+
     if static_auto:
         smoothed = collapse_scene_targets(
             targets, scene_ids, strategies,
@@ -741,6 +831,9 @@ def _render_global_smooth(input_video, ffmpeg_process, cameraman, speaker_tracke
             stationary_threshold=stationary_thresh, snap_center_dist=snap_center_dist,
             lock_zoom=lock_zoom,
         )
+    if has_object:
+        smoothed = [object_smoothed[i] if strategies[i] == 'OBJECT' else smoothed[i]
+                    for i in range(len(smoothed))]
 
     # --- Pass 2: render from the smoothed trajectory -----------------------
     print("   🔁 Global-smooth pass 2/2: rendering...")
@@ -763,6 +856,15 @@ def _render_global_smooth(input_video, ffmpeg_process, cameraman, speaker_tracke
                         output_frame = create_disabled_reframe(frame, output_width, output_height)
                     elif strat == 'GENERAL':
                         output_frame = create_general_frame(frame, output_width, output_height)
+                    elif strat == 'OBJECT':
+                        # Subject (FrameShift): crop at the smoothed center; a
+                        # gap longer than the hold (nothing detected) shows the
+                        # whole frame on black bars, exactly like the legacy path.
+                        tgt = smoothed[frame_number] if frame_number < len(smoothed) else None
+                        if tgt is None:
+                            output_frame = _black_pad_to_output(frame, output_width, output_height)
+                        else:
+                            output_frame = _render_frameshift_at(frame, tgt[0], output_width, output_height)
                     else:
                         tgt = smoothed[frame_number] if frame_number < len(smoothed) else None
                         if tgt is None:
@@ -984,17 +1086,20 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
         speaker_tracker = SpeakerTracker(cooldown_frames=45)
         detection_smoother = DetectionSmoother(window_size=5)
 
-        # Opt-in two-stage global trajectory smoothing (REFRAME_GLOBAL_SMOOTH).
-        # When on, a dedicated track-then-render pass handles all frames and the
-        # single-pass streaming loop below is skipped (its `while` short-circuits
-        # on `not global_smooth`). Default-off keeps the proven path byte-identical.
-        # Global-smooth is a face-tracking pan smoother → only meaningful in AUTO.
-        # OBJECT (per-frame element crop) and DISABLED (static) run the streaming
-        # loop below.
+        # Two-stage global trajectory smoothing. When on, a dedicated
+        # track-then-render pass handles all frames and the single-pass
+        # streaming loop below is skipped (its `while` short-circuits on
+        # `not global_smooth`). AUTO uses it under comfort mode (default on)
+        # or REFRAME_GLOBAL_SMOOTH; SUBJECT uses it by default so the
+        # FrameShift crop follows one smoothed per-scene trajectory instead of
+        # re-centering independently every frame (REFRAME_SUBJECT_SMOOTH=0
+        # restores the legacy per-frame path). DISABLED (static) always runs
+        # the streaming loop below.
         global_smooth = (
-            (os.getenv("REFRAME_GLOBAL_SMOOTH", "").strip().lower() in ("1", "true", "yes", "on")
-             or _reframe_comfort_enabled())
-            and reframe_mode == 'auto'
+            ((os.getenv("REFRAME_GLOBAL_SMOOTH", "").strip().lower() in ("1", "true", "yes", "on")
+              or _reframe_comfort_enabled())
+             and reframe_mode == 'auto')
+            or (reframe_mode == 'subject' and _subject_smooth_enabled())
         )
         if global_smooth:
             _render_global_smooth(
