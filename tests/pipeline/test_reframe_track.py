@@ -148,3 +148,81 @@ def test_speaker_tracker_reset_forgets_identities():
     assert st.active_speaker_id is not None
     st.reset(frame_number=10)
     assert st.active_speaker_id is None and st.known_faces == []
+
+
+# --- rule-of-thirds headroom ----------------------------------------------------
+
+def test_face_target_places_eyes_at_headroom_fraction(monkeypatch):
+    monkeypatch.delenv("REFRAME_HEADROOM_Y", raising=False)
+    cam = SmoothedCameraman(608, 1080, 1920, 1080)
+    cam.update_target((800, 400, 200, 200))  # mid-frame face, no clamping
+    crop_h = cam.max_crop_height / cam.target_zoom
+    eyes_y = 400 + 0.40 * 200
+    crop_top = cam.target_center_y - crop_h / 2
+    assert (eyes_y - crop_top) / crop_h == pytest.approx(0.42)
+
+
+def test_headroom_half_restores_legacy_centering(monkeypatch):
+    monkeypatch.setenv("REFRAME_HEADROOM_Y", "0.5")
+    cam = SmoothedCameraman(608, 1080, 1920, 1080)
+    cam.update_target((800, 400, 200, 200))
+    assert cam.target_center_y == pytest.approx(400 + 200 / 2)  # exact legacy
+
+
+def test_headroom_env_garbage_falls_back_to_default(monkeypatch):
+    monkeypatch.setenv("REFRAME_HEADROOM_Y", "not-a-number")
+    cam = SmoothedCameraman(608, 1080, 1920, 1080)
+    assert cam.headroom_y == pytest.approx(0.42)
+
+
+# --- IoU identity association ---------------------------------------------------
+
+def test_detection_smoother_keeps_stacked_faces_distinct():
+    """Two faces at the same x but different y (grid call) must hold separate
+    tracks — the old center-x-only matching merged them into one blended box."""
+    sm = DetectionSmoother(window_size=5)
+    a, b = [100, 100, 80, 80], [100, 500, 80, 80]
+    out = None
+    for i in range(3):
+        out = sm.smooth([{"box": list(a), "score": 1.0},
+                         {"box": list(b), "score": 1.0}], i)
+    assert len(sm.histories) == 2
+    assert out[0]["box"][1] == 100 and out[1]["box"][1] == 500  # never blended
+
+
+def test_detection_smoother_tracks_moving_box_via_overlap():
+    sm = DetectionSmoother(window_size=5)
+    sm.smooth([{"box": [100, 100, 100, 100], "score": 1.0}], 0)
+    sm.smooth([{"box": [130, 105, 100, 100], "score": 1.0}], 1)  # big overlap
+    assert len(sm.histories) == 1  # same identity, matched by IoU
+
+
+def test_detection_smoother_fast_mover_matched_by_center_distance():
+    sm = DetectionSmoother(window_size=5)
+    sm.smooth([{"box": [100, 100, 100, 100], "score": 1.0}], 0)
+    # Jumped past any overlap, but the center moved <2 widths → same track.
+    sm.smooth([{"box": [250, 100, 100, 100], "score": 1.0}], 1)
+    assert len(sm.histories) == 1
+
+
+def _face_at(x, y, mar):
+    return {"box": [x, y, 100, 100], "score": 100 * 100, "mar": mar}
+
+
+def test_speaker_tracker_stacked_faces_get_distinct_ids():
+    """Same-x faces stacked vertically must not share an identity (and thus
+    must not pool their MAR history / sticky bonus)."""
+    st = SpeakerTracker(cooldown_frames=5)
+    for frame in range(10):
+        st.get_target([_face_at(200, 100, 0.3),
+                       _face_at(200, 800, 0.1 if frame % 2 else 0.6)], frame, 1920)
+    assert len(st.known_faces) == 2
+    assert st.next_id == 2  # exactly two identities ever created
+
+
+def test_speaker_tracker_moving_face_keeps_identity():
+    st = SpeakerTracker(cooldown_frames=5)
+    st.get_target([_face_at(200, 100, 0.3)], 0, 1920)
+    st.get_target([_face_at(240, 110, 0.3)], 1, 1920)  # overlaps its last box
+    assert len(st.known_faces) == 1
+    assert st.next_id == 1

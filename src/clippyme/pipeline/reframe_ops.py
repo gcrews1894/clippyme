@@ -98,6 +98,26 @@ def zoom_for_face_height(face_h: float, max_crop_h: float,
     return max(min_zoom, min(zoom, max_zoom))
 
 
+def headroom_center_y(face_y: float, face_h: float, crop_h: float, frame_h: float,
+                      target_frac: float = 0.42, eyes_frac: float = 0.40) -> float:
+    """Crop-center y that places the subject's eye line at ``target_frac`` of
+    the crop height — rule-of-thirds headroom instead of dead-center framing.
+
+    The eye line is approximated at ``eyes_frac`` of the face box height
+    (MediaPipe FaceDetection boxes run brow→chin, eyes sit slightly above the
+    middle). The returned center is clamped so the crop stays inside the frame;
+    with ``target_frac=0.5, eyes_frac=0.5`` this degrades exactly to the legacy
+    ``face_y + face_h/2`` centering, which is the ``REFRAME_HEADROOM_Y=0.5``
+    escape hatch.
+    """
+    eyes_y = face_y + eyes_frac * face_h
+    cy = eyes_y + (0.5 - target_frac) * crop_h
+    half = crop_h / 2.0
+    if half > frame_h - half:
+        return frame_h / 2.0
+    return min(max(cy, half), frame_h - half)
+
+
 def advance_value_with_velocity(current: float, target: float, velocity: float,
                                 response: float, damping: float,
                                 max_velocity: float):
@@ -416,6 +436,26 @@ def stationary_lock(xs, ys, frame_w: float, frame_h: float,
     return [lock_x] * n, [lock_y] * n, True
 
 
+def box_iou(a, b) -> float:
+    """Intersection-over-union of two ``[x, y, w, h]`` boxes.
+
+    Returns 0.0 for disjoint or degenerate (non-positive area) boxes. Used for
+    identity association across frames — spatial overlap is a far stronger
+    identity signal than the old center-x-proximity rule, which merged faces
+    stacked at the same x (grid calls) and swapped IDs on crossing subjects.
+    """
+    ax, ay, aw, ah = (float(v) for v in a)
+    bx, by, bw, bh = (float(v) for v in b)
+    if aw <= 0 or ah <= 0 or bw <= 0 or bh <= 0:
+        return 0.0
+    ix = max(0.0, min(ax + aw, bx + bw) - max(ax, bx))
+    iy = max(0.0, min(ay + ah, by + bh) - max(ay, by))
+    inter = ix * iy
+    if inter <= 0:
+        return 0.0
+    return inter / (aw * ah + bw * bh - inter)
+
+
 def centroid_span(centers, frame_w: float, frame_h: float) -> float:
     """Normalised travel of a subject's centre across a scene → motion measure.
 
@@ -496,6 +536,39 @@ def collapse_scene_targets(targets, scene_ids, strategies, *,
             cy = y_max / 2.0
         for k in range(j - i):
             out[i + k] = (cx, cy, zoom)
+        i = j
+    return out
+
+
+def hold_gaps(targets, scene_ids, hold_frames: int):
+    """Bridge short detection dropouts in a recorded camera-target trajectory.
+
+    ``targets[i]`` is a per-frame target tuple or ``None`` (no detection that
+    frame). Each maximal run of ``None`` entries is filled with the immediately
+    preceding non-None target iff the run is at most ``hold_frames`` long AND
+    every frame in the run shares that target's scene id — a gap is never
+    bridged across a hard cut, and a gap longer than the hold is left alone so
+    a genuinely subject-less stretch falls back to the letterbox path instead
+    of freezing on stale framing. Leading ``None`` entries (no target yet) are
+    preserved. Returns a new list of the same length; runs BEFORE smoothing so
+    held frames participate in the trajectory. Pure-math → host-unit-tested.
+    """
+    n = len(targets)
+    out = list(targets)
+    i = 0
+    last_idx = None  # index of the most recent non-None target
+    while i < n:
+        if targets[i] is not None:
+            last_idx = i
+            i += 1
+            continue
+        j = i
+        while j < n and targets[j] is None:
+            j += 1
+        if (last_idx is not None and hold_frames > 0 and (j - i) <= hold_frames
+                and all(scene_ids[k] == scene_ids[last_idx] for k in range(i, j))):
+            for k in range(i, j):
+                out[k] = targets[last_idx]
         i = j
     return out
 

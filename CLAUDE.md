@@ -141,7 +141,14 @@ state; composition happens at download/publish time. Serialised per clip via
 **Reframe**: three user modes — `auto` (face tracking + per-scene strategy),
 `subject` (FrameShift weighted-interest crop; legacy alias `object`),
 `disabled` (letterbox). Comfort mode is default-on: within a scene the camera
-never moves (`collapse_scene_targets`), zoom locks per scene. The output
+never moves (`collapse_scene_targets`), zoom locks per scene. Subject mode
+also rides the two-pass render by default (`REFRAME_SUBJECT_SMOOTH`, gaps
+bridged by `hold_gaps` up to `REFRAME_SUBJECT_HOLD`), smoothed per scene but
+never statically collapsed. Auto framing uses rule-of-thirds headroom
+(`REFRAME_HEADROOM_Y`, 0.5 = legacy centering); face candidates carry
+detection confidence (`REFRAME_FACE_CONF`); tracker identity association is
+IoU-first with a 2-D center-distance fallback; the YOLO variant is
+allowlist-swappable via `REFRAME_YOLO_MODEL`. The output
 aspect is an explicit `process_video_to_vertical(..., aspect_ratio=)`
 parameter passed by `main.py` per job — there is no module-global. Post-hoc
 mode switching (`POST /api/reframe/{job}/{clip}`) spawns
