@@ -27,7 +27,7 @@ class _FakeProc:
         return (b"", None)
 
 
-def _make_client(monkeypatch, tmp_path, *, aspect):
+def _make_client(monkeypatch, tmp_path, *, aspect, subject_smooth=None, subject_hold=None):
     outputs = tmp_path / "output"
     job_dir = outputs / JOB_ID
     job_dir.mkdir(parents=True)
@@ -36,6 +36,10 @@ def _make_client(monkeypatch, tmp_path, *, aspect):
     meta = {"transcript": {"language": "en"}, "shorts": [{"start": 0.0, "end": 5.0}]}
     if aspect is not None:
         meta["aspect"] = aspect
+    if subject_smooth is not None:
+        meta["subject_smooth"] = subject_smooth
+    if subject_hold is not None:
+        meta["subject_hold"] = subject_hold
     with open(job_dir / "vid_metadata.json", "w") as f:
         json.dump(meta, f)
     # The 409 guard requires the preserved source slice to exist on disk.
@@ -83,3 +87,45 @@ def test_reframe_rejects_tampered_aspect(monkeypatch, tmp_path):
     r = client.post(f"/api/reframe/{JOB_ID}/0", json={"reframe_mode": "auto"})
     assert r.status_code == 200, r.text
     assert "--aspect" not in captured["cmd"]
+
+
+# --- subject smoothing overrides on re-reframe ---------------------------------
+
+def test_reframe_request_subject_flags_reach_argv(monkeypatch, tmp_path):
+    client, captured = _make_client(monkeypatch, tmp_path, aspect="9:16")
+    r = client.post(f"/api/reframe/{JOB_ID}/0",
+                    json={"reframe_mode": "subject", "subject_smooth": False, "subject_hold": 30})
+    assert r.status_code == 200, r.text
+    cmd = captured["cmd"]
+    assert "--no-subject-smooth" in cmd
+    assert cmd[cmd.index("--subject-hold") + 1] == "30"
+
+
+def test_reframe_reuses_persisted_subject_settings(monkeypatch, tmp_path):
+    # Job stored smoothing off + a custom hold; a request omitting them reuses those.
+    client, captured = _make_client(monkeypatch, tmp_path, aspect="9:16",
+                                    subject_smooth=False, subject_hold=15)
+    r = client.post(f"/api/reframe/{JOB_ID}/0", json={"reframe_mode": "subject"})
+    assert r.status_code == 200, r.text
+    cmd = captured["cmd"]
+    assert "--no-subject-smooth" in cmd
+    assert cmd[cmd.index("--subject-hold") + 1] == "15"
+
+
+def test_reframe_request_overrides_persisted_smooth(monkeypatch, tmp_path):
+    # Persisted smoothing off, but the request re-enables it → no disable flag.
+    client, captured = _make_client(monkeypatch, tmp_path, aspect="9:16", subject_smooth=False)
+    r = client.post(f"/api/reframe/{JOB_ID}/0",
+                    json={"reframe_mode": "subject", "subject_smooth": True})
+    assert r.status_code == 200, r.text
+    assert "--no-subject-smooth" not in captured["cmd"]
+
+
+def test_reframe_default_subject_settings_omit_flags(monkeypatch, tmp_path):
+    # No persisted values, none in the request → pipeline defaults, no flags.
+    client, captured = _make_client(monkeypatch, tmp_path, aspect="9:16")
+    r = client.post(f"/api/reframe/{JOB_ID}/0", json={"reframe_mode": "subject"})
+    assert r.status_code == 200, r.text
+    cmd = captured["cmd"]
+    assert "--no-subject-smooth" not in cmd
+    assert "--subject-hold" not in cmd

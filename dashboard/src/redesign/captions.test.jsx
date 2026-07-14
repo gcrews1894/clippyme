@@ -135,6 +135,30 @@ test('grade switch off maps back to preset none and toggle false', () => {
   expect(p.gradeParams).toEqual({ preset: 'none' });
 });
 
+// --- subject-mode smoothing controls -------------------------------------------
+
+test('subject reframe: smoothing toggle rides the apply payload', () => {
+  const { onApply } = mount();
+  // Default tab is Reframe; switch to Subject to reveal the smoothing controls.
+  fireEvent.click(screen.getByRole('button', { name: 'Subject' }));
+  fireEvent.click(screen.getByRole('switch'));            // smoothing off (only switch on the tab)
+  fireEvent.click(applyBtn());
+  const p = onApply.mock.calls[0][0];
+  expect(p.reframeMode).toBe('subject');
+  expect(p.subjectSmooth).toBe(false);
+});
+
+test('subject reframe: hold preset change flags subjectSettingsChanged even at the same mode', () => {
+  // Start already in subject mode so a hold change is the ONLY diff.
+  const { onApply } = mount({ clip: { ...CLIP, reframe_mode: 'subject' } });
+  fireEvent.click(screen.getByRole('button', { name: '2.5s' }));
+  fireEvent.click(applyBtn());
+  const p = onApply.mock.calls[0][0];
+  expect(p.reframeMode).toBe('subject');
+  expect(p.subjectHold).toBe(75);
+  expect(p.subjectSettingsChanged).toBe(true);
+});
+
 // --- 2. manual trim forces smartcut --------------------------------------------
 
 test('dropping a transcript segment forces smartcut and sends its span', async () => {

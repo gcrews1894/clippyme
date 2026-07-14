@@ -59,6 +59,45 @@ def test_reframe_mode_auto_is_omitted():
     assert "--reframe-mode" not in cmd
 
 
+# --- subject smoothing knobs ------------------------------------------------
+
+def test_subject_smooth_default_omits_flag():
+    # None / True = pipeline default (on) → no disable flag emitted.
+    for val in (None, True):
+        cmd = build_main_cmd(url="https://x.com/v", output_dir="o", subject_smooth=val)
+        assert "--no-subject-smooth" not in cmd
+
+
+def test_subject_smooth_false_emits_disable_flag():
+    cmd = build_main_cmd(url="https://x.com/v", output_dir="o", subject_smooth=False)
+    assert "--no-subject-smooth" in cmd
+
+
+def test_subject_hold_forwarded_when_set():
+    cmd = build_main_cmd(url="https://x.com/v", output_dir="o", subject_hold=30)
+    assert cmd[cmd.index("--subject-hold") + 1] == "30"
+    # 0 (Off) is a legitimate, non-default value → still forwarded.
+    cmd0 = build_main_cmd(url="https://x.com/v", output_dir="o", subject_hold=0)
+    assert cmd0[cmd0.index("--subject-hold") + 1] == "0"
+
+
+def test_subject_hold_omitted_when_none():
+    cmd = build_main_cmd(url="https://x.com/v", output_dir="o")
+    assert "--subject-hold" not in cmd
+
+
+def test_subject_hold_out_of_range_rejected():
+    for bad in (-1, 601, 10_000):
+        with pytest.raises(ValueError):
+            build_main_cmd(url="https://x.com/v", output_dir="o", subject_hold=bad)
+
+
+def test_subject_hold_bool_rejected():
+    # A bool is an int subclass; reject it so True/False can't masquerade as a count.
+    with pytest.raises(ValueError):
+        build_main_cmd(url="https://x.com/v", output_dir="o", subject_hold=True)
+
+
 def test_reframe_mode_subject_is_forwarded():
     # 'subject' (FrameShift face-first) is a non-default mode → passed through.
     cmd = build_main_cmd(url="https://x.com/v", output_dir="o", reframe_mode="subject")

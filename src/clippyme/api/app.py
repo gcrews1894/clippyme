@@ -286,6 +286,8 @@ async def process_endpoint(
     no_zoom = False
     skip_analysis = False
     model = None
+    subject_smooth = None
+    subject_hold = None
     content_type = request.headers.get("content-type", "")
     if "application/json" in content_type:
         try:
@@ -303,6 +305,8 @@ async def process_endpoint(
         no_zoom = bool(validated.no_zoom)
         skip_analysis = bool(validated.skip_analysis)
         model = validated.model
+        subject_smooth = validated.subject_smooth
+        subject_hold = validated.subject_hold
 
     # For multipart/form-data uploads, extract reframe_mode + language from form fields
     if "multipart/form-data" in content_type:
@@ -317,6 +321,16 @@ async def process_endpoint(
         no_zoom = str(form.get("no_zoom", "")).lower() in {"1", "true", "yes"} or no_zoom
         skip_analysis = str(form.get("skip_analysis", "")).lower() in {"1", "true", "yes"} or skip_analysis
         model = form.get("model", model) or None
+        # subject_smooth: only a present, explicitly-false form value disables
+        # smoothing (default stays on). subject_hold: parse when provided.
+        if "subject_smooth" in form:
+            subject_smooth = str(form.get("subject_smooth", "")).lower() in {"1", "true", "yes"}
+        _hold_raw = form.get("subject_hold")
+        if _hold_raw not in (None, ""):
+            try:
+                subject_hold = int(_hold_raw)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="subject_hold must be an integer")
         # Validate the multipart values through the same schema for
         # consistency — we drop the url requirement since we're using
         # an uploaded file path.
@@ -330,6 +344,8 @@ async def process_endpoint(
                 "no_zoom": no_zoom,
                 "skip_analysis": skip_analysis,
                 "model": model or None,
+                "subject_smooth": subject_smooth,
+                "subject_hold": subject_hold,
             })
         except ValidationError as exc:
             raise HTTPException(status_code=400, detail=exc.errors())
@@ -382,6 +398,8 @@ async def process_endpoint(
             no_zoom=no_zoom,
             skip_analysis=skip_analysis,
             model=model,
+            subject_smooth=subject_smooth,
+            subject_hold=subject_hold,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -429,6 +447,8 @@ async def batch_process(req: BatchRequest, request: Request):
                 no_zoom=bool(getattr(req, "no_zoom", False)),
                 skip_analysis=bool(getattr(req, "skip_analysis", False)),
                 model=getattr(req, "model", None),
+                subject_smooth=getattr(req, "subject_smooth", None),
+                subject_hold=getattr(req, "subject_hold", None),
             )
         except ValueError as exc:
             # This item's output dir was already created above but it never
@@ -678,6 +698,7 @@ async def reframe_clip(job_id: str, clip_index: int, req: ReframeRequest, reques
     return await run_reframe(
         job_id=job_id, clip_index=clip_index, mode=mode,
         output_root=OUTPUT_DIR, jobs=jobs,
+        subject_smooth=req.subject_smooth, subject_hold=req.subject_hold,
     )
 
 

@@ -143,11 +143,16 @@ export async function exportClip(jobId, index, clip, state, preselections) {
   return 'composed';
 }
 
-export async function reframeClip(jobId, index, mode) {
+export async function reframeClip(jobId, index, mode, extra = {}) {
+  const body = { reframe_mode: mode };
+  // Subject-mode smoothing overrides — only sent when defined (undefined →
+  // the backend reuses the value persisted from the original job).
+  if (extra.subjectSmooth !== undefined) body.subject_smooth = extra.subjectSmooth;
+  if (extra.subjectHold !== undefined) body.subject_hold = extra.subjectHold;
   const res = await apiFetch(getApiUrl(`/api/reframe/${jobId}/${index}`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ reframe_mode: mode }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
@@ -311,6 +316,11 @@ export function optsToPreselections(opts) {
     // 'object' is the legacy name for 'subject' (FrameShift face-first); the
     // backend accepts both but normalize here so new jobs persist the new name.
     reframe_mode: (opts.reframeMode === 'object' ? 'subject' : opts.reframeMode) || (opts.reframe === false ? 'disabled' : 'auto'),
+    // Subject-mode smoothing knobs. Passed through as-is; lib/api.js only sends
+    // them to the backend when they deviate from the pipeline defaults
+    // (smooth on / hold 45), so auto/disabled jobs stay byte-identical.
+    subject_smooth: opts.subjectSmooth,
+    subject_hold: opts.subjectHold,
     aspect: opts.aspect || '9:16',
     language: opts.language,
     no_zoom: !opts.zoom,

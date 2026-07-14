@@ -56,10 +56,17 @@ def build_main_cmd(
     skip_analysis: bool = False,
     aspect: str | None = None,
     model: str | None = None,
+    subject_smooth: bool | None = None,
+    subject_hold: int | None = None,
 ) -> list[str]:
     """Build a `python -u -m clippyme.pipeline.main ...` command line for a single processing job."""
     if reframe_mode is not None and reframe_mode not in ALLOWED_REFRAME_MODES:
         raise ValueError(f"invalid reframe_mode: {reframe_mode!r}")
+    if subject_hold is not None:
+        if not isinstance(subject_hold, int) or isinstance(subject_hold, bool):
+            raise ValueError(f"invalid subject_hold: {subject_hold!r}")
+        if not (0 <= subject_hold <= 600):
+            raise ValueError(f"subject_hold out of range [0, 600]: {subject_hold!r}")
     if model is not None:
         model = model.strip()
         if model and not GEMINI_MODEL_RE.match(model):
@@ -101,6 +108,12 @@ def build_main_cmd(
         cmd.append("--no-zoom")
     if skip_analysis:
         cmd.append("--skip-analysis")
+    # Subject smoothing is on by default in the pipeline, so only emit a flag
+    # to DISABLE it (mirrors --no-zoom); the hold is emitted whenever set.
+    if subject_smooth is False:
+        cmd.append("--no-subject-smooth")
+    if subject_hold is not None:
+        cmd.extend(["--subject-hold", str(subject_hold)])
     if model and model.strip():
         cmd.extend(["--model", model.strip()])
     return cmd

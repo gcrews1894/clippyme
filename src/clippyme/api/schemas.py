@@ -69,6 +69,12 @@ class ProcessRequest(BaseModel):
     language: Optional[str] = Field(None, max_length=16)
     no_zoom: Optional[bool] = False
     skip_analysis: Optional[bool] = False
+    # Subject (FrameShift) reframe smoothing knobs. Only meaningful in subject
+    # mode. subject_smooth None = pipeline default (on); subject_hold None =
+    # pipeline default (45 frames). Both become env overrides on the pipeline
+    # subprocess via main.py (REFRAME_SUBJECT_SMOOTH / REFRAME_SUBJECT_HOLD).
+    subject_smooth: Optional[bool] = None
+    subject_hold: Optional[int] = Field(None, ge=0, le=600)
     # Optional per-job Gemini model override. Validated against the gemini-
     # family prefix + safe charset (build_main_cmd.GEMINI_MODEL_RE) before it's
     # appended as --model to the pipeline argv. When omitted, the pipeline uses
@@ -95,6 +101,10 @@ class BatchRequest(BaseModel):
     language: Optional[str] = Field(None, max_length=16)
     no_zoom: Optional[bool] = False
     skip_analysis: Optional[bool] = False
+    # Subject-mode smoothing knobs (see ProcessRequest); apply to every job in
+    # the batch.
+    subject_smooth: Optional[bool] = None
+    subject_hold: Optional[int] = Field(None, ge=0, le=600)
     # Per-batch Gemini model override (applies to every job in the batch).
     model: Optional[str] = Field(None, max_length=72, pattern=r"^gemini-[A-Za-z0-9.\-]{1,64}$")
 
@@ -121,6 +131,10 @@ class ReframeRequest(BaseModel):
     (i.e. jobs produced after the post-hoc reframe feature landed).
     """
     reframe_mode: Optional[str] = Field(None, pattern=r"^(auto|disabled|subject|object)$")
+    # Subject-mode smoothing overrides for this re-reframe. When omitted, the
+    # value persisted from the original job is reused (reframe_service).
+    subject_smooth: Optional[bool] = None
+    subject_hold: Optional[int] = Field(None, ge=0, le=600)
 
 
 # Overlay params (hook_params / subtitle_params) are intentionally left as

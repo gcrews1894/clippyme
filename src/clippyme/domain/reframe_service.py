@@ -22,12 +22,17 @@ logger = logging.getLogger(__name__)
 
 
 async def run_reframe(*, job_id: str, clip_index: int, mode: str,
-                      output_root: str, jobs: dict) -> dict:
+                      output_root: str, jobs: dict,
+                      subject_smooth: bool | None = None,
+                      subject_hold: int | None = None) -> dict:
     """Re-render one clip with a different reframe mode via ``main.py
     --reframe-only`` and update metadata + in-memory job state.
 
     ``mode`` must already be canonical ('auto' / 'subject' / 'disabled').
-    Returns the endpoint response payload (cache-busted ``new_video_url``).
+    ``subject_smooth`` / ``subject_hold`` override the subject-mode smoothing
+    for this re-render; when None the value persisted from the original job is
+    reused. Returns the endpoint response payload (cache-busted
+    ``new_video_url``).
     """
     output_dir = os.path.join(output_root, job_id)
     if not os.path.isdir(output_dir):
@@ -83,6 +88,22 @@ async def run_reframe(*, job_id: str, clip_index: int, mode: str,
     job_aspect = data.get("aspect")
     if job_aspect in ("9:16", "1:1", "16:9"):
         cmd += ["--aspect", job_aspect]
+
+    # Subject-mode smoothing: request value first, else the value persisted from
+    # the original job. Only meaningful in subject mode, but harmless otherwise
+    # (main.py only reads the env in the subject render path). Guard the
+    # persisted values by type so a tampered metadata entry can't inject argv.
+    smooth = subject_smooth
+    if smooth is None and isinstance(data.get("subject_smooth"), bool):
+        smooth = data.get("subject_smooth")
+    if smooth is False:
+        cmd.append("--no-subject-smooth")
+
+    hold = subject_hold
+    if hold is None and isinstance(data.get("subject_hold"), int) and not isinstance(data.get("subject_hold"), bool):
+        hold = data.get("subject_hold")
+    if isinstance(hold, int) and not isinstance(hold, bool) and 0 <= hold <= 600:
+        cmd += ["--subject-hold", str(hold)]
 
     logger.info("Reframe subprocess: %s", " ".join(cmd))
 

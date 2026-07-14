@@ -54,6 +54,13 @@ export async function submitProcessJob(data, apiKey) {
   // Per-job Gemini model override (optional). Validated server-side against the
   // gemini- family prefix; omitted → backend uses the global Settings model.
   const model = (data.preselections?.model || '').trim();
+  // Subject-mode smoothing knobs — only sent when they deviate from the
+  // pipeline defaults (smooth on / hold 45), so existing jobs stay
+  // byte-identical. Only meaningful in subject mode.
+  const subjectMode = reframeMode === 'subject' || reframeMode === 'object';
+  const subjectSmoothOff = subjectMode && data.preselections?.subject_smooth === false;
+  const subjectHold = data.preselections?.subject_hold;
+  const sendHold = subjectMode && Number.isInteger(subjectHold) && subjectHold !== 45;
 
   if (data.type === 'url') {
     headers['Content-Type'] = 'application/json';
@@ -65,6 +72,8 @@ export async function submitProcessJob(data, apiKey) {
     if (noZoom) jsonBody.no_zoom = true;
     if (skipAnalysis) jsonBody.skip_analysis = true;
     if (model) jsonBody.model = model;
+    if (subjectSmoothOff) jsonBody.subject_smooth = false;
+    if (sendHold) jsonBody.subject_hold = subjectHold;
     body = JSON.stringify(jsonBody);
   } else {
     if (data.payload?.size > 2048 * 1024 * 1024) {
@@ -78,6 +87,8 @@ export async function submitProcessJob(data, apiKey) {
     if (noZoom) formData.append('no_zoom', 'true');
     if (skipAnalysis) formData.append('skip_analysis', 'true');
     if (model) formData.append('model', model);
+    if (subjectSmoothOff) formData.append('subject_smooth', 'false');
+    if (sendHold) formData.append('subject_hold', String(subjectHold));
     body = formData;
   }
 
@@ -106,6 +117,12 @@ export async function submitBatchJob(data, apiKey) {
   if (data.preselections?.no_zoom === true) batchBody.no_zoom = true;
   if (data.preselections?.skip_analysis === true) batchBody.skip_analysis = true;
   if ((data.preselections?.model || '').trim()) batchBody.model = data.preselections.model.trim();
+  // Subject-mode smoothing knobs — same deviate-from-default rule as single jobs.
+  const batchSubjectMode = batchBody.reframe_mode === 'subject' || batchBody.reframe_mode === 'object';
+  if (batchSubjectMode && data.preselections?.subject_smooth === false) batchBody.subject_smooth = false;
+  if (batchSubjectMode && Number.isInteger(data.preselections?.subject_hold) && data.preselections.subject_hold !== 45) {
+    batchBody.subject_hold = data.preselections.subject_hold;
+  }
   const res = await apiFetch(getApiUrl('/api/batch'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Gemini-Key': apiKey },

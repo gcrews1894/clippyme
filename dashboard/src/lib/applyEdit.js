@@ -6,13 +6,16 @@
 // realApi functions, tests pass fakes.
 
 export async function runApplyEdit({ jobId, idx, params, api, updateClipState, pushToast, now = Date.now }) {
-  const { reframeMode, baseMode, toggles, subtitleParams, hookParams, logoParams, gradeParams, dropRanges } = params;
-  const reframeChanged = reframeMode !== baseMode;
+  const { reframeMode, baseMode, subjectSmooth, subjectHold, subjectSettingsChanged,
+    toggles, subtitleParams, hookParams, logoParams, gradeParams, dropRanges } = params;
+  // Re-reframe on a mode change OR (subject mode) a smoothing-knob change — the
+  // latter still overwrites the clip via main.py --reframe-only.
+  const reframeChanged = reframeMode !== baseMode || !!subjectSettingsChanged;
   const anyCompose = !!(toggles.smartcut || toggles.subtitles || toggles.hook || toggles.logo || toggles.grade);
 
   // Persist the user's choices + flip the card into its processing state up
   // front (so the badge/preview already reflect the new reframe mode).
-  updateClipState(idx, { reframeMode, toggles, subtitleParams, hookParams, logoParams, gradeParams, dropRanges,
+  updateClipState(idx, { reframeMode, subjectSmooth, subjectHold, toggles, subtitleParams, hookParams, logoParams, gradeParams, dropRanges,
     processing: reframeChanged || anyCompose });
 
   if (!reframeChanged && !anyCompose) {
@@ -23,7 +26,10 @@ export async function runApplyEdit({ jobId, idx, params, api, updateClipState, p
   let reframeApplied = false;
   try {
     if (reframeChanged) {
-      await api.reframeClip(jobId, idx, reframeMode);
+      // Send the smoothing overrides only in subject mode (undefined elsewhere
+      // → the backend reuses the job's persisted values).
+      const extra = reframeMode === 'subject' ? { subjectSmooth, subjectHold } : {};
+      await api.reframeClip(jobId, idx, reframeMode, extra);
       reframeApplied = true;
       // Reframe overwrites the clip on disk → bust the cache + drop any stale
       // composed preview so the card re-fetches the freshly framed clip.

@@ -17,6 +17,7 @@ from pathlib import Path
 _PIPELINE = Path(__file__).resolve().parents[2] / "src" / "clippyme" / "pipeline"
 REFRAME_PATH = _PIPELINE / "reframe.py"
 DETECT_PATH = _PIPELINE / "reframe_detect.py"
+MAIN_PATH = _PIPELINE / "main.py"
 
 
 def _reframe_src():
@@ -25,6 +26,10 @@ def _reframe_src():
 
 def _detect_src():
     return DETECT_PATH.read_text(encoding="utf-8")
+
+
+def _main_src():
+    return MAIN_PATH.read_text(encoding="utf-8")
 
 
 def test_subject_mode_gates_into_global_smooth():
@@ -82,3 +87,17 @@ def test_yolo_model_env_is_allowlisted():
     src = _detect_src()
     assert "REFRAME_YOLO_MODEL" in src
     assert "_YOLO_MODEL_RE" in src
+
+
+def test_main_translates_subject_flags_to_env():
+    """main.py must turn the --no-subject-smooth / --subject-hold CLI flags into
+    the REFRAME_SUBJECT_SMOOTH / REFRAME_SUBJECT_HOLD env vars that reframe.py
+    reads at call time (the --model / --language pattern), and persist them for
+    /api/reframe reuse."""
+    src = _main_src()
+    assert "--no-subject-smooth" in src
+    assert "--subject-hold" in src
+    assert 'os.environ["REFRAME_SUBJECT_SMOOTH"] = "0"' in src
+    assert 'os.environ["REFRAME_SUBJECT_HOLD"]' in src
+    # Persisted beside 'aspect' for post-hoc re-reframe.
+    assert "clips_data['subject_smooth']" in src

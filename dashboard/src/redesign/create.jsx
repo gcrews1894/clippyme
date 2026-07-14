@@ -6,6 +6,7 @@ import { LANGUAGES, GEMINI_MODELS, HOOK_STYLE_DEFAULT } from './data';
 import { HookStyleControls, HookPreview } from './hookStyle';
 import { SubtitleControls } from './subtitleControls';
 import { LogoControls, GradeControls } from './layerControls';
+import { SubjectSmoothControls } from './reframeControls';
 
 function PresetCards({ presets, active, defaultId, onPick, onSetDefault, onDelete, onSaveCurrent }) {
   const corner = { position: 'absolute', top: 12, left: 12, display: 'flex', gap: 8, zIndex: 2 };
@@ -244,6 +245,7 @@ function OptionsPanel({ opts, set }) {
   const [subCfg, setSubCfg] = useState(false);
   const [hookCfg, setHookCfg] = useState(false);
   const [logoCfg, setLogoCfg] = useState(false);
+  const normReframe = (opts.reframeMode === 'object' ? 'subject' : opts.reframeMode) || (opts.reframe === false ? 'disabled' : 'auto');
   return (
     <Panel title="Recipe" sub="What ClippyMe makes from each video" icon="sliders-horizontal">
       <div className="label" style={{ marginBottom: 4 }}>Output</div>
@@ -284,9 +286,12 @@ function OptionsPanel({ opts, set }) {
       <div className="opt">
         <div className="oico"><Icon n="scan-face" /></div>
         <div className="otxt"><div className="ot">Reframe</div><div className="od">Auto face-track · Subject FrameShift crop · Off letterbox bands</div></div>
-        <div className="r"><Segmented value={(opts.reframeMode === 'object' ? 'subject' : opts.reframeMode) || (opts.reframe === false ? 'disabled' : 'auto')} onChange={(id) => set({ reframeMode: id })}
+        <div className="r"><Segmented value={normReframe} onChange={(id) => set({ reframeMode: id })}
           options={[{ id: 'auto', label: 'Auto' }, { id: 'subject', label: 'Subject' }, { id: 'disabled', label: 'Off' }]} /></div>
       </div>
+      {normReframe === 'subject' && (
+        <SubjectSmoothControls smooth={opts.subjectSmooth} hold={opts.subjectHold} onChange={set} />
+      )}
       <OptRow icon="scissors" label="Smart cut" desc="Remove silence & filler words"
         on={opts.smartcut} set={(v) => set({ smartcut: v })} />
       <OptRow icon="zoom-in" label="Subtle zoom" desc="Gentle Ken Burns motion (1.0→1.05x)"
