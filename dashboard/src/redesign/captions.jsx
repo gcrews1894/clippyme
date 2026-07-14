@@ -25,6 +25,7 @@ import { useManualTrim } from '../hooks/useManualTrim';
 import {
   ReframeTab, SmartCutTab, TrimTab, CaptionsTab, HookTab, LogoTab, GradeTab,
 } from './editTabs';
+import { SubjectSmoothControls } from './reframeControls';
 import {
   seedSubtitleParams, seedHookParams, seedLogoParams, seedGradeParams,
 } from '../lib/seedClipParams';
@@ -51,8 +52,15 @@ export function EditClipModal({ clip, idx, jobId, initial, appliedMode, preselec
   // Current on-disk reframe mode (what a fresh reframe would diff against).
   const baseMode = canonReframe(appliedMode || initial?.reframeMode || clip.reframe_mode || 'auto');
 
+  // Subject-mode smoothing — what a fresh reframe diffs against, seeded from a
+  // prior edit → the clip's persisted job value → the pipeline default (on/45).
+  const baseSubjectSmooth = initial?.subjectSmooth ?? clip.subject_smooth ?? true;
+  const baseSubjectHold = initial?.subjectHold ?? clip.subject_hold ?? 45;
+
   const [tab, setTab] = useState('reframe');
   const [reframeMode, setReframeMode] = useState(baseMode);
+  const [subjectSmooth, setSubjectSmooth] = useState(baseSubjectSmooth);
+  const [subjectHold, setSubjectHold] = useState(baseSubjectHold);
   const [smartcut, setSmartcut] = useState(t0.smartcut ?? !!pre.smartcut);
   const [subsOn, setSubsOn] = useState(t0.subtitles ?? !!pre.subtitles);
   const [hookOn, setHookOn] = useState(t0.hook ?? !!pre.hook);
@@ -120,7 +128,11 @@ export function EditClipModal({ clip, idx, jobId, initial, appliedMode, preselec
   ].filter(Boolean);
 
   const gradeOn = gradePreset && gradePreset !== 'none';
-  const reframeChanged = reframeMode !== baseMode;
+  // Re-reframe when the mode changed, OR (still subject mode) the smoothing
+  // knobs changed — otherwise tuning smoothing alone would be a silent no-op.
+  const subjectSettingsChanged = reframeMode === 'subject'
+    && (subjectSmooth !== baseSubjectSmooth || subjectHold !== baseSubjectHold);
+  const reframeChanged = reframeMode !== baseMode || subjectSettingsChanged;
   // Manual trim must run the Smart Cut compose stage (drop_ranges only apply
   // inside _apply_smartcut backend-side), so dropping text implies smartcut.
   const effSmartcut = smartcut || hasDrops;
@@ -145,7 +157,9 @@ export function EditClipModal({ clip, idx, jobId, initial, appliedMode, preselec
     const logoParams = { position: logo.position, size: logo.size };
     const gradeParams = { preset: gradePreset };
     const toggles = { smartcut: effSmartcut, subtitles: subsOn, hook: hookOn, logo: logoOn, grade: gradeOn };
-    onApply({ reframeMode, baseMode, toggles, subtitleParams, hookParams, logoParams, gradeParams,
+    onApply({ reframeMode, baseMode, subjectSmooth, subjectHold,
+      baseSubjectSmooth, baseSubjectHold, subjectSettingsChanged,
+      toggles, subtitleParams, hookParams, logoParams, gradeParams,
       dropRanges: effSmartcut ? dropRanges : [] });
   };
 
@@ -188,7 +202,18 @@ export function EditClipModal({ clip, idx, jobId, initial, appliedMode, preselec
               ))}
             </div>
 
-            {tab === 'reframe' && <ReframeTab mode={reframeMode} onChange={setReframeMode} />}
+            {tab === 'reframe' && (
+              <>
+                <ReframeTab mode={reframeMode} onChange={setReframeMode} />
+                {reframeMode === 'subject' && (
+                  <SubjectSmoothControls variant="edit" smooth={subjectSmooth} hold={subjectHold}
+                    onChange={(p) => {
+                      if (p.subjectSmooth !== undefined) setSubjectSmooth(p.subjectSmooth);
+                      if (p.subjectHold !== undefined) setSubjectHold(p.subjectHold);
+                    }} />
+                )}
+              </>
+            )}
             {tab === 'smartcut' && <SmartCutTab on={smartcut} onChange={setSmartcut} bulk={bulk} />}
             {tab === 'trim' && !bulk && <TrimTab trim={trim} />}
             {tab === 'captions' && (

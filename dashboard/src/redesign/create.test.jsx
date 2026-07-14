@@ -89,3 +89,17 @@ test('grade row: preset segments (with the extra Off entry) patch gradePreset', 
   fireEvent.click(row.getByRole('button', { name: 'Off' }));
   expect(set).toHaveBeenLastCalledWith({ gradePreset: 'none' });
 });
+
+test('subject smoothing controls only render in subject reframe mode', () => {
+  mount({ reframeMode: 'auto' });
+  expect(screen.queryByText('Smooth subject tracking')).toBeNull();
+});
+
+test('subject mode: smoothing toggle and hold preset patch subjectSmooth/subjectHold', () => {
+  const set = mount({ reframeMode: 'subject', subjectSmooth: true, subjectHold: 45 });
+  const row = within(screen.getByText('Smooth subject tracking').closest('.opt'));
+  fireEvent.click(row.getByRole('switch'));
+  expect(set).toHaveBeenLastCalledWith({ subjectSmooth: false });
+  fireEvent.click(screen.getByRole('button', { name: '2.0s' }));
+  expect(set).toHaveBeenLastCalledWith({ subjectHold: 60 });
+});

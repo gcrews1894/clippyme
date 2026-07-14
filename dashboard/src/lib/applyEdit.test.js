@@ -26,6 +26,7 @@ function makeCtx({ reframeImpl, composeImpl } = {}) {
 
 const baseParams = (over = {}) => ({
   reframeMode: 'auto', baseMode: 'auto',
+  subjectSmooth: true, subjectHold: 45, subjectSettingsChanged: false,
   toggles: { smartcut: false, subtitles: false, hook: false, logo: false, grade: false },
   subtitleParams: { mode: 'karaoke', preset: 'hormozi_bold' },
   hookParams: { text: 'HOOK' },
@@ -47,11 +48,39 @@ test('no change at all → no API calls, success toast, no processing flag', asy
 test('reframe-only: calls reframeClip, busts cache, never composes', async () => {
   const { calls, args } = makeCtx();
   await runApplyEdit({ ...args, params: baseParams({ reframeMode: 'subject' }) });
-  expect(args.api.reframeClip).toHaveBeenCalledWith(JOB, 2, 'subject');
+  expect(args.api.reframeClip).toHaveBeenCalledWith(JOB, 2, 'subject', { subjectSmooth: true, subjectHold: 45 });
   expect(args.api.composeClip).not.toHaveBeenCalled();
   const bust = calls.states.find((p) => p.reframeBust);
   expect(bust).toMatchObject({ reframeBust: 1234, previewUrl: undefined });
   expect(calls.states.at(-1).processing).toBe(false);
+});
+
+test('subject smoothing change with same mode still re-reframes', async () => {
+  const { args } = makeCtx();
+  await runApplyEdit({
+    ...args,
+    params: baseParams({
+      reframeMode: 'subject', baseMode: 'subject',
+      subjectSmooth: false, subjectHold: 30, subjectSettingsChanged: true,
+    }),
+  });
+  expect(args.api.reframeClip).toHaveBeenCalledWith(JOB, 2, 'subject', { subjectSmooth: false, subjectHold: 30 });
+  expect(args.api.composeClip).not.toHaveBeenCalled();
+});
+
+test('no reframe when subject settings unchanged and mode same', async () => {
+  const { args } = makeCtx();
+  await runApplyEdit({
+    ...args,
+    params: baseParams({ reframeMode: 'subject', baseMode: 'subject', subjectSettingsChanged: false }),
+  });
+  expect(args.api.reframeClip).not.toHaveBeenCalled();
+});
+
+test('non-subject reframe sends no smoothing overrides', async () => {
+  const { args } = makeCtx();
+  await runApplyEdit({ ...args, params: baseParams({ reframeMode: 'disabled' }) });
+  expect(args.api.reframeClip).toHaveBeenCalledWith(JOB, 2, 'disabled', {});
 });
 
 test('compose-only: gates every param object by its toggle', async () => {

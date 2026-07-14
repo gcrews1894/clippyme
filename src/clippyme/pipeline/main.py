@@ -611,6 +611,13 @@ if __name__ == '__main__':
                              "transcription accuracy AND speaker diarization reliability.")
     parser.add_argument('--aspect', choices=['9:16', '1:1', '16:9'], default='9:16',
                         help="Output aspect ratio: 9:16 vertical (default), 1:1 square, or 16:9 horizontal.")
+    parser.add_argument('--no-subject-smooth', action='store_true',
+                        help="Disable subject-mode (FrameShift) trajectory smoothing — render the "
+                             "legacy per-frame crop instead (sets REFRAME_SUBJECT_SMOOTH=0).")
+    parser.add_argument('--subject-hold', type=int, default=None,
+                        help="Frames a subject-mode detection dropout is bridged with the last "
+                             "position before falling back to letterbox (sets REFRAME_SUBJECT_HOLD). "
+                             "Default 45 (~1.5s @30fps). Range 0-600.")
     parser.add_argument('--model', type=str, default=None,
                         help="Override the Gemini model for viral detection on THIS job (e.g. "
                              "'gemini-2.5-pro', 'gemini-3.1-pro-preview'). When unset, the pipeline uses "
@@ -652,6 +659,23 @@ if __name__ == '__main__':
         os.environ["ELEVENLABS_LANGUAGE"] = args.language
         os.environ["CLIPPYME_LANGUAGE"] = args.language
         print(f"🌐  Language override: {args.language} (overrides default 'multi')")
+
+    # Per-job subject-mode smoothing overrides — set the env BEFORE any
+    # process_video_to_vertical call, which reads REFRAME_SUBJECT_SMOOTH /
+    # REFRAME_SUBJECT_HOLD at call time (reframe._subject_smooth_enabled /
+    # _subject_hold_frames). Works for both the normal and --reframe-only paths
+    # with no change to the pipeline call sites.
+    if args.no_subject_smooth:
+        os.environ["REFRAME_SUBJECT_SMOOTH"] = "0"
+        print("🎥  Subject smoothing disabled (legacy per-frame crop).")
+    if args.subject_hold is not None:
+        # Bound the CLI value before it lands in the child env (defense-in-depth
+        # mirroring --model/--language; also caps a direct CLI misuse).
+        if not (0 <= args.subject_hold <= 600):
+            print(f"❌ invalid --subject-hold: {args.subject_hold!r} (range 0-600)")
+            sys.exit(2)
+        os.environ["REFRAME_SUBJECT_HOLD"] = str(args.subject_hold)
+        print(f"🎥  Subject hold: {args.subject_hold} frames")
 
     # --- Reframe-only fast path: reuse an existing 16:9 slice ----------------
     if args.reframe_only:
@@ -820,6 +844,11 @@ if __name__ == '__main__':
             # to 9:16 and silently squashes a 1:1/16:9 job when the user flips
             # reframe mode after the run.
             clips_data['aspect'] = args.aspect
+            # Persist the subject-smoothing choices so /api/reframe can re-render
+            # a clip with the same settings the job used (mirrors 'aspect').
+            clips_data['subject_smooth'] = not args.no_subject_smooth
+            if args.subject_hold is not None:
+                clips_data['subject_hold'] = args.subject_hold
             metadata_file = os.path.join(output_dir, f"{video_title}_metadata.json")
             metadata_tmp = metadata_file + ".tmp"
             with open(metadata_tmp, 'w') as f:
