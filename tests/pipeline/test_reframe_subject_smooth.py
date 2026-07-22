@@ -44,11 +44,15 @@ def test_pass1_records_frameshift_centers_and_holds_gaps():
     assert "hold_gaps(object_targets, scene_ids, _subject_hold_frames())" in src
 
 
-def test_object_targets_are_smoothed_not_collapsed():
-    """Subject scenes must go through build_smoothed_trajectory — routing them
-    through collapse_scene_targets would pin every scene to one static
-    viewpoint and neuter FrameShift's follow behaviour."""
+def test_object_scenes_use_the_debounce_follower():
+    """Subject scenes follow the dead-zone/settle/edge camera by default, with
+    the legacy savgol pan kept behind REFRAME_SUBJECT_FOLLOW for A/B. Routing
+    them through collapse_scene_targets (an AUTO policy) is NOT allowed."""
     src = _reframe_src()
+    assert "object_smoothed = follow_debounced_path(" in src
+    assert "_subject_follow_enabled()" in src
+    assert "_subject_follow_params()" in src
+    # savgol path is retained as the escape-hatch fallback.
     assert "object_smoothed = build_smoothed_trajectory(" in src
 
 

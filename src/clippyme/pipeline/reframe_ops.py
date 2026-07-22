@@ -15,6 +15,7 @@ Provides:
 from __future__ import annotations
 
 import math
+from collections import deque
 from typing import Optional
 
 import numpy as np
@@ -569,6 +570,83 @@ def hold_gaps(targets, scene_ids, hold_frames: int):
                 and all(scene_ids[k] == scene_ids[last_idx] for k in range(i, j))):
             for k in range(i, j):
                 out[k] = targets[last_idx]
+        i = j
+    return out
+
+
+def follow_debounced_path(targets, scene_ids, *, crop_w: float, x_max: float,
+                          dead_zone: float = 0.5, edge_margin: float = 0.8,
+                          settle_frames: int = 12, settle_span: float = 0.06,
+                          follow_rate: float = 0.10, edge_rate: float = 0.5):
+    """Dead-zone + settle-debounced subject follower for FrameShift scenes.
+
+    Replaces the continuous Savitzky-Golay pan for subject (OBJECT) scenes with
+    a camera that *holds still* while the subject stays comfortably in frame and
+    only re-centres once the subject has slowed down — but snaps to follow
+    immediately when the subject nears the crop edge (about to leave frame).
+
+    ``targets[i]`` is the recorded per-frame ``(cx, cy, zoom)`` subject target
+    (or ``None`` for a dropout / non-OBJECT frame). Only ``cx`` is debounced;
+    ``cy``/``zoom`` pass through. Each maximal run of non-``None`` frames in one
+    scene is followed independently (a scene cut or a detection dropout resets
+    the camera, so it re-centres on the subject when tracking resumes).
+
+    Per frame the subject's offset from the camera centre decides the regime
+    (``half = crop_w / 2``):
+
+      * ``|offset| >= edge_margin * half`` — the subject is near the crop edge
+        (leaving frame) → ease toward it fast (``edge_rate``), every frame, no
+        wait. This is the "reframe immediately" case.
+      * ``|offset| <= dead_zone * half`` — the subject sits in the central
+        dead-zone → hold the camera perfectly still (the anti-"reframes all the
+        time" case). Also re-arms the settle window.
+      * in between — the subject is off-centre but still safely in frame → do
+        NOT chase. Wait until it *settles*: the spread of its position over the
+        trailing ``settle_frames`` window must fall within ``settle_span *
+        crop_w`` (i.e. it slowed/stopped). Only then ease toward it gently
+        (``follow_rate``). While it keeps moving, the camera stays put.
+
+    Fractions (``dead_zone``, ``edge_margin``) are of the half-crop-width;
+    ``settle_span`` is a fraction of the full crop width. Pure-math →
+    host-unit-tested. Returns a per-frame ``(cx, cy, zoom)`` list (``None``
+    preserved), same length as ``targets``.
+    """
+    n = len(targets)
+    out = [None] * n
+    half = crop_w / 2.0
+    lo, hi = half, x_max - half
+    degenerate = hi < lo  # source narrower than the crop → render letterboxes anyway
+    i = 0
+    while i < n:
+        if targets[i] is None:
+            i += 1
+            continue
+        j = i
+        sid = scene_ids[i]
+        while j < n and targets[j] is not None and scene_ids[j] == sid:
+            j += 1
+        seg = targets[i:j]
+        # Snap onto the subject at the start of the run (scene cut / post-dropout).
+        cam = x_max / 2.0 if degenerate else min(max(float(seg[0][0]), lo), hi)
+        window = deque(maxlen=max(1, int(settle_frames)))
+        for k, t in enumerate(seg):
+            cx = float(t[0])
+            window.append(cx)
+            if not degenerate:
+                offset = cx - cam
+                ao = abs(offset)
+                if half > 0 and ao >= edge_margin * half:
+                    cam += offset * edge_rate            # near edge → follow now
+                elif half <= 0 or ao <= dead_zone * half:
+                    window.clear()                       # centred → hold + re-arm
+                    window.append(cx)
+                else:
+                    span = max(window) - min(window)
+                    settled = len(window) >= settle_frames and span <= settle_span * crop_w
+                    if settled:
+                        cam += offset * follow_rate       # slowed down → ease in
+                cam = min(max(cam, lo), hi)
+            out[i + k] = (cam, float(t[1]), float(t[2]))
         i = j
     return out
 

@@ -167,6 +167,10 @@ Runtime env overrides (rarely needed):
 | `REFRAME_FRAMESHIFT_WEIGHTS` | _(GUI defaults)_ | `object`-mode class weights. Defaults `face:1,person:0.8,default:0.5`; override any of those three or add a COCO class, e.g. `face:1,person:0.8,default:0.5,dog:3`. |
 | `REFRAME_SUBJECT_SMOOTH` | `1` | Subject (FrameShift) mode renders from a per-scene smoothed trajectory instead of re-centering the crop independently every frame. `0` = legacy per-frame crop, exactly. |
 | `REFRAME_SUBJECT_HOLD` | `45` | Frames a subject-mode detection dropout is bridged with the last position (~1.5 s @ 30 fps) before falling back to letterbox. Never bridges across a scene cut. |
+| `REFRAME_SUBJECT_FOLLOW` | `1` | Subject camera holds while the subject stays central, waits for it to slow before re-centering, and snaps to follow only when it nears the crop edge. `0` = the older continuous (savgol) pan. |
+| `REFRAME_SUBJECT_DEADZONE` / `REFRAME_SUBJECT_EDGE` | `0.5` / `0.8` | Follower zones as fractions of the half-crop-width: how far off-center the subject may drift before any move / how close to the edge triggers an immediate follow. |
+| `REFRAME_SUBJECT_SETTLE` / `REFRAME_SUBJECT_SETTLE_SPAN` | `12` / `0.06` | Debounce: frames the subject must stay still (~0.4 s @ 30 fps), and how tight "still" is (fraction of crop width), before the camera re-centers. |
+| `REFRAME_SUBJECT_FOLLOW_RATE` / `REFRAME_SUBJECT_EDGE_RATE` | `0.10` / `0.5` | Ease speed when re-centering a settled subject / when snapping back from the crop edge. |
 | `REFRAME_HEADROOM_Y` | `0.42` | Rule-of-thirds framing: the fraction of the crop height where the subject's eye line sits. `0.5` restores the legacy dead-center framing exactly. |
 | `REFRAME_FACE_CONF` | `0.5` | Face-detection confidence floor; candidates below it are dropped and scoring is weighted by confidence. `0.5` is the model's own minimum, so the default filters nothing extra. |
 | `REFRAME_YOLO_MODEL` | `yolov8n.pt` | Person/object detector weights (allowlisted: `yolov8n/s/m.pt`, `yolo11n/s.pt`). Bigger models detect better but run 2–3× slower on CPU and lazy-download ~20–50 MB on first use. |

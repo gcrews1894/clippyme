@@ -35,6 +35,7 @@ from clippyme.pipeline.reframe_ops import (
     build_smoothed_trajectory,
     centroid_span,
     collapse_scene_targets,
+    follow_debounced_path,
     hold_gaps,
     salient_crop_center,
     weighted_interest_center,
@@ -667,6 +668,43 @@ def _subject_hold_frames() -> int:
         return 45
 
 
+def _env_float(name: str, default: float) -> float:
+    """Read an empty-safe float env knob (docker-compose passes VAR=)."""
+    raw = (os.getenv(name) or "").strip()
+    try:
+        return float(raw) if raw else default
+    except ValueError:
+        return default
+
+
+def _subject_follow_enabled() -> bool:
+    """REFRAME_SUBJECT_FOLLOW — use the dead-zone/settle/edge follower for
+    subject mode (default ON). ``0`` falls back to the legacy Savitzky-Golay
+    continuous pan (kept as an A/B escape hatch)."""
+    val = (os.getenv("REFRAME_SUBJECT_FOLLOW") or "").strip().lower()
+    if not val:
+        return True
+    return val in ("1", "true", "yes", "on")
+
+
+def _subject_follow_params():
+    """Subject (FrameShift) dead-zone/settle/edge follower knobs.
+
+    Returns the kwargs for ``reframe_ops.follow_debounced_path`` — the camera
+    holds still while the subject stays central, waits for it to settle before
+    re-centring, and snaps to follow when it nears the crop edge. All tunable
+    per job via env (empty-safe); defaults chosen for a calm, deliberate feel.
+    """
+    return dict(
+        dead_zone=_env_float("REFRAME_SUBJECT_DEADZONE", 0.5),
+        edge_margin=_env_float("REFRAME_SUBJECT_EDGE", 0.8),
+        settle_frames=int(_env_float("REFRAME_SUBJECT_SETTLE", 12)),
+        settle_span=_env_float("REFRAME_SUBJECT_SETTLE_SPAN", 0.06),
+        follow_rate=_env_float("REFRAME_SUBJECT_FOLLOW_RATE", 0.10),
+        edge_rate=_env_float("REFRAME_SUBJECT_EDGE_RATE", 0.5),
+    )
+
+
 def _render_global_smooth(input_video, ffmpeg_process, cameraman, speaker_tracker,
                           detection_smoother, scene_boundaries, scene_strategies,
                           output_width, output_height, original_width, original_height,
@@ -798,22 +836,32 @@ def _render_global_smooth(input_video, ffmpeg_process, cameraman, speaker_tracke
 
     # Subject (OBJECT) scenes are smoothed separately: bridge short detection
     # dropouts (hold_gaps) so a single flickered frame doesn't snap the crop to
-    # letterbox, then per-scene Savitzky-Golay + a stationary lock — a static
-    # subject gets a tripod shot, a moving one is followed smoothly. They are
-    # deliberately NOT routed through collapse_scene_targets: pinning the whole
-    # scene to one viewpoint would neuter FrameShift's follow behaviour —
-    # static-auto stays an AUTO-mode policy.
+    # letterbox, then follow the subject with a dead-zone / settle-debounce /
+    # edge-trigger camera (follow_debounced_path) — the camera holds still while
+    # the subject stays central, waits for it to slow before re-centring, and
+    # snaps to follow only when the subject nears the crop edge. This replaces
+    # the old continuous Savitzky-Golay pan, which re-framed on any movement.
+    # REFRAME_SUBJECT_FOLLOW=0 restores that legacy pan for A/B. Deliberately
+    # NOT routed through collapse_scene_targets (static-auto is an AUTO policy).
     has_object = 'OBJECT' in strategies
     if has_object:
         object_targets = [t if s == 'OBJECT' else None
                           for t, s in zip(targets, strategies)]
         object_targets = hold_gaps(object_targets, scene_ids, _subject_hold_frames())
-        object_smoothed = build_smoothed_trajectory(
-            object_targets, scene_ids, window=win, polyorder=2,
-            x_max=original_width, y_max=original_height,
-            min_zoom=1.0, max_zoom=1.0, method='savgol',
-            stationary_threshold=0.20, snap_center_dist=snap_center_dist,
-        )
+        if _subject_follow_enabled():
+            # crop_w = the full-height FrameShift window width in source pixels.
+            crop_w = int(round(original_height * (output_width / float(output_height))))
+            object_smoothed = follow_debounced_path(
+                object_targets, scene_ids, crop_w=crop_w, x_max=original_width,
+                **_subject_follow_params(),
+            )
+        else:
+            object_smoothed = build_smoothed_trajectory(
+                object_targets, scene_ids, window=win, polyorder=2,
+                x_max=original_width, y_max=original_height,
+                min_zoom=1.0, max_zoom=1.0, method='savgol',
+                stationary_threshold=0.20, snap_center_dist=snap_center_dist,
+            )
         targets = [t if s != 'OBJECT' else None
                    for t, s in zip(targets, strategies)]
 
